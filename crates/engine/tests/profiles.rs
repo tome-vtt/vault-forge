@@ -2,10 +2,10 @@
 use std::path::Path;
 use std::sync::mpsc::Receiver;
 
-use vault_forge_engine::{Command, Engine, Event, NewProfile, Profile, Rules};
+use vault_forge_engine::{Command, Engine, Event, Profile, ProfileDraft, Rules};
 
-fn new_profile(name: &str) -> NewProfile {
-    NewProfile {
+fn draft(name: &str) -> ProfileDraft {
+    ProfileDraft {
         name: name.into(),
         rules: Rules::Dnd5e,
         address: "http://127.0.0.1:1/data.zip".into(),
@@ -18,7 +18,7 @@ fn start(dir: &Path) -> (Engine, Receiver<Event>) {
 }
 
 fn create(engine: &Engine, events: &Receiver<Event>, name: &str) -> Profile {
-    engine.send(Command::CreateProfile(new_profile(name)));
+    engine.send(Command::CreateProfile(draft(name)));
     let created = events.try_iter().find_map(|e| match e {
         Event::ProfileCreated(id) => Some(id),
         _ => None,
@@ -57,7 +57,7 @@ fn a_created_profile_is_saved_as_a_valid_converter_config_file() {
 fn an_incomplete_profile_is_refused_and_nothing_is_saved() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, events) = start(dir.path());
-    let mut incomplete = new_profile("Thursday");
+    let mut incomplete = draft("Thursday");
     incomplete.address = "  ".into();
     assert!(!incomplete.is_complete());
 
@@ -87,6 +87,8 @@ fn a_rename_persists_across_restart() {
         id: profile.id.clone(),
         name: "Friday".into(),
     });
+    let names: Vec<_> = engine.profiles().into_iter().map(|p| p.name).collect();
+    assert_eq!(names, ["Friday"]);
     drop(engine);
 
     let (engine, _events) = start(dir.path());
@@ -145,4 +147,27 @@ fn a_profile_missing_its_config_file_can_still_be_deleted() {
 
     assert!(engine.profiles().is_empty());
     assert!(yaml_files(dir.path()).is_empty());
+}
+
+#[test]
+fn a_profile_named_like_a_windows_device_gets_a_file_windows_can_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    // Windows' reserved device names, in mixed case as a user might type them.
+    let mut names = vec!["Con".to_owned(), "PRN".into(), "aux".into(), "Nul".into()];
+    for port in ["COM", "lpt"] {
+        for n in [
+            "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "¹", "²", "³",
+        ] {
+            names.push(format!("{port}{n}"));
+        }
+    }
+    for name in &names {
+        let id = create(&engine, &events, name).id;
+        assert_ne!(id, name.to_lowercase(), "{name} saved as {id}");
+    }
+    drop(engine);
+
+    let (engine, _events) = start(dir.path());
+    assert_eq!(engine.profiles().len(), names.len());
 }

@@ -2,7 +2,9 @@
 use std::sync::mpsc::Receiver;
 
 use eframe::egui;
-use vault_forge_engine::{Command, Engine, Event, NewProfile, Profile, Rules, is_valid_name};
+use vault_forge_engine::{Command, Engine, Event, Profile, Rules, is_valid_name};
+
+use crate::new_profile::NewProfile;
 
 enum Screen {
     NewProfile,
@@ -18,18 +20,17 @@ pub struct App {
     engine: Engine,
     events: Receiver<Event>,
     screen: Screen,
-    form: NewProfile,
+    new_profile: NewProfile,
     dialog: Option<Dialog>,
     error: Option<String>,
 }
 
-fn blank_form() -> NewProfile {
-    NewProfile {
-        name: String::new(),
-        rules: Rules::Dnd5e,
-        address: String::new(),
-        vault: String::new(),
-    }
+/// The demo's centred reading column for forms and text pages.
+pub fn narrow_column(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    ui.vertical_centered(|ui| {
+        ui.set_max_width(ui.available_width().min(760.0));
+        ui.with_layout(egui::Layout::top_down(egui::Align::Min), add);
+    });
 }
 
 fn rules_tag(rules: Rules) -> &'static str {
@@ -39,7 +40,7 @@ fn rules_tag(rules: Rules) -> &'static str {
     }
 }
 
-fn rules_name(rules: Rules) -> &'static str {
+pub fn rules_name(rules: Rules) -> &'static str {
     match rules {
         Rules::Dnd5e => "D&D 5e",
         Rules::Pf2e => "Pathfinder 2e",
@@ -60,7 +61,7 @@ impl App {
             engine,
             events,
             screen,
-            form: blank_form(),
+            new_profile: NewProfile::default(),
             dialog: None,
             error: None,
         }
@@ -70,7 +71,8 @@ impl App {
         while let Ok(event) = self.events.try_recv() {
             match event {
                 Event::ProfileCreated(id) => {
-                    self.form = blank_form();
+                    self.new_profile = NewProfile::default();
+                    self.error = None;
                     self.screen = Screen::Profile(id);
                 }
                 Event::ProfileDeleted(id) => {
@@ -86,19 +88,34 @@ impl App {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         self.drain_events();
         let profiles = self.engine.profiles();
+        let open = match &self.screen {
+            Screen::Profile(id) => profiles.iter().find(|p| p.id == *id),
+            Screen::NewProfile => None,
+        };
+        if open.is_none() {
+            self.screen = Screen::NewProfile;
+        }
         egui::Panel::left("sidebar")
-            .exact_size(220.0)
+            .exact_size(228.0)
             .show(ui, |ui| self.sidebar(ui, &profiles));
+        egui::Panel::top("top_bar").exact_size(48.0).show(ui, |ui| {
+            ui.horizontal_centered(|ui| match open {
+                Some(profile) => {
+                    ui.weak("Profiles /");
+                    ui.strong(&profile.name);
+                }
+                None => {
+                    ui.strong("New profile");
+                }
+            });
+        });
         egui::CentralPanel::default().show(ui, |ui| {
             if let Some(message) = &self.error {
                 ui.colored_label(ui.visuals().error_fg_color, message);
             }
-            match &self.screen {
-                Screen::NewProfile => self.new_profile(ui, profiles.is_empty()),
-                Screen::Profile(id) => match profiles.iter().find(|p| p.id == *id) {
-                    Some(profile) => self.profile_view(ui, profile),
-                    None => self.screen = Screen::NewProfile,
-                },
+            match open {
+                Some(profile) => self.profile_view(ui, profile),
+                None => self.new_profile.show(ui, &self.engine, profiles.is_empty()),
             }
         });
         self.dialog(ui.ctx());
@@ -125,60 +142,6 @@ impl App {
             self.screen = Screen::NewProfile;
             self.error = None;
         }
-    }
-
-    fn new_profile(&mut self, ui: &mut egui::Ui, first_run: bool) {
-        let hint = |ui: &mut egui::Ui, text: &str| {
-            ui.label(egui::RichText::new(text).small().weak());
-        };
-        ui.heading("New profile");
-        ui.label(if first_run {
-            "Welcome. Start with one vault and the books that go into it."
-        } else {
-            "A profile is one vault and the books that go into it."
-        });
-        ui.add_space(12.0);
-        ui.label("Name");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.form.name)
-                .hint_text("For example: Thursday campaign"),
-        );
-        ui.add_space(8.0);
-        ui.label("Game rules");
-        ui.horizontal(|ui| {
-            for rules in [Rules::Dnd5e, Rules::Pf2e] {
-                ui.selectable_value(&mut self.form.rules, rules, rules_name(rules));
-            }
-        });
-        ui.add_space(8.0);
-        ui.label("Game data download address");
-        ui.add(egui::TextEdit::singleline(&mut self.form.address).hint_text("https://…/data.zip"));
-        hint(
-            ui,
-            "Downloaded and unpacked for you after you create the profile.",
-        );
-        ui.add_space(8.0);
-        ui.label("Vault folder");
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.form.vault).hint_text("Your Obsidian vault"),
-            );
-            if ui.button("Browse…").clicked()
-                && let Some(folder) = rfd::FileDialog::new().pick_folder()
-            {
-                self.form.vault = folder.to_string_lossy().into_owned();
-            }
-        });
-        ui.add_space(12.0);
-        let create = ui.add_enabled(self.form.is_complete(), egui::Button::new("Create profile"));
-        if create.clicked() {
-            self.error = None;
-            self.engine.send(Command::CreateProfile(self.form.clone()));
-        }
-        hint(
-            ui,
-            "Create needs a name, the address and the vault. You choose books next.",
-        );
     }
 
     fn profile_view(&mut self, ui: &mut egui::Ui, profile: &Profile) {
@@ -250,6 +213,7 @@ mod tests {
     use super::*;
     use egui_kittest::Harness;
     use egui_kittest::kittest::{NodeT, Queryable};
+    use vault_forge_engine::ProfileDraft;
 
     fn harness(dir: &std::path::Path) -> Harness<'static, App> {
         let (engine, events) = Engine::start(dir.to_path_buf()).unwrap();
@@ -273,8 +237,8 @@ mod tests {
     fn create_enables_once_name_address_and_vault_are_filled() {
         let dir = tempfile::tempdir().unwrap();
         let mut harness = harness(dir.path());
-        harness.state_mut().form.name = "Thursday".into();
-        harness.state_mut().form.address = "https://example.test/data.zip".into();
+        harness.state_mut().new_profile.draft.name = "Thursday".into();
+        harness.state_mut().new_profile.draft.address = "https://example.test/data.zip".into();
         harness.run();
         assert!(
             harness
@@ -282,7 +246,7 @@ mod tests {
                 .accesskit_node()
                 .is_disabled()
         );
-        harness.state_mut().form.vault = "/vault".into();
+        harness.state_mut().new_profile.draft.vault = "/vault".into();
         harness.run();
         assert!(
             !harness
@@ -296,7 +260,7 @@ mod tests {
     fn creating_a_profile_opens_its_view_titled_with_its_name() {
         let dir = tempfile::tempdir().unwrap();
         let mut harness = harness(dir.path());
-        harness.state_mut().form = NewProfile {
+        harness.state_mut().new_profile.draft = ProfileDraft {
             name: "Thursday campaign".into(),
             rules: Rules::Pf2e,
             address: "https://example.test/data.zip".into(),
@@ -305,8 +269,9 @@ mod tests {
         harness.run();
         harness.get_by_label("Create profile").click();
         harness.run();
-        // The sidebar row and the view title.
-        assert_eq!(harness.get_all_by_label("Thursday campaign").count(), 2);
+        // The sidebar row, the top bar's breadcrumb and the view title.
+        assert_eq!(harness.get_all_by_label("Thursday campaign").count(), 3);
+        harness.get_by_label("Profiles /");
         harness.get_by_label("PF2e");
     }
 
@@ -314,7 +279,7 @@ mod tests {
     fn deleting_asks_first_says_the_vault_is_kept_and_returns_to_new_profile() {
         let dir = tempfile::tempdir().unwrap();
         let mut harness = harness(dir.path());
-        harness.state_mut().form = NewProfile {
+        harness.state_mut().new_profile.draft = ProfileDraft {
             name: "Thursday".into(),
             rules: Rules::Dnd5e,
             address: "https://example.test/data.zip".into(),
@@ -333,7 +298,8 @@ mod tests {
             .unwrap()
             .click();
         harness.run();
-        harness.get_by_label("New profile");
+        // The top bar's breadcrumb and the screen's title.
+        assert_eq!(harness.get_all_by_label("New profile").count(), 2);
         assert!(harness.state().engine.profiles().is_empty());
     }
 }

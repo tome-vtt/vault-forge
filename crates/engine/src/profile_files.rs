@@ -6,8 +6,6 @@ use std::path::{Path, PathBuf};
 
 use crate::Profile;
 
-const CONVERTER_CONFIG: &str = "paths:\n  compendium: compendium/\n  rules: rules/\n";
-
 pub(crate) struct ProfileFiles {
     dir: PathBuf,
 }
@@ -54,9 +52,10 @@ impl ProfileFiles {
         Ok(profiles)
     }
 
-    pub(crate) fn save(&self, p: &Profile) -> io::Result<()> {
+    /// Writes the converter config it is given beside the profile's own fields.
+    pub(crate) fn save(&self, p: &Profile, config: &str) -> io::Result<()> {
         let beside = serde_yaml_ng::to_string(p).map_err(io::Error::other)?;
-        write_atomic(&self.config_path(&p.id), CONVERTER_CONFIG)?;
+        write_atomic(&self.config_path(&p.id), config)?;
         write_atomic(&self.beside_path(&p.id), &beside)
     }
 

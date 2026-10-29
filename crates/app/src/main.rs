@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod new_profile;
 
 use eframe::egui;
 use vault_forge_engine::Engine;
