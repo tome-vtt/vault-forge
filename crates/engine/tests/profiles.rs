@@ -2,10 +2,10 @@
 use std::path::Path;
 use std::sync::mpsc::Receiver;
 
-use vault_forge_engine::{Command, Engine, Event, NewProfile, Profile, Rules};
+use vault_forge_engine::{Command, Engine, Event, Profile, ProfileDraft, Rules};
 
-fn new_profile(name: &str) -> NewProfile {
-    NewProfile {
+fn draft(name: &str) -> ProfileDraft {
+    ProfileDraft {
         name: name.into(),
         rules: Rules::Dnd5e,
         address: "http://127.0.0.1:1/data.zip".into(),
@@ -18,7 +18,7 @@ fn start(dir: &Path) -> (Engine, Receiver<Event>) {
 }
 
 fn create(engine: &Engine, events: &Receiver<Event>, name: &str) -> Profile {
-    engine.send(Command::CreateProfile(new_profile(name)));
+    engine.send(Command::CreateProfile(draft(name)));
     let created = events.try_iter().find_map(|e| match e {
         Event::ProfileCreated(id) => Some(id),
         _ => None,
@@ -57,7 +57,7 @@ fn a_created_profile_is_saved_as_a_valid_converter_config_file() {
 fn an_incomplete_profile_is_refused_and_nothing_is_saved() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, events) = start(dir.path());
-    let mut incomplete = new_profile("Thursday");
+    let mut incomplete = draft("Thursday");
     incomplete.address = "  ".into();
     assert!(!incomplete.is_complete());
 
@@ -145,4 +145,22 @@ fn a_profile_missing_its_config_file_can_still_be_deleted() {
 
     assert!(engine.profiles().is_empty());
     assert!(yaml_files(dir.path()).is_empty());
+}
+
+#[test]
+fn a_profile_named_like_a_windows_device_gets_a_file_windows_can_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let names = ["Con", "aux", "NUL", "Prn", "COM1", "lpt9"];
+    for name in names {
+        let id = create(&engine, &events, name).id;
+        let device = ["con", "aux", "nul", "prn", "com1", "lpt9"];
+        assert!(!device.contains(&id.as_str()), "{name} saved as {id}");
+    }
+    drop(engine);
+
+    let (engine, _events) = start(dir.path());
+    let mut loaded: Vec<_> = engine.profiles().into_iter().map(|p| p.name).collect();
+    loaded.sort_by_key(|n| n.to_lowercase());
+    assert_eq!(loaded, ["aux", "COM1", "Con", "lpt9", "NUL", "Prn"]);
 }
