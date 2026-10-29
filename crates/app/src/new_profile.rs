@@ -3,6 +3,7 @@ use eframe::egui;
 use vault_forge_engine::{Command, Engine, ProfileDraft, Rules};
 
 use crate::app::{narrow_column, rules_name};
+use crate::theme;
 
 #[derive(Default)]
 pub struct NewProfile {
@@ -24,7 +25,7 @@ impl NewProfile {
             ui.add_space(24.0);
             egui::Frame::new()
                 .fill(ui.visuals().faint_bg_color)
-                .corner_radius(12.0)
+                .corner_radius(16.0)
                 .inner_margin(16.0)
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
@@ -35,11 +36,8 @@ impl NewProfile {
                     );
                     ui.add_space(16.0);
                     ui.label("Game rules");
-                    ui.horizontal(|ui| {
-                        for rules in [Rules::Dnd5e, Rules::Pf2e] {
-                            ui.selectable_value(&mut self.draft.rules, rules, rules_name(rules));
-                        }
-                    });
+                    let choices = [Rules::Dnd5e, Rules::Pf2e].map(|r| (r, rules_name(r)));
+                    theme::segmented(ui, &mut self.draft.rules, &choices, false);
                     ui.add_space(16.0);
                     ui.label("Game data download address");
                     ui.add(
@@ -55,7 +53,8 @@ impl NewProfile {
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::TextEdit::singleline(&mut self.draft.vault)
-                                .hint_text("Your Obsidian vault"),
+                                .hint_text("Your Obsidian vault")
+                                .font(egui::TextStyle::Monospace),
                         );
                         if ui.button("Browse…").clicked()
                             && let Some(folder) = rfd::FileDialog::new().pick_folder()
@@ -64,10 +63,8 @@ impl NewProfile {
                         }
                     });
                     ui.add_space(16.0);
-                    let create = ui.add_enabled(
-                        self.draft.is_complete(),
-                        egui::Button::new("Create profile"),
-                    );
+                    let create =
+                        theme::primary_button(ui, self.draft.is_complete(), "Create profile");
                     if create.clicked() {
                         engine.send(Command::CreateProfile(self.draft.clone()));
                     }
