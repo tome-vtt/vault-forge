@@ -3,8 +3,17 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::app_settings::Settings;
+use serde::{Deserialize, Serialize};
+
+use crate::Appearance;
 use crate::profile_files::write_atomic;
+
+/// What `settings.yaml` holds. A missing field takes its default.
+#[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct Settings {
+    pub(crate) appearance: Appearance,
+}
 
 pub(crate) struct SettingsFile {
     path: PathBuf,

@@ -108,7 +108,7 @@ impl App {
                 .frame(ground.inner_margin(16))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(theme::brand());
+                        theme::brand(ui);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let close =
                                 egui::RichText::new("Close").color(theme::palette(ui).accent);
@@ -131,7 +131,7 @@ impl App {
                 .show_separator_line(false)
                 .frame(ground.inner_margin(egui::Margin::symmetric(12, 16)))
                 .show(ui, |ui| {
-                    ui.label(theme::brand());
+                    ui.horizontal(theme::brand);
                     self.sidebar(ui, &profiles);
                 });
         }
@@ -168,7 +168,7 @@ impl App {
                     }
                 });
             });
-        egui::CentralPanel::default()
+        let sheet = egui::CentralPanel::default()
             .frame(theme::sheet(ui, narrow))
             .show(ui, |ui| {
                 if let Some(message) = &self.error {
@@ -179,12 +179,17 @@ impl App {
                     None => self.new_profile.show(ui, &self.engine, profiles.is_empty()),
                 }
             });
+        if narrow {
+            let edge = sheet.response.rect;
+            let stroke = egui::Stroke::new(1.0, theme::palette(ui).border);
+            ui.painter().hline(edge.x_range(), edge.top(), stroke);
+        }
         self.dialog(ui.ctx());
     }
 
     /// The profile list, then the Appearance switch at the foot.
     fn sidebar(&mut self, ui: &mut egui::Ui, profiles: &[Profile]) {
-        ui.add_space(8.0);
+        ui.add_space(28.0);
         ui.label(egui::RichText::new("Profiles").small().weak());
         for p in profiles {
             let open = matches!(&self.screen, Screen::Profile(id) if *id == p.id);

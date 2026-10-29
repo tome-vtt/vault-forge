@@ -193,16 +193,16 @@ fn visuals(p: &Palette, base: Visuals) -> Visuals {
     v
 }
 
-/// The sheet the work sits on: square and edge to edge when the window is narrow.
+/// The sheet the work sits on. When the window is narrow it is square and edge to edge, and the
+/// caller draws its one edge, along the top.
 pub fn sheet(ui: &egui::Ui, narrow: bool) -> egui::Frame {
     let p = palette(ui);
-    let frame = egui::Frame::new()
-        .fill(p.surface)
-        .stroke(Stroke::new(1.0, p.border));
+    let frame = egui::Frame::new().fill(p.surface);
     if narrow {
         frame.inner_margin(Margin::symmetric(16, 20))
     } else {
         frame
+            .stroke(Stroke::new(1.0, p.border))
             .corner_radius(16)
             .outer_margin(Margin {
                 left: 0,
@@ -242,9 +242,24 @@ pub fn primary_button(ui: &mut egui::Ui, enabled: bool, text: &str) -> egui::Res
     .inner
 }
 
-/// The app's name at the head of the sidebar and the menu.
-pub fn brand() -> egui::RichText {
-    egui::RichText::new("Vault Forge").font(FontId::new(15.0, FontFamily::Name("semibold".into())))
+/// The app's mark and name at the head of the sidebar and the menu.
+pub fn brand(ui: &mut egui::Ui) {
+    let (mark, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
+    let painter = ui.painter();
+    // The demo's mark is the same teal in both palettes.
+    painter.rect_filled(mark.shrink(1.0), 5, LIGHT.accent);
+    // An open book: two pages meeting at the spine.
+    let ink = Stroke::new(1.4, Color32::WHITE);
+    let at = |x: f32, y: f32| mark.min + egui::vec2(x, y);
+    for edge in [6.0, 16.0] {
+        let page = vec![at(11.0, 7.1), at(edge, 6.5), at(edge, 15.7), at(11.0, 16.5)];
+        painter.add(egui::Shape::line(page, ink));
+    }
+    painter.line_segment([at(11.0, 7.1), at(11.0, 16.5)], ink);
+    ui.label(
+        egui::RichText::new("Vault Forge")
+            .font(FontId::new(15.0, FontFamily::Name("semibold".into()))),
+    );
 }
 
 /// A text field as tall as the demo's, filling the width it is given.
@@ -278,7 +293,8 @@ pub fn danger_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
 }
 
 /// The demo's segmented switch: a grey track with the chosen option on a field-coloured chip.
-/// `fill` stretches it across the available width, as the sidebar's Appearance switch does.
+/// `fill` stretches it across the available width in small type, as the sidebar's Appearance
+/// switch does.
 pub fn segmented<T: PartialEq + Copy>(
     ui: &mut egui::Ui,
     value: &mut T,
@@ -292,22 +308,18 @@ pub fn segmented<T: PartialEq + Copy>(
         .inner_margin(3)
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            let (width, height, small) = if fill {
+            let (width, height) = if fill {
                 let gaps = 2.0 * (choices.len() - 1) as f32;
-                (
-                    (ui.available_width() - gaps) / choices.len() as f32,
-                    28.0,
-                    true,
-                )
+                ((ui.available_width() - gaps) / choices.len() as f32, 28.0)
             } else {
-                (0.0, 30.0, false)
+                (0.0, 30.0)
             };
             ui.horizontal(|ui| {
                 for (choice, label) in choices {
                     let chosen = *value == *choice;
                     let mut text =
                         egui::RichText::new(*label).color(if chosen { p.text } else { p.muted });
-                    if small {
+                    if fill {
                         text = text.small();
                     }
                     let mut button = egui::Button::selectable(chosen, text)

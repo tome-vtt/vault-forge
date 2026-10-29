@@ -1,16 +1,8 @@
 //! App settings: what belongs to the app rather than a profile, and the rules about it.
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
-
 use crate::Appearance;
-use crate::settings_file::SettingsFile;
-
-#[derive(Default, Serialize, Deserialize)]
-#[serde(default)]
-pub(crate) struct Settings {
-    appearance: Appearance,
-}
+use crate::settings_file::{Settings, SettingsFile};
 
 pub(crate) struct AppSettings {
     file: SettingsFile,

@@ -120,13 +120,13 @@ impl Engine {
     // conversion and downloads will use worker threads.
     /// Hands the command to the part that owns it.
     pub fn send(&self, command: Command) {
-        let profiles = || self.profiles.lock().unwrap();
+        let mut profiles = self.profiles.lock().unwrap();
         let outcome = match command {
-            Command::CreateProfile(draft) => profiles().create(draft).map(|id| {
+            Command::CreateProfile(draft) => profiles.create(draft).map(|id| {
                 let _ = self.events.send(Event::ProfileCreated(id));
             }),
-            Command::RenameProfile { id, name } => profiles().rename(&id, &name),
-            Command::DeleteProfile(id) => profiles().delete(&id).map(|()| {
+            Command::RenameProfile { id, name } => profiles.rename(&id, &name),
+            Command::DeleteProfile(id) => profiles.delete(&id).map(|()| {
                 let _ = self.events.send(Event::ProfileDeleted(id));
             }),
             Command::SetAppearance(appearance) => {

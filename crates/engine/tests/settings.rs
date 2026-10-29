@@ -1,5 +1,5 @@
 //! App settings through the Engine's front door: commands in, files out, read back on restart.
-use vault_forge_engine::{Appearance, Command, Engine};
+use vault_forge_engine::{Appearance, Command, Engine, Event};
 
 #[test]
 fn a_fresh_install_follows_the_system_appearance() {
@@ -40,4 +40,15 @@ fn an_unreadable_settings_file_falls_back_to_system_instead_of_stopping_the_app(
     .unwrap();
     let (engine, _events) = Engine::start(dir.path().to_path_buf()).unwrap();
     assert_eq!(engine.appearance(), Appearance::System);
+}
+
+#[test]
+fn a_choice_that_cannot_be_saved_still_applies_now_and_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    // A folder where the file should be makes every save fail.
+    std::fs::create_dir(dir.path().join("settings.yaml")).unwrap();
+    let (engine, events) = Engine::start(dir.path().to_path_buf()).unwrap();
+    engine.send(Command::SetAppearance(Appearance::Dark));
+    assert_eq!(engine.appearance(), Appearance::Dark);
+    assert!(matches!(events.try_recv(), Ok(Event::Failed(_))));
 }
