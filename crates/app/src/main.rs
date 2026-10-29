@@ -1,7 +1,10 @@
 // No console window behind the app on Windows release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app;
+
 use eframe::egui;
+use vault_forge_engine::Engine;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -11,19 +14,21 @@ fn main() -> eframe::Result {
             .with_min_inner_size([480.0, 600.0]),
         ..Default::default()
     };
+    let app_data = directories::ProjectDirs::from("", "", "Vault Forge")
+        .map(|d| d.data_dir().to_path_buf())
+        .expect("no home folder to keep app data in");
+    let (engine, events) = Engine::start(app_data).expect("could not open the app data folder");
     eframe::run_native(
         "Vault Forge",
         options,
-        Box::new(|_cc| Ok(Box::new(VaultForge))),
+        Box::new(|_cc| Ok(Box::new(Shell(app::App::new(engine, events))))),
     )
 }
 
-struct VaultForge;
+struct Shell(app::App);
 
-impl eframe::App for VaultForge {
+impl eframe::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.heading("Vault Forge");
-        });
+        self.0.ui(ui);
     }
 }
