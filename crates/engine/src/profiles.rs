@@ -101,10 +101,12 @@ impl Profiles {
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
             .join("-");
-        let base = match slug.as_str() {
+        // Keeps `<id>-<n>.forge.yaml` under the 255-byte file-name limit and well under MAX_PATH.
+        let slug = slug[..slug.floor_char_boundary(64)].trim_end_matches('-');
+        let base = match slug {
             "" => "profile".to_owned(),
             s if WINDOWS_DEVICES.contains(&s) => format!("{s}-profile"),
-            _ => slug,
+            _ => slug.to_owned(),
         };
         let mut id = base.clone();
         let mut n = 2;

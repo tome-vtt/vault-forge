@@ -171,3 +171,20 @@ fn a_profile_named_like_a_windows_device_gets_a_file_windows_can_open() {
     let (engine, _events) = start(dir.path());
     assert_eq!(engine.profiles().len(), names.len());
 }
+
+#[test]
+fn a_profile_with_a_very_long_name_saves_and_survives_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    // Over the 255-byte file-name limit, in plain and three-byte characters.
+    let names = ["a".repeat(300), "龍".repeat(300)];
+    for name in &names {
+        create(&engine, &events, name);
+    }
+    drop(engine);
+
+    let (engine, _events) = start(dir.path());
+    let mut saved: Vec<String> = engine.profiles().into_iter().map(|p| p.name).collect();
+    saved.sort();
+    assert_eq!(saved, names);
+}
