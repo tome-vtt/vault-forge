@@ -242,6 +242,32 @@ pub fn primary_button(ui: &mut egui::Ui, enabled: bool, text: &str) -> egui::Res
     .inner
 }
 
+/// The app's name at the head of the sidebar and the menu.
+pub fn brand() -> egui::RichText {
+    egui::RichText::new("Vault Forge").font(FontId::new(15.0, FontFamily::Name("semibold".into())))
+}
+
+/// A text field as tall as the demo's, filling the width it is given.
+pub fn input(edit: egui::TextEdit<'_>) -> egui::TextEdit<'_> {
+    edit.desired_width(f32::INFINITY)
+        .margin(egui::vec2(12.0, 10.0))
+}
+
+/// A sidebar row: full width, with an optional tag such as the profile's rules on the right.
+pub fn nav_row(ui: &mut egui::Ui, selected: bool, text: &str, tag: &str) -> egui::Response {
+    let p = palette(ui);
+    let ink = if selected { p.text } else { p.text2 };
+    let button = egui::Button::selectable(selected, egui::RichText::new(text).color(ink))
+        .stroke(Stroke::NONE)
+        .corner_radius(8)
+        .min_size(egui::vec2(ui.available_width(), 32.0));
+    // The tag is part of the row's name for screen readers, so an empty one is left out.
+    ui.add(match tag {
+        "" => button.right_text(egui::Atom::grow()),
+        tag => button.right_text(egui::RichText::new(tag).small().color(p.muted)),
+    })
+}
+
 /// A button for an action that removes something.
 pub fn danger_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let p = palette(ui);

@@ -28,11 +28,11 @@ pub struct App {
     menu_open: bool,
 }
 
-/// The demo's centred reading column for forms and text pages.
+/// The demo's reading column for forms and text pages: left-aligned, at most 760 wide.
 pub fn narrow_column(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
-    ui.vertical_centered(|ui| {
+    ui.vertical(|ui| {
         ui.set_max_width(ui.available_width().min(760.0));
-        ui.with_layout(egui::Layout::top_down(egui::Align::Min), add);
+        add(ui);
     });
 }
 
@@ -108,7 +108,7 @@ impl App {
                 .frame(ground.inner_margin(16))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.heading("Vault Forge");
+                        ui.label(theme::brand());
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let close =
                                 egui::RichText::new("Close").color(theme::palette(ui).accent);
@@ -131,7 +131,7 @@ impl App {
                 .show_separator_line(false)
                 .frame(ground.inner_margin(egui::Margin::symmetric(12, 16)))
                 .show(ui, |ui| {
-                    ui.heading("Vault Forge");
+                    ui.label(theme::brand());
                     self.sidebar(ui, &profiles);
                 });
         }
@@ -188,17 +188,12 @@ impl App {
         ui.label(egui::RichText::new("Profiles").small().weak());
         for p in profiles {
             let open = matches!(&self.screen, Screen::Profile(id) if *id == p.id);
-            ui.horizontal(|ui| {
-                if ui.selectable_label(open, &p.name).clicked() {
-                    self.go(Screen::Profile(p.id.clone()));
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(egui::RichText::new(rules_tag(p.rules)).small().weak());
-                });
-            });
+            if theme::nav_row(ui, open, &p.name, rules_tag(p.rules)).clicked() {
+                self.go(Screen::Profile(p.id.clone()));
+            }
         }
         let on_new = matches!(self.screen, Screen::NewProfile);
-        if ui.selectable_label(on_new, "+ New profile").clicked() {
+        if theme::nav_row(ui, on_new, "+ New profile", "").clicked() {
             self.go(Screen::NewProfile);
         }
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
@@ -431,10 +426,10 @@ mod tests {
         harness.run();
         harness.get_by_label("Create profile").click();
         harness.run();
-        // The sidebar row, the top bar's breadcrumb and the view title.
-        assert_eq!(harness.get_all_by_label("Thursday campaign").count(), 3);
+        // The top bar's breadcrumb and the view title; the sidebar row also names its rules.
+        assert_eq!(harness.get_all_by_label("Thursday campaign").count(), 2);
         harness.get_by_label("Profiles /");
-        harness.get_by_label("PF2e");
+        harness.get_by_label("Thursday campaign PF2e");
     }
 
     #[test]
