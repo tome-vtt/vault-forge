@@ -1,0 +1,122 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/tome-vtt/Spider/master/schema/silk.schema.json
+version: 1
+
+repo:
+  baseBranch: development
+  releaseBranch: master
+  workBranchPattern: spider/{ticket.id}
+  demoDir: docs/design
+  demoLinks: true
+  merge:
+    lander: node
+    check: { gate: true, timeoutSec: 1800 }
+    onConflict: { state: Needs-Revision }
+    onCheckFailed: { state: Needs-Revision }
+    onReverted: { state: Needs-Revision }
+    onParked: { state: Stuck }
+    maxAttempts: 3
+
+tracker:
+  type: spider
+  prefix: VF
+  states:
+    Asked: waiting
+    Hand-Step: waiting
+    Review-Limit: waiting
+    Stuck: waiting
+    Landed: done
+    Split: done
+    Already-Done: done
+    Wont-Do: dropped
+    Duplicate: dropped
+    Superseded: dropped
+
+defaults:
+  maxTurns: 150
+  maxRuntimeMin: 90
+
+cleanup:
+  locks: [tests, merge]
+  timeoutSec: 120
+
+testLock:
+  commands:
+    - 'cargo\s+(?:test|nextest)\b'
+
+screens:
+  paths: ["crates/app/**"]
+
+gate:
+  - name: rust
+    paths: ["**/*.rs", "**/Cargo.toml", "Cargo.lock"]
+    run:
+      - cargo fmt --check
+      - cargo clippy --all-targets -- -D warnings
+      - cargo test
+
+stages:
+  - name: revision
+    queue: { state: Needs-Revision }
+    whileRunning: In-Revision
+    prompt: |
+      /revision {ticket.id}
+
+      The ticket:
+      {ticket.body}
+
+      The findings from the review that sent this back:
+      {prior.summary}
+    maxTurns: 200
+    maxRuntimeMin: 120
+    merges: true
+    on:
+      done:
+        pass: { state: Needs-Review }
+      parked: { state: Stuck }
+      nothing_to_do: { state: Already-Done }
+      stage_error: { state: Stuck }
+
+  - name: review
+    queue: { state: Needs-Review }
+    whileRunning: In-Review
+    prompt: |
+      /review {ticket.id}
+
+      The ticket:
+      {ticket.body}
+
+      The prior stage's self-review:
+      {prior.summary}
+
+      The range of the ticket's newest landing:
+      {prior.range}
+
+      This stage's own rejections since the ticket was last parked: {loop.rejections}, of a cap of
+      {loop.cap}.
+    maxTurns: 100
+    maxRuntimeMin: 45
+    on:
+      done:
+        pass: { state: Landed }
+        changes_requested: { state: Needs-Revision }
+      parked: { state: Stuck }
+      nothing_to_do: { state: Already-Done }
+      stage_error: { state: Stuck }
+
+  - name: build
+    queue: { state: Needs-Build }
+    whileRunning: In-Build
+    prompt: |
+      /build {ticket.id}
+
+      The ticket:
+      {ticket.body}
+    maxTurns: 250
+    maxRuntimeMin: 180
+    merges: true
+    on:
+      done:
+        pass: { state: Needs-Review }
+      parked: { state: Stuck }
+      nothing_to_do: { state: Already-Done }
+      stage_error: { state: Stuck }
