@@ -43,9 +43,6 @@ testLock:
   commands:
     - 'cargo\s+(?:test|nextest)\b'
 
-screens:
-  paths: ["crates/app/**"]
-
 gate:
   - name: rust
     paths: ["**/*.rs", "**/Cargo.toml", "Cargo.lock"]
