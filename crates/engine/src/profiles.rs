@@ -9,9 +9,10 @@ use crate::{Profile, ProfileDraft, is_valid_name};
 const CONVERTER_CONFIG: &str = "paths:\n  compendium: compendium/\n  rules: rules/\n";
 
 /// File names Windows treats as devices, whatever the extension.
-const WINDOWS_DEVICES: [&str; 22] = [
-    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
-    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+const WINDOWS_DEVICES: [&str; 30] = [
+    "con", "prn", "aux", "nul", "com0", "com1", "com2", "com3", "com4", "com5", "com6", "com7",
+    "com8", "com9", "com¹", "com²", "com³", "lpt0", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6",
+    "lpt7", "lpt8", "lpt9", "lpt¹", "lpt²", "lpt³",
 ];
 
 pub(crate) struct Profiles {

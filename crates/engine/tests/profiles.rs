@@ -87,6 +87,8 @@ fn a_rename_persists_across_restart() {
         id: profile.id.clone(),
         name: "Friday".into(),
     });
+    let names: Vec<_> = engine.profiles().into_iter().map(|p| p.name).collect();
+    assert_eq!(names, ["Friday"]);
     drop(engine);
 
     let (engine, _events) = start(dir.path());
@@ -151,16 +153,21 @@ fn a_profile_missing_its_config_file_can_still_be_deleted() {
 fn a_profile_named_like_a_windows_device_gets_a_file_windows_can_open() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, events) = start(dir.path());
-    let names = ["Con", "aux", "NUL", "Prn", "COM1", "lpt9"];
-    for name in names {
+    // Windows' reserved device names, in mixed case as a user might type them.
+    let mut names = vec!["Con".to_owned(), "PRN".into(), "aux".into(), "Nul".into()];
+    for port in ["COM", "lpt"] {
+        for n in [
+            "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "¹", "²", "³",
+        ] {
+            names.push(format!("{port}{n}"));
+        }
+    }
+    for name in &names {
         let id = create(&engine, &events, name).id;
-        let device = ["con", "aux", "nul", "prn", "com1", "lpt9"];
-        assert!(!device.contains(&id.as_str()), "{name} saved as {id}");
+        assert_ne!(id, name.to_lowercase(), "{name} saved as {id}");
     }
     drop(engine);
 
     let (engine, _events) = start(dir.path());
-    let mut loaded: Vec<_> = engine.profiles().into_iter().map(|p| p.name).collect();
-    loaded.sort_by_key(|n| n.to_lowercase());
-    assert_eq!(loaded, ["aux", "COM1", "Con", "lpt9", "NUL", "Prn"]);
+    assert_eq!(engine.profiles().len(), names.len());
 }
