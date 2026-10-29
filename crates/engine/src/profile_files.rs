@@ -4,29 +4,9 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use crate::Profile;
 
-use crate::{Profile, Rules};
-
-#[derive(Serialize)]
-struct ConverterConfig {
-    paths: ConfigPaths,
-}
-
-#[derive(Serialize)]
-struct ConfigPaths {
-    compendium: &'static str,
-    rules: &'static str,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Beside {
-    name: String,
-    rules: Rules,
-    address: String,
-    vault: PathBuf,
-    images: bool,
-}
+const CONVERTER_CONFIG: &str = "paths:\n  compendium: compendium/\n  rules: rules/\n";
 
 pub(crate) struct ProfileFiles {
     dir: PathBuf,
@@ -51,6 +31,8 @@ impl ProfileFiles {
         self.config_path(id).exists() || self.beside_path(id).exists()
     }
 
+    /// Every readable profile. A file that cannot be read or parsed is skipped (and left on
+    /// disk) so one bad file does not lock the user out of the rest.
     pub(crate) fn load_all(&self) -> io::Result<Vec<Profile>> {
         let mut profiles = Vec::new();
         for entry in std::fs::read_dir(&self.dir)? {
@@ -59,48 +41,40 @@ impl ProfileFiles {
             let Some(id) = name.and_then(|n| n.strip_suffix(".forge.yaml")) else {
                 continue;
             };
-            let text = std::fs::read_to_string(&path)?;
-            let b: Beside = serde_yaml_ng::from_str(&text).map_err(io::Error::other)?;
-            profiles.push(Profile {
-                id: id.to_owned(),
-                name: b.name,
-                rules: b.rules,
-                address: b.address,
-                vault: b.vault,
-                images: b.images,
-            });
+            let parsed = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|text| serde_yaml_ng::from_str::<Profile>(&text).ok());
+            if let Some(profile) = parsed {
+                profiles.push(Profile {
+                    id: id.to_owned(),
+                    ..profile
+                });
+            }
         }
         Ok(profiles)
     }
 
     pub(crate) fn save(&self, p: &Profile) -> io::Result<()> {
-        let config = ConverterConfig {
-            paths: ConfigPaths {
-                compendium: "compendium/",
-                rules: "rules/",
-            },
-        };
-        let beside = Beside {
-            name: p.name.clone(),
-            rules: p.rules,
-            address: p.address.clone(),
-            vault: p.vault.clone(),
-            images: p.images,
-        };
-        write_yaml(&self.config_path(&p.id), &config)?;
-        write_yaml(&self.beside_path(&p.id), &beside)
+        let beside = serde_yaml_ng::to_string(p).map_err(io::Error::other)?;
+        write_atomic(&self.config_path(&p.id), CONVERTER_CONFIG)?;
+        write_atomic(&self.beside_path(&p.id), &beside)
     }
 
+    /// Removes both files; one already missing is fine.
     pub(crate) fn delete(&self, id: &str) -> io::Result<()> {
         // Sidecar first: without it the profile no longer loads, so a half delete never half shows.
-        std::fs::remove_file(self.beside_path(id))?;
-        std::fs::remove_file(self.config_path(id))
+        for path in [self.beside_path(id), self.config_path(id)] {
+            match std::fs::remove_file(path) {
+                Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+                _ => {}
+            }
+        }
+        Ok(())
     }
 }
 
 // Write beside, then rename, so a crash never leaves a half-written profile.
-fn write_yaml(path: &Path, value: &impl Serialize) -> io::Result<()> {
-    let text = serde_yaml_ng::to_string(value).map_err(io::Error::other)?;
+fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, text)?;
     std::fs::rename(tmp, path)

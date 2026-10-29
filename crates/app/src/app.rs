@@ -2,7 +2,7 @@
 use std::sync::mpsc::Receiver;
 
 use eframe::egui;
-use vault_forge_engine::{Command, Engine, Event, NewProfile, Profile, Rules};
+use vault_forge_engine::{Command, Engine, Event, NewProfile, Profile, Rules, is_valid_name};
 
 enum Screen {
     NewProfile,
@@ -209,7 +209,7 @@ impl App {
             Dialog::Rename { id, name } => {
                 ui.heading("Rename profile");
                 let edit = ui.text_edit_singleline(name);
-                let ok = !name.trim().is_empty();
+                let ok = is_valid_name(name);
                 let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 ui.horizontal(|ui| {
                     cancel = ui.button("Cancel").clicked();

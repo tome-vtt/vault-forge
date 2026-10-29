@@ -120,3 +120,29 @@ fn a_delete_removes_its_files_and_leaves_other_profiles_alone() {
     let names: Vec<_> = engine.profiles().into_iter().map(|p| p.name).collect();
     assert_eq!(names, ["Keep"]);
 }
+
+#[test]
+fn a_corrupt_profile_file_does_not_stop_the_others_from_loading() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    create(&engine, &events, "Good");
+    drop(engine);
+    std::fs::write(dir.path().join("profiles/bad.forge.yaml"), "{ not: [valid").unwrap();
+
+    let (engine, _events) = start(dir.path());
+    let names: Vec<_> = engine.profiles().into_iter().map(|p| p.name).collect();
+    assert_eq!(names, ["Good"]);
+}
+
+#[test]
+fn a_profile_missing_its_config_file_can_still_be_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Half");
+    std::fs::remove_file(dir.path().join("profiles/half.yaml")).unwrap();
+
+    engine.send(Command::DeleteProfile(profile.id));
+
+    assert!(engine.profiles().is_empty());
+    assert!(yaml_files(dir.path()).is_empty());
+}

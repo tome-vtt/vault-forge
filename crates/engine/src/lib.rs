@@ -22,9 +22,10 @@ pub enum Rules {
     Pf2e,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Profile {
-    /// File-name stem; never changes, even when the profile is renamed.
+    /// File-name stem; never changes, even when the profile is renamed. Not stored in the file.
+    #[serde(skip)]
     pub id: String,
     pub name: String,
     pub rules: Rules,
@@ -48,6 +49,11 @@ impl NewProfile {
             .iter()
             .all(|s| !s.trim().is_empty())
     }
+}
+
+/// A profile's name must have something in it.
+pub fn is_valid_name(name: &str) -> bool {
+    !name.trim().is_empty()
 }
 
 #[derive(Debug)]
@@ -126,7 +132,7 @@ impl Engine {
                 let _ = self.events.send(Event::ProfileCreated(id));
             }
             Command::RenameProfile { id, name } => {
-                if name.trim().is_empty() {
+                if !is_valid_name(&name) {
                     return Err("A profile needs a name.".into());
                 }
                 let p = profiles
