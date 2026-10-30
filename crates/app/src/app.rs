@@ -974,6 +974,60 @@ mod tests {
         );
     }
 
+    fn codes_field<'a>(harness: &'a Harness<'_, App>, label: &'a str) -> egui_kittest::Node<'a> {
+        harness
+            .get_all_by_label(label)
+            .find(|n| n.accesskit_node().role() == egui::accesskit::Role::TextInput)
+            .unwrap()
+    }
+
+    #[test]
+    fn the_typed_codes_keep_the_books_ticked_in_the_list_while_an_update_downloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        game_data(&events, three_books());
+        harness.run();
+        harness.get_by_label("PHB").click();
+        harness.run();
+
+        let downloading = DataState::Downloading {
+            bytes: 0,
+            elapsed: std::time::Duration::ZERO,
+        };
+        game_data(&events, downloading);
+        harness.run();
+        let field = codes_field(&harness, "Book codes");
+        assert_eq!(field.value().as_deref(), Some("PHB"));
+        // Clicking into the field and away leaves the chosen book as it was.
+        field.focus();
+        harness.run();
+        codes_field(&harness, "Adventure codes").focus();
+        harness.run();
+        assert_eq!(
+            harness.state().engine.profiles()[0].config.sources.book,
+            ["PHB"]
+        );
+    }
+
+    #[test]
+    fn typed_codes_are_saved_even_when_the_field_goes_before_it_loses_focus() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        codes_field(&harness, "Book codes").focus();
+        harness.run();
+        codes_field(&harness, "Book codes").type_text("XGE");
+        harness.run();
+        // The download finishes while the field still has focus, and the list takes its place.
+        game_data(&events, three_books());
+        harness.run();
+        assert_eq!(
+            harness.state().engine.profiles()[0].config.sources.book,
+            ["XGE"]
+        );
+    }
+
     #[test]
     fn clicking_anywhere_on_a_book_row_ticks_it() {
         let dir = tempfile::tempdir().unwrap();

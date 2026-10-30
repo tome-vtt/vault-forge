@@ -132,20 +132,26 @@ impl BooksSection {
             ("Book codes", &mut self.book_codes, false),
             ("Adventure codes", &mut self.adventure_codes, true),
         ] {
+            let saved = if adventures {
+                &profile.config.sources.adventure
+            } else {
+                &profile.config.sources.book
+            };
             let title = ui.label(theme::medium(label));
             let edit = egui::TextEdit::singleline(text).font(egui::TextStyle::Monospace);
             let field = theme::input(ui, edit).labelled_by(title.id);
-            if field.lost_focus() {
-                let codes = typed_codes(text);
+            // Saved as typed, so nothing is lost when the field goes before it loses focus.
+            if field.changed() && typed_codes(text) != *saved {
                 let mut typed = profile.clone();
                 if adventures {
-                    typed.config.sources.adventure = codes;
+                    typed.config.sources.adventure = typed_codes(text);
                 } else {
-                    typed.config.sources.book = codes;
+                    typed.config.sources.book = typed_codes(text);
                 }
-                if typed.config.sources != profile.config.sources {
-                    engine.send(Command::SaveProfile(typed));
-                }
+                engine.send(Command::SaveProfile(typed));
+            } else if !field.has_focus() {
+                // Books ticked in the list while the field was away show here too.
+                *text = saved.join(", ");
             }
             ui.add_space(12.0);
         }
