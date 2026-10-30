@@ -157,10 +157,12 @@ pub enum Command {
     SaveProfile(Profile),
     /// Reports the profile's game data and asks the server whether it has newer data.
     CheckGameData(String),
-    /// Downloads, or updates, the profile's game data.
-    DownloadGameData(String),
-    /// Downloads, or updates, the profile's book images, when switched on.
-    DownloadImages(String),
+    /// Saves the profile as the screen shows it, then downloads, or updates, its game data.
+    /// Nothing downloads when the save is refused.
+    DownloadGameData(Profile),
+    /// Saves the profile as the screen shows it, then downloads, or updates, its book images,
+    /// when switched on. Nothing downloads when the save is refused.
+    DownloadImages(Profile),
     /// Stops every download the profile has running.
     CancelDownload(String),
     SetAppearance(Appearance),
@@ -227,28 +229,16 @@ impl Engine {
                     old.map_or(Ok(()), |old| self.release_unused(&profiles, &old))
                 })
             }
-            Command::SaveProfile(profile) => profiles.get(&profile.id).cloned().and_then(|old| {
-                let id = profile.id.clone();
-                profiles.save(profile)?;
-                let new = profiles.get(&id)?;
-                // A changed address or images switch is checked at once, so its state and the
-                // images' size show before anything downloads.
-                if new.downloads() != old.downloads() {
-                    for (address, _) in new.downloads() {
-                        self.game_data.check(address);
-                    }
-                }
-                self.release_unused(&profiles, &old)
-            }),
+            Command::SaveProfile(profile) => self.save(&mut profiles, profile).map(drop),
             Command::CheckGameData(id) => profiles.get(&id).map(|p| {
                 for (address, _) in p.downloads() {
                     self.game_data.check(address);
                 }
             }),
-            Command::DownloadGameData(id) => profiles
-                .get(&id)
+            Command::DownloadGameData(profile) => self
+                .save(&mut profiles, profile)
                 .map(|p| self.game_data.download(&p.address, Kind::GameData)),
-            Command::DownloadImages(id) => profiles.get(&id).map(|p| {
+            Command::DownloadImages(profile) => self.save(&mut profiles, profile).map(|p| {
                 for (address, kind) in p.downloads() {
                     if kind == Kind::Images {
                         self.game_data.download(address, kind);
@@ -267,6 +257,23 @@ impl Engine {
         if let Err(message) = outcome {
             let _ = self.events.send(Event::Failed(message));
         }
+    }
+
+    /// Saves a changed profile and returns it as saved.
+    fn save(&self, profiles: &mut Profiles, profile: Profile) -> Result<Profile, String> {
+        let old = profiles.get(&profile.id)?.clone();
+        let id = profile.id.clone();
+        profiles.save(profile)?;
+        let new = profiles.get(&id)?.clone();
+        // A changed address or images switch is checked at once, so its state and the images'
+        // size show before anything downloads.
+        if new.downloads() != old.downloads() {
+            for (address, _) in new.downloads() {
+                self.game_data.check(address);
+            }
+        }
+        self.release_unused(profiles, &old)?;
+        Ok(new)
     }
 
     /// Removes the cached copy of each of `old`'s addresses that no profile uses any more.
