@@ -51,8 +51,9 @@ impl GameData {
         })
     }
 
-    /// Reports the address's copy at once, then asks the server, without downloading, whether
-    /// there is newer data (or, with no copy yet, how big the download is).
+    /// Reports the address's copy, then asks the server, without downloading, whether there is
+    /// newer data (or, with no copy yet, how big the download is). Both run on a worker thread,
+    /// since reading the copy parses its books lists.
     pub(crate) fn check(&self, address: &str) {
         let ended = {
             let running = self.running.lock().unwrap();
@@ -61,29 +62,35 @@ impl GameData {
             }
             running.ended.get(address).copied()
         };
-        let cached = read(&self.cache, address);
-        send(&self.events, address, state_of(cached.as_ref(), false));
-        let (events, running, address) = (
+        let (cache, events, running, address) = (
+            self.cache.clone(),
             self.events.clone(),
             self.running.clone(),
             address.to_owned(),
         );
         std::thread::spawn(move || {
+            // Sends unless a download (or a release) ran meanwhile, which reports its own state.
+            let report = |state| {
+                // Held while sending, so a download starting now reports after this.
+                let running = running.lock().unwrap();
+                let current = !running.cancels.contains_key(&address)
+                    && running.ended.get(&address) == ended.as_ref();
+                if current {
+                    send(&events, &address, state);
+                }
+                current
+            };
+            let cached = read(&cache, &address);
+            if !report(state_of(cached.as_ref(), false)) {
+                return;
+            }
             let Ok(head) = downloader::head(&address) else {
                 return; // Offline: the copy already reported stands.
             };
-            // Held while sending, so a download starting now reports after this.
-            let running = running.lock().unwrap();
-            if running.cancels.contains_key(&address)
-                || running.ended.get(&address) != ended.as_ref()
-            {
-                return; // A download ran meanwhile and reports its own state.
-            }
-            let state = match &cached {
+            report(match &cached {
                 Some(c) => state_of(Some(c), is_newer(c, &head)),
                 None => DataState::Missing { size: head.size },
-            };
-            send(&events, &address, state);
+            });
         });
     }
 
@@ -137,10 +144,12 @@ impl GameData {
     /// Removes the address's copy, once no profile uses the address any more.
     pub(crate) fn release(&self, address: &str) -> Result<(), String> {
         // Held while removing, so a running download cannot put its copy back afterwards.
-        let running = self.running.lock().unwrap();
+        let mut running = self.running.lock().unwrap();
         if let Some(cancel) = running.cancels.get(address) {
             cancel.store(true, Ordering::Relaxed);
         }
+        // Counted as an ended download, so a check reading the copy now drops its answer.
+        *running.ended.entry(address.to_owned()).or_default() += 1;
         self.cache
             .remove(address)
             .map_err(|e| format!("Could not remove the unused game data: {e}"))

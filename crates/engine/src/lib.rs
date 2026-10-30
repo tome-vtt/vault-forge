@@ -168,11 +168,12 @@ impl Profile {
         }
     }
 
-    /// Whether any of the profile's downloads is running.
+    /// Whether any of the profile's downloads is running, counting images switched off until
+    /// their cancelled download has stopped.
     pub fn is_downloading(&self, data: &HashMap<String, DataState>) -> bool {
-        self.downloads()
+        [&self.address, &self.images_address]
             .iter()
-            .any(|(address, _)| data.get(*address).is_some_and(DataState::is_busy))
+            .any(|address| data.get(*address).is_some_and(DataState::is_busy))
     }
 }
 
@@ -423,9 +424,14 @@ impl Engine {
         Ok(new)
     }
 
-    /// Removes the cached copy of each of `old`'s addresses that no profile uses any more.
+    /// Stops each of `old`'s downloads that no profile downloads any more (images switched
+    /// off), and removes the cached copy of each of its addresses that no profile uses.
     fn release_unused(&self, profiles: &Profiles, old: &Profile) -> Result<(), String> {
         for address in [&old.address, &old.images_address] {
+            let downloads = |p: &Profile| p.downloads().iter().any(|(a, _)| a == address);
+            if !profiles.list().iter().any(downloads) {
+                self.game_data.cancel(address);
+            }
             if !address.is_empty() && !profiles.list().iter().any(|p| p.uses(address)) {
                 self.game_data.release(address)?;
             }
