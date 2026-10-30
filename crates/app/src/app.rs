@@ -162,6 +162,9 @@ impl App {
                     self.screen = Screen::Profile(id);
                 }
                 Event::ProfileDeleted(id) => {
+                    // A new profile of the same name takes the id, so its record is read afresh.
+                    self.last_run = None;
+                    self.last_run_view = LastRunView::default();
                     if matches!(&self.screen, Screen::Profile(open) if *open == id) {
                         self.screen = first_screen(&self.engine);
                     }
@@ -828,6 +831,7 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
 
+    use chrono::TimeZone;
     use eframe::egui::Theme;
     use egui_kittest::Harness;
     use std::sync::mpsc::Sender;
@@ -1345,8 +1349,12 @@ mod tests {
             ("compendium/races", 21),
             ("rules", 9),
         ];
+        // Long past, so the subtitle reads its date whatever the clock says.
+        let started = chrono::Local
+            .with_ymd_and_hms(2020, 3, 14, 12, 0, 0)
+            .unwrap();
         LastRun {
-            started: SystemTime::now(),
+            started: started.into(),
             seconds: 102,
             converted: true,
             exit_code: Some(0),
@@ -1356,7 +1364,7 @@ mod tests {
             homebrew: 1,
             folders: folders.map(|(f, n)| (f.to_owned(), n)).to_vec(),
             warnings: vec![vault_forge_engine::Warning {
-                line: "Warning: no image file for img/bestiary/Vrock.webp".into(),
+                text: "no image file for img/bestiary/Vrock.webp".into(),
                 step: "Writing compendium/bestiary".into(),
             }],
             log: [
@@ -1389,7 +1397,7 @@ mod tests {
         let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
         harness.run();
         last_run_saved(dir.path(), &mut harness, &events, &converted_run());
-        harness.get_by_label_contains("D&D 5e · 0 books · last converted today, ");
+        harness.get_by_label("D&D 5e · 0 books · last converted 14 Mar 2020, 12:00");
         harness.get_by_label("Converted");
         open_last_run(&mut harness);
 
@@ -1414,6 +1422,7 @@ mod tests {
         assert!(harness.query_by_label("compendium/races").is_none());
 
         harness.get_by_label("The notes were still written");
+        harness.get_by_label("no image file for img/bestiary/Vrock.webp");
         let step = "Writing compendium/bestiary";
         assert_eq!(
             harness.get_all_by_label(step).count(),
@@ -1435,8 +1444,7 @@ mod tests {
         last_run_saved(dir.path(), &mut harness, &events, &converted_run());
         open_last_run(&mut harness);
         let warning = "Warning: no image file for img/bestiary/Vrock.webp";
-        // In the Warnings card and the log.
-        assert_eq!(harness.get_all_by_label(warning).count(), 2);
+        harness.get_by_label(warning);
         // Not the strip's or the card's "Warnings", which are labels.
         let filter = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Warnings");
         filter.scroll_to_me();
@@ -1445,7 +1453,7 @@ mod tests {
             .get_by_role_and_label(egui::accesskit::Role::Button, "Warnings")
             .click();
         harness.run();
-        assert_eq!(harness.get_all_by_label(warning).count(), 2);
+        harness.get_by_label(warning);
         assert!(harness.query_by_label("Reading data").is_none());
         assert!(harness.query_by_label("Done").is_none());
         harness.get_by_label("All lines").click();
@@ -1453,30 +1461,34 @@ mod tests {
         harness.get_by_label("Reading data");
     }
 
-    #[test]
-    fn a_failed_run_shows_why_with_its_exit_code_and_a_fix() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
-        harness.run();
-        let message = "The converter could not read the game data or the profile's settings \
-                       (exit code 2), so your vault was not changed.";
-        let run = LastRun {
+    const FAILED: &str = "The converter could not read the game data or the profile's settings \
+                          (exit code 2), so your vault was not changed.";
+
+    fn failed_run() -> LastRun {
+        LastRun {
             converted: false,
             exit_code: Some(2),
-            message: message.into(),
+            message: FAILED.into(),
             fix: Some(Fix::DownloadAddress),
             folders: Vec::new(),
             warnings: Vec::new(),
             log: vec!["Error: unable to find books.json".into()],
             ..converted_run()
-        };
-        last_run_saved(dir.path(), &mut harness, &events, &run);
-        harness.get_by_label_contains("D&D 5e · 0 books · last attempt failed today, ");
+        }
+    }
+
+    #[test]
+    fn a_failed_run_shows_why_with_its_exit_code_and_a_fix() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        last_run_saved(dir.path(), &mut harness, &events, &failed_run());
+        harness.get_by_label("D&D 5e · 0 books · last attempt failed 14 Mar 2020, 12:00");
         harness.get_by_label("Failed");
         open_last_run(&mut harness);
 
         harness.get_by_label("The converter stopped before writing anything");
-        harness.get_by_label(message);
+        harness.get_by_label(FAILED);
         harness.get_by_label("Error: unable to find books.json");
         assert!(harness.query_by_label("Save log…").is_none());
         harness.get_by_label("Check the download address").click();
@@ -1487,6 +1499,66 @@ mod tests {
             .find(|n| n.accesskit_node().role() == egui::accesskit::Role::TextInput)
             .unwrap();
         assert!(address.accesskit_node().is_focused());
+    }
+
+    #[test]
+    fn on_a_phone_a_failed_runs_fix_sits_under_its_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 400.0);
+        harness.run();
+        last_run_saved(dir.path(), &mut harness, &events, &failed_run());
+        open_last_run(&mut harness);
+        let bounds = |label| {
+            harness
+                .get_by_label(label)
+                .accesskit_node()
+                .raw_bounds()
+                .unwrap()
+        };
+        let (headline, message) = (
+            bounds("The converter stopped before writing anything"),
+            bounds(FAILED),
+        );
+        let fix = bounds("Check the download address");
+        assert!(fix.y0 > message.y1, "below the message");
+        assert_eq!(fix.x0, headline.x0, "lined up with the text");
+    }
+
+    #[test]
+    fn a_profile_made_again_after_a_delete_has_no_last_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events, heard) = harness_on_profile_heard(dir.path(), 1280.0);
+        harness.run();
+        last_run_saved(dir.path(), &mut harness, &events, &converted_run());
+        harness.get_by_label("Converted");
+        // Passes the Engine's events on to the app, up to the one wanted.
+        let forward = |wanted: fn(&Event) -> bool| loop {
+            let event = heard.recv_timeout(Duration::from_secs(10)).unwrap();
+            let done = wanted(&event);
+            events.send(event).unwrap();
+            if done {
+                break;
+            }
+        };
+
+        let id = harness.state().engine.profiles()[0].id.clone();
+        harness.state().engine.send(Command::DeleteProfile(id));
+        forward(|e| matches!(e, Event::ProfileDeleted(_)));
+        harness.run();
+        harness
+            .state()
+            .engine
+            .send(Command::CreateProfile(ProfileDraft {
+                name: "Thursday".into(),
+                rules: Rules::Dnd5e,
+                address: "http://127.0.0.1:1/data.zip".into(),
+                vault: "/vault".into(),
+            }));
+        forward(|e| matches!(e, Event::ProfileCreated(_)));
+        harness.run();
+
+        harness.get_by_label("D&D 5e · 0 books · not converted yet");
+        harness.get_by_label("None");
     }
 
     #[test]
