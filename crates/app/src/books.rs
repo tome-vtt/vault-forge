@@ -106,6 +106,8 @@ impl BooksSection {
             .stroke(egui::Stroke::new(1.0, p.border))
             .corner_radius(12)
             .show(ui, |ui| {
+                // The list's own top: inside it, the clip is also cut by the page's scroll.
+                let top = ui.max_rect().top();
                 egui::ScrollArea::vertical()
                     .max_height(452.0)
                     .auto_shrink([false, true])
@@ -131,7 +133,6 @@ impl BooksSection {
                             }
                             // The heading sticks to the list's top while its books scroll
                             // under it, until the next group's heading pushes it up.
-                            let top = ui.clip_rect().top();
                             let bottom = ui.min_rect().bottom();
                             if heading.top() < top && bottom > top {
                                 let y = top.min(bottom - heading.height());
