@@ -70,7 +70,7 @@ impl Conversion {
         let (events, poll_id) = (self.events.clone(), id.clone());
         let (poll_holding, poll_folders) = (holding.clone(), folders.clone());
         // ponytail: counts every note once a second; count from the log if large conversions lag.
-        std::thread::spawn(move || {
+        let poller = std::thread::spawn(move || {
             let mut last = Vec::new();
             while let Err(RecvTimeoutError::Timeout) = stopped.recv_timeout(Duration::from_secs(1))
             {
@@ -99,6 +99,8 @@ impl Conversion {
                 .and_then(|r| r.child.take());
             let code = child.and_then(|mut c| c.wait().ok()).and_then(|s| s.code());
             drop(stop);
+            // Windows refuses to move a folder the poller is still reading.
+            let _ = poller.join();
             let cancelled = running
                 .lock()
                 .unwrap()
@@ -217,8 +219,8 @@ fn written(holding: &Path, folders: &[String]) -> Vec<(String, usize)> {
     let mut by_folder = BTreeMap::new();
     for folder in folders {
         let own = folder
-            .trim_end_matches('/')
-            .rsplit('/')
+            .trim_end_matches(['/', '\\'])
+            .rsplit(['/', '\\'])
             .next()
             .unwrap_or(folder);
         for entry in fs::read_dir(holding.join(folder))
