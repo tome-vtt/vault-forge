@@ -129,6 +129,9 @@ impl App {
                     self.saved = None;
                     self.error = Some(message);
                 }
+                Event::ConversionStarted(_)
+                | Event::ConversionLog { .. }
+                | Event::ConversionEnded { .. } => {}
                 Event::NewerRelease { version, page } => {
                     self.newer_release = Some((version, page));
                 }
@@ -332,7 +335,11 @@ impl App {
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // ponytail: Convert does nothing yet; the conversion ticket wires it.
-                theme::primary_button(ui, profile.can_convert(&self.data), "Convert");
+                theme::primary_button(
+                    ui,
+                    profile.convert_blocker(&self.data, None).is_none(),
+                    "Convert",
+                );
             });
         });
         ui.add_space(24.0);
