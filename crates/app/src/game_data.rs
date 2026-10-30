@@ -44,7 +44,7 @@ impl GameDataSection {
             ui.label(theme::medium("Game rules"));
             let mut rules = profile.rules;
             let choices = [Rules::Dnd5e, Rules::Pf2e].map(|r| (r, rules_name(r)));
-            theme::segmented(ui, &mut rules, &choices, false);
+            theme::segmented(ui, &mut rules, &choices, theme::Seg::Normal);
             if rules != profile.rules {
                 engine.send(Command::SaveProfile(Profile {
                     rules,

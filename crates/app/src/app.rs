@@ -292,7 +292,7 @@ impl App {
                         (Appearance::Light, "Light"),
                         (Appearance::Dark, "Dark"),
                     ];
-                    theme::segmented(ui, &mut appearance, &choices, true);
+                    theme::segmented(ui, &mut appearance, &choices, theme::Seg::Fill);
                     if appearance != saved {
                         self.engine.send(Command::SetAppearance(appearance));
                         // The new theme is applied before the next frame, so ask for one.
@@ -972,6 +972,148 @@ mod tests {
                 .adventure,
             ["CoS"]
         );
+    }
+
+    fn codes_field<'a>(harness: &'a Harness<'_, App>, label: &'a str) -> egui_kittest::Node<'a> {
+        harness
+            .get_all_by_label(label)
+            .find(|n| n.accesskit_node().role() == egui::accesskit::Role::TextInput)
+            .unwrap()
+    }
+
+    #[test]
+    fn the_typed_codes_keep_the_books_ticked_in_the_list_while_an_update_downloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        game_data(&events, three_books());
+        harness.run();
+        harness.get_by_label("PHB").click();
+        harness.run();
+
+        let downloading = DataState::Downloading {
+            bytes: 0,
+            elapsed: std::time::Duration::ZERO,
+        };
+        game_data(&events, downloading);
+        harness.run();
+        let field = codes_field(&harness, "Book codes");
+        assert_eq!(field.value().as_deref(), Some("PHB"));
+        // Clicking into the field and away leaves the chosen book as it was.
+        field.focus();
+        harness.run();
+        codes_field(&harness, "Adventure codes").focus();
+        harness.run();
+        assert_eq!(
+            harness.state().engine.profiles()[0].config.sources.book,
+            ["PHB"]
+        );
+    }
+
+    #[test]
+    fn typed_codes_are_saved_even_when_the_field_goes_before_it_loses_focus() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        codes_field(&harness, "Book codes").focus();
+        harness.run();
+        codes_field(&harness, "Book codes").type_text("XGE");
+        harness.run();
+        // The download finishes while the field still has focus, and the list takes its place.
+        game_data(&events, three_books());
+        harness.run();
+        assert_eq!(
+            harness.state().engine.profiles()[0].config.sources.book,
+            ["XGE"]
+        );
+    }
+
+    #[test]
+    fn the_books_bar_uses_the_small_switch() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        game_data(&events, three_books());
+        harness.run();
+        let all = harness.get_by_label("All").rect();
+        assert!(
+            (all.height() - 26.0).abs() < 0.5,
+            "All is {} tall",
+            all.height()
+        );
+    }
+
+    #[test]
+    fn on_a_phone_the_book_search_takes_its_own_line_and_rows_are_44_tall() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 400.0);
+        game_data(&events, three_books());
+        harness.run();
+        let search = harness
+            .get_all_by_role(egui::accesskit::Role::TextInput)
+            .find(|n| n.value().as_deref() == Some("") && n.rect().height() < 33.0)
+            .unwrap()
+            .rect();
+        let all = harness.get_by_label("All").rect();
+        let count = harness.get_by_label("0 of 3 chosen").rect();
+        assert!(
+            all.top() > search.bottom(),
+            "the switch wraps below the search"
+        );
+        assert!(
+            count.left() < harness.get_by_label("Chosen").rect().right() + 24.0,
+            "the count follows the switch"
+        );
+        // The panel is the window less the page's and the panel's padding.
+        assert!(search.width() > 300.0, "search is {} wide", search.width());
+        let phb = harness.get_by_label("Player's Handbook").rect();
+        let xge = harness
+            .get_by_label("Xanathar's Guide to Everything")
+            .rect();
+        assert!(xge.center().y - phb.center().y >= 44.0 - 0.5);
+    }
+
+    #[test]
+    fn a_group_heading_stays_at_the_top_of_the_list_while_its_books_scroll() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        let books = (1..=30)
+            .map(|n| Book {
+                code: format!("B{n}"),
+                name: format!("Book {n}"),
+                year: "2024".into(),
+                group: Group::Supplements,
+            })
+            .collect();
+        let ready = DataState::Ready {
+            books,
+            bytes: 1,
+            downloaded: UNIX_EPOCH,
+            newer: false,
+        };
+        game_data(&events, ready);
+        harness.run();
+        harness.get_by_label("Book 30").scroll_to_me();
+        harness.run();
+        let bar = harness.get_by_label("All").rect();
+        let book = harness.get_by_label("Book 30").rect();
+        let heading = harness
+            .get_all_by_label("Supplements · 0 of 30")
+            .map(|n| n.rect())
+            .find(|r| r.top() > bar.bottom())
+            .expect("the heading is in view");
+        assert!(heading.bottom() < book.top());
+        assert!(
+            heading.top() - bar.bottom() < 40.0,
+            "it sits at the list's top"
+        );
+        // Its Choose all still works there.
+        harness
+            .get_all_by_label("Choose all")
+            .find(|n| n.rect().top() > bar.bottom())
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("30 of 30 chosen");
     }
 
     #[test]
