@@ -33,6 +33,8 @@ pub struct App {
     game_data: Option<GameDataSection>,
     /// The narrow window's folded sidebar is showing.
     menu_open: bool,
+    /// The OS theme where the window cannot report it (Linux).
+    os_theme: Receiver<egui::Theme>,
 }
 
 /// The demo's reading column for forms and text pages: left-aligned, at most 760 wide.
@@ -65,7 +67,7 @@ fn first_screen(engine: &Engine) -> Screen {
 }
 
 impl App {
-    pub fn new(engine: Engine, events: Receiver<Event>) -> Self {
+    pub fn new(engine: Engine, events: Receiver<Event>, os_theme: Receiver<egui::Theme>) -> Self {
         let screen = first_screen(&engine);
         Self {
             engine,
@@ -77,7 +79,18 @@ impl App {
             data: HashMap::new(),
             game_data: None,
             menu_open: false,
+            os_theme,
         }
+    }
+
+    /// Sets the theme for the coming frame. Call it before the frame starts, so the first frame
+    /// is already drawn in the saved choice.
+    pub fn apply_theme(&mut self, ctx: &egui::Context) {
+        // egui falls back to this only when the window reports no OS theme of its own.
+        if let Some(os) = self.os_theme.try_iter().last() {
+            ctx.options_mut(|o| o.fallback_theme = os);
+        }
+        ctx.set_theme(theme::preference(self.engine.appearance()));
     }
 
     fn drain_events(&mut self) {
@@ -111,19 +124,17 @@ impl App {
         if open.is_none() {
             self.screen = Screen::NewProfile;
         }
-        ui.ctx()
-            .set_theme(theme::preference(self.engine.appearance()));
-        let narrow = ui.max_rect().width() <= theme::NARROW;
+        let width = ui.ctx().content_rect().width();
+        let narrow = width <= theme::NARROW;
         let ground = egui::Frame::new().fill(theme::palette(ui).ground);
         if narrow && self.menu_open {
             egui::CentralPanel::default()
-                .frame(ground.inner_margin(16))
+                .frame(ground.inner_margin(egui::Margin::symmetric(16, 12)))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         theme::brand(ui);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let close =
-                                egui::RichText::new("Close").color(theme::palette(ui).accent);
+                            let close = theme::medium("Close").color(theme::palette(ui).accent);
                             let close = ui.add(egui::Button::new(close).frame(false));
                             close.widget_info(|| {
                                 egui::WidgetInfo::labeled(egui::Role::Button, true, "Close menu")
@@ -135,13 +146,19 @@ impl App {
                     });
                     self.sidebar(ui, &profiles);
                 });
+            theme::focus_ring(ui.ctx());
             return;
         }
         if !narrow {
             egui::Panel::left("sidebar")
                 .exact_size(228.0)
                 .show_separator_line(false)
-                .frame(ground.inner_margin(egui::Margin::symmetric(12, 16)))
+                .frame(ground.inner_margin(egui::Margin {
+                    left: 10,
+                    right: 10,
+                    top: 12,
+                    bottom: 16,
+                }))
                 .show(ui, |ui| {
                     ui.horizontal(theme::brand);
                     self.sidebar(ui, &profiles);
@@ -172,16 +189,16 @@ impl App {
                     match open {
                         Some(profile) => {
                             ui.weak("Profiles /");
-                            ui.strong(&profile.name);
+                            ui.label(theme::medium(&profile.name));
                         }
                         None => {
-                            ui.strong("New profile");
+                            ui.label(theme::medium("New profile"));
                         }
                     }
                 });
             });
         let sheet = egui::CentralPanel::default()
-            .frame(theme::sheet(ui, narrow))
+            .frame(theme::sheet(ui, width))
             .show(ui, |ui| {
                 if let Some(message) = &self.error {
                     ui.colored_label(ui.visuals().error_fg_color, message);
@@ -197,6 +214,7 @@ impl App {
             ui.painter().hline(edge.x_range(), edge.top(), stroke);
         }
         self.dialog(ui.ctx());
+        theme::focus_ring(ui.ctx());
     }
 
     /// The profile list, then the Appearance switch at the foot.
@@ -210,21 +228,35 @@ impl App {
             }
         }
         let on_new = matches!(self.screen, Screen::NewProfile);
-        if theme::nav_row(ui, on_new, "+ New profile", "").clicked() {
+        if theme::add_row(ui, on_new, "+ New profile").clicked() {
             self.go(Screen::NewProfile);
         }
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-            let mut appearance = self.engine.appearance();
-            let choices = [
-                (Appearance::System, "System"),
-                (Appearance::Light, "Light"),
-                (Appearance::Dark, "Dark"),
-            ];
-            theme::segmented(ui, &mut appearance, &choices, true);
-            if appearance != self.engine.appearance() {
-                self.engine.send(Command::SetAppearance(appearance));
-            }
-            ui.label(egui::RichText::new("Appearance").small().weak());
+            let margin = egui::Margin {
+                left: 10,
+                right: 10,
+                top: 0,
+                bottom: 12,
+            };
+            egui::Frame::new().inner_margin(margin).show(ui, |ui| {
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new("Appearance").small().weak());
+                    ui.add_space(8.0 - ui.spacing().item_spacing.y);
+                    let saved = self.engine.appearance();
+                    let mut appearance = saved;
+                    let choices = [
+                        (Appearance::System, "System"),
+                        (Appearance::Light, "Light"),
+                        (Appearance::Dark, "Dark"),
+                    ];
+                    theme::segmented(ui, &mut appearance, &choices, true);
+                    if appearance != saved {
+                        self.engine.send(Command::SetAppearance(appearance));
+                        // The new theme is applied before the next frame, so ask for one.
+                        ui.ctx().request_repaint();
+                    }
+                });
+            });
         });
     }
 
@@ -278,10 +310,11 @@ impl App {
         };
         let mut cancel = false;
         let mut command = None;
-        egui::Modal::new(egui::Id::unique("profile_dialog")).show(ctx, |ui| match dialog {
+        let modal = egui::Modal::new(egui::Id::unique("profile_dialog")).frame(theme::dialog(ctx));
+        modal.show(ctx, |ui| match dialog {
             Dialog::Rename { id, name } => {
                 ui.heading("Rename profile");
-                let edit = ui.text_edit_singleline(name);
+                let edit = theme::input(ui, egui::TextEdit::singleline(name));
                 let ok = is_valid_name(name);
                 let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 ui.horizontal(|ui| {
@@ -321,6 +354,8 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc;
+
     use eframe::egui::Theme;
     use egui_kittest::Harness;
     use std::sync::mpsc::Sender;
@@ -331,28 +366,44 @@ mod tests {
 
     use crate::theme;
 
-    fn harness_sized(dir: &std::path::Path, width: f32) -> Harness<'static, App> {
+    /// The app with the OS theme reported the way Linux reports it: through the app's own
+    /// watcher, not the window's input. The OS starts light.
+    fn harness_sized(
+        dir: &std::path::Path,
+        width: f32,
+    ) -> (Harness<'static, App>, mpsc::Sender<Theme>) {
         let (engine, events) = Engine::start(dir.to_path_buf()).unwrap();
+        let (os, os_theme) = mpsc::channel();
+        os.send(Theme::Light).unwrap();
         let mut harness = Harness::builder()
             .with_size([width, 820.0])
             .with_context_setup(theme::install)
-            .build_ui_state(|ui, app: &mut App| app.ui(ui), App::new(engine, events));
-        harness.input_mut().system_theme = Some(Theme::Light);
+            .build_ui_state(
+                |ui, app: &mut App| {
+                    app.apply_theme(ui.ctx());
+                    app.ui(ui)
+                },
+                App::new(engine, events, os_theme),
+            );
         harness.run();
-        harness
+        (harness, os)
     }
 
     fn harness(dir: &std::path::Path) -> Harness<'static, App> {
-        harness_sized(dir, 1280.0)
+        harness_sized(dir, 1280.0).0
     }
 
     fn assert_looks(harness: &Harness<'_, App>, theme: Theme) {
         assert_eq!(harness.ctx.theme(), theme);
-        let ground = match theme {
-            Theme::Light => theme::LIGHT.ground,
-            Theme::Dark => theme::DARK.ground,
+        let p = match theme {
+            Theme::Light => &theme::LIGHT,
+            Theme::Dark => &theme::DARK,
         };
-        assert_eq!(harness.ctx.global_style().visuals.panel_fill, ground);
+        let visuals = harness.ctx.global_style().visuals.clone();
+        assert_eq!(visuals.panel_fill, p.ground);
+        assert_eq!(visuals.window_fill, p.surface);
+        assert_eq!(visuals.hyperlink_color, p.accent);
+        assert_eq!(visuals.widgets.noninteractive.fg_stroke.color, p.text);
     }
 
     #[test]
@@ -376,22 +427,49 @@ mod tests {
     #[test]
     fn under_system_the_app_follows_the_os_theme_as_it_changes() {
         let dir = tempfile::tempdir().unwrap();
-        let mut harness = harness(dir.path());
-        harness.input_mut().system_theme = Some(Theme::Dark);
+        let (mut harness, os) = harness_sized(dir.path(), 1280.0);
+        assert_looks(&harness, Theme::Light);
+        os.send(Theme::Dark).unwrap();
         harness.run();
         assert_looks(&harness, Theme::Dark);
-        harness.input_mut().system_theme = Some(Theme::Light);
+        os.send(Theme::Light).unwrap();
         harness.run();
         assert_looks(&harness, Theme::Light);
     }
 
     #[test]
+    fn a_saved_choice_draws_the_first_frame_in_its_theme() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, _) = Engine::start(dir.path().to_path_buf()).unwrap();
+        engine.send(Command::SetAppearance(Appearance::Light));
+        drop(engine);
+
+        let (engine, events) = Engine::start(dir.path().to_path_buf()).unwrap();
+        let (os, os_theme) = mpsc::channel();
+        os.send(Theme::Dark).unwrap();
+        let mut shell = crate::Shell(App::new(engine, events, os_theme));
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        // What the window does before each frame, then the frame itself. Without the saved
+        // choice, egui would draw this frame dark.
+        let mut input = egui::RawInput::default();
+        eframe::App::raw_input_hook(&mut shell, &ctx, &mut input);
+        let mut first_frame_dark = None;
+        let mut output = ctx.run_ui(input, |ui| {
+            first_frame_dark = Some(ui.visuals().dark_mode);
+            shell.0.ui(ui);
+        });
+        output.textures_delta.clear();
+        assert_eq!(first_frame_dark, Some(false));
+    }
+
+    #[test]
     fn a_chosen_appearance_overrides_the_os_and_survives_a_restart() {
         let dir = tempfile::tempdir().unwrap();
-        let mut harness = harness(dir.path());
+        let (mut harness, os) = harness_sized(dir.path(), 1280.0);
         harness.get_by_label("Dark").click();
         harness.run();
-        harness.input_mut().system_theme = Some(Theme::Light);
+        os.send(Theme::Light).unwrap();
         harness.run();
         assert_looks(&harness, Theme::Dark);
         drop(harness);
@@ -403,7 +481,7 @@ mod tests {
     #[test]
     fn a_narrow_window_shows_a_menu_button_instead_of_the_sidebar() {
         let dir = tempfile::tempdir().unwrap();
-        let mut harness = harness_sized(dir.path(), 600.0);
+        let (mut harness, _os) = harness_sized(dir.path(), 600.0);
         assert!(harness.query_by_label("Appearance").is_none());
         harness.get_by_label("Open menu").click();
         harness.run();
@@ -412,7 +490,11 @@ mod tests {
         harness.run();
         assert!(harness.query_by_label("Appearance").is_none());
 
-        let harness = self::harness(dir.path());
+        // The sidebar folds at 900 wide and shows from 901.
+        let (harness, _os) = harness_sized(dir.path(), 900.0);
+        harness.get_by_label("Open menu");
+        assert!(harness.query_by_label("Appearance").is_none());
+        let (harness, _os) = harness_sized(dir.path(), 901.0);
         assert!(harness.query_by_label("Open menu").is_none());
         harness.get_by_label("Appearance");
     }
@@ -483,8 +565,12 @@ mod tests {
             vault: "/vault".into(),
         }));
         let (events, received) = std::sync::mpsc::channel();
-        let harness =
-            Harness::new_ui_state(|ui, app: &mut App| app.ui(ui), App::new(engine, received));
+        let harness = Harness::builder()
+            .with_context_setup(theme::install)
+            .build_ui_state(
+                |ui, app: &mut App| app.ui(ui),
+                App::new(engine, received, mpsc::channel().1),
+            );
         (harness, events)
     }
 
