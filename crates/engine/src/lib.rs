@@ -222,7 +222,7 @@ impl Engine {
     }
 
     // ponytail: profile commands are small file writes, so they run on the caller's thread;
-    // downloads, update checks and conversion use worker threads.
+    // downloads, the release check and conversion use worker threads.
     /// Hands the command to the part that owns it.
     pub fn send(&self, command: Command) {
         let mut profiles = self.profiles.lock().unwrap();
