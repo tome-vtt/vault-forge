@@ -136,17 +136,49 @@ pub(crate) fn warnings(log: &[String]) -> Vec<Warning> {
     warnings
 }
 
-/// A warning line after its level mark: `🔸 WARN| `, or a leading `Warning:` or `Warn`.
+/// A warning line after its level mark: `🔸 WARN| `, or a leading word `Warning:` or `Warn`.
 fn without_level(line: &str) -> &str {
     let rest = match line.split_once('|') {
         Some((level, rest)) if level.ends_with("WARN") => rest,
         _ => ["warning", "warn"]
             .iter()
-            .find(|mark| {
-                line.get(..mark.len())
-                    .is_some_and(|l| l.eq_ignore_ascii_case(mark))
+            .find_map(|mark| {
+                let rest = line.get(mark.len()..)?;
+                let marked = line[..mark.len()].eq_ignore_ascii_case(mark);
+                // A whole word only, so "Warnings: 3" keeps its "Warnings".
+                let word = rest.is_empty() || rest.starts_with([':', ' ']);
+                (marked && word).then_some(rest)
             })
-            .map_or(line, |mark| &line[mark.len()..]),
+            .unwrap_or(line),
     };
     rest.trim_start_matches(':').trim()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_warning_loses_only_its_level_mark() {
+        let log: Vec<String> = [
+            "🔸 WARN| Unresolved link to Strahd zombie",
+            "Warning: no image file for img/bestiary/Vrock.webp",
+            "WARN missing token art",
+            "Warnings: 3",
+            "Warned twice about Vrock",
+        ]
+        .map(String::from)
+        .to_vec();
+        let texts: Vec<_> = warnings(&log).into_iter().map(|w| w.text).collect();
+        assert_eq!(
+            texts,
+            [
+                "Unresolved link to Strahd zombie",
+                "no image file for img/bestiary/Vrock.webp",
+                "missing token art",
+                "Warnings: 3",
+                "Warned twice about Vrock",
+            ]
+        );
+    }
 }

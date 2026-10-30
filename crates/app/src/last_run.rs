@@ -297,7 +297,7 @@ fn failed(ui: &mut egui::Ui, run: &LastRun, action: &mut Option<Action>) {
                             .font(FontId::new(15.0, FontFamily::Name("semibold".into()))),
                     );
                     ui.label(egui::RichText::new(&run.message).color(p.text2));
-                    if phone {
+                    if phone && run.fix.is_some() {
                         ui.add_space(8.0);
                         fix_button(ui, run, action);
                     }
