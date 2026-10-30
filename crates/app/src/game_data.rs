@@ -36,30 +36,16 @@ impl GameDataSection {
             Rules::Dnd5e => "5eTools",
             Rules::Pf2e => "Pf2eTools",
         };
-        // A narrow window stacks the description above the panel.
-        let narrow = ui.ctx().content_rect().width() <= theme::NARROW;
-        let layout = if narrow {
-            egui::Layout::top_down(egui::Align::Min)
-        } else {
-            egui::Layout::left_to_right(egui::Align::Min)
-        };
-        ui.with_layout(layout, |ui| {
-            let width = if narrow { ui.available_width() } else { 340.0 };
-            let column = egui::Layout::top_down(egui::Align::Min);
-            ui.allocate_ui_with_layout(egui::vec2(width, 0.0), column, |ui| {
-                ui.set_width(width);
+        theme::section(
+            ui,
+            |ui| {
                 ui.label(theme::medium("Game data").size(16.0));
                 ui.weak(format!(
                     "The {kind} data the books are read from. Paste its download address \
                      once; Vault Forge downloads, unpacks and updates it."
                 ));
-            });
-            if narrow {
-                ui.add_space(12.0 - ui.spacing().item_spacing.y);
-            } else {
-                ui.add_space(24.0);
-            }
-            panel(ui, |ui| {
+            },
+            |ui| {
                 ui.label(theme::medium("Game rules"));
                 let mut rules = profile.rules;
                 let choices = [Rules::Dnd5e, Rules::Pf2e].map(|r| (r, rules_name(r)));
@@ -77,8 +63,8 @@ impl GameDataSection {
                 ui.add_space(12.0);
                 ui.separator();
                 self.images(ui, engine, profile, data);
-            });
-        });
+            },
+        );
     }
 
     fn address_line(
@@ -148,7 +134,8 @@ impl GameDataSection {
                 newer,
             }) => {
                 let copy = format!(
-                    "{books} books and adventures · {} · downloaded {}",
+                    "{} books and adventures · {} · downloaded {}",
+                    books.len(),
                     size(*bytes),
                     date(*downloaded)
                 );
@@ -271,18 +258,6 @@ impl GameDataSection {
             _ => {}
         });
     }
-}
-
-fn panel(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::new()
-        .fill(ui.visuals().faint_bg_color)
-        .corner_radius(16.0)
-        .inner_margin(16.0)
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            // The row around it is horizontal; the panel's contents stack.
-            ui.vertical(add);
-        });
 }
 
 enum Pill {

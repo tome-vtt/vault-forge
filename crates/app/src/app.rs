@@ -8,6 +8,7 @@ use vault_forge_engine::{
     is_valid_name,
 };
 
+use crate::books::BooksSection;
 use crate::game_data::GameDataSection;
 use crate::new_profile::NewProfile;
 use crate::theme;
@@ -32,6 +33,7 @@ pub struct App {
     /// The latest state of each download address, from the Engine's events.
     data: HashMap<String, DataState>,
     game_data: Option<GameDataSection>,
+    books: Option<BooksSection>,
     /// The narrow window's folded sidebar is showing.
     menu_open: bool,
     /// The newer release's version and page, once the release check has found one.
@@ -81,6 +83,7 @@ impl App {
             error: None,
             data: HashMap::new(),
             game_data: None,
+            books: None,
             menu_open: false,
             newer_release: None,
             os_theme,
@@ -300,6 +303,14 @@ impl App {
             self.game_data = Some(GameDataSection::new(profile));
             self.engine.send(Command::CheckGameData(profile.id.clone()));
         }
+        // Another game's books start a fresh search.
+        if self
+            .books
+            .as_ref()
+            .is_none_or(|s| s.id != profile.id || s.rules != profile.rules)
+        {
+            self.books = Some(BooksSection::new(profile));
+        }
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.heading(&profile.name);
@@ -325,6 +336,12 @@ impl App {
         });
         ui.add_space(24.0);
         if let Some(section) = &mut self.game_data {
+            section.show(ui, &self.engine, profile, &self.data);
+        }
+        ui.add_space(24.0);
+        ui.separator();
+        ui.add_space(24.0);
+        if let Some(section) = &mut self.books {
             section.show(ui, &self.engine, profile, &self.data);
         }
     }
@@ -420,7 +437,7 @@ mod tests {
     use std::time::{Duration, UNIX_EPOCH};
 
     use egui_kittest::kittest::{NodeT, Queryable};
-    use vault_forge_engine::{Appearance, ProfileDraft};
+    use vault_forge_engine::{Appearance, Book, Group, ProfileDraft};
 
     use crate::theme;
 
@@ -641,6 +658,18 @@ mod tests {
         events.send(Event::GameData { address, state }).unwrap();
     }
 
+    /// Five supplements, as a game data's books list would give them.
+    fn five_books() -> Vec<Book> {
+        (1..=5)
+            .map(|n| Book {
+                code: format!("B{n}"),
+                name: format!("Book {n}"),
+                year: "2024".into(),
+                group: Group::Supplements,
+            })
+            .collect()
+    }
+
     fn convert_disabled(harness: &Harness<'_, App>) -> bool {
         harness
             .get_by_label("Convert")
@@ -699,7 +728,7 @@ mod tests {
         assert!(convert_disabled(&harness), "no Convert while downloading");
 
         let ready = |newer| DataState::Ready {
-            books: 5,
+            books: five_books(),
             bytes: 412_000_000,
             downloaded,
             newer,
@@ -739,7 +768,7 @@ mod tests {
         // Reopened, so the screen's address field starts with the saved address.
         harness.state_mut().game_data = None;
         let ready = |newer| DataState::Ready {
-            books: 5,
+            books: five_books(),
             bytes: 412_000_000,
             downloaded: UNIX_EPOCH,
             newer,
@@ -817,6 +846,79 @@ mod tests {
         let (mut harness, _events) = harness_on_profile(dir.path(), 601.0);
         harness.run();
         harness.get_by_label("Profiles /");
+    }
+
+    /// One book from each group, as a 5e books list gives them.
+    fn three_books() -> DataState {
+        let book = |code: &str, name: &str, group| Book {
+            code: code.into(),
+            name: name.into(),
+            year: "2014".into(),
+            group,
+        };
+        DataState::Ready {
+            books: vec![
+                book("PHB", "Player's Handbook", Group::CoreRules),
+                book("XGE", "Xanathar's Guide to Everything", Group::Supplements),
+                book("CoS", "Curse of Strahd", Group::Adventures),
+            ],
+            bytes: 1,
+            downloaded: UNIX_EPOCH,
+            newer: false,
+        }
+    }
+
+    #[test]
+    fn searching_the_books_shows_only_those_whose_name_or_code_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        game_data(&events, three_books());
+        harness.run();
+        harness.get_by_label("Player's Handbook");
+        harness.get_by_label("Curse of Strahd");
+
+        harness.state_mut().books.as_mut().unwrap().search = "strahd".into();
+        harness.run();
+        harness.get_by_label("Curse of Strahd");
+        assert!(harness.query_by_label("Player's Handbook").is_none());
+        assert!(
+            harness
+                .query_by_label("Xanathar's Guide to Everything")
+                .is_none()
+        );
+        assert!(harness.query_by_label_contains("Core rules").is_none());
+
+        harness.state_mut().books.as_mut().unwrap().search = "xge".into();
+        harness.run();
+        harness.get_by_label("Xanathar's Guide to Everything");
+        assert!(harness.query_by_label("Curse of Strahd").is_none());
+
+        harness.state_mut().books.as_mut().unwrap().search = "nothing".into();
+        harness.run();
+        harness.get_by_label("No book matches \"nothing\".");
+    }
+
+    #[test]
+    fn ticking_a_book_updates_the_count_and_the_chosen_codes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        game_data(&events, three_books());
+        harness.run();
+        harness.get_by_label("0 of 3 chosen");
+        // Only the row shows the code until it is chosen.
+        assert_eq!(harness.get_all_by_label("CoS").count(), 1);
+
+        // The row sits below the fold of the test window, so it is ticked the way a screen reader would.
+        harness.get_by_label("Curse of Strahd").click_accesskit();
+        harness.run();
+        harness.get_by_label("1 of 3 chosen");
+        harness.get_by_label("Adventures · 1 of 1");
+        assert_eq!(
+            harness.get_all_by_label("CoS").count(),
+            2,
+            "row and chosen code"
+        );
+        assert_eq!(harness.state().engine.profiles()[0].adventures, ["CoS"]);
     }
 
     #[test]

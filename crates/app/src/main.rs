@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod books;
 mod game_data;
 mod new_profile;
 mod os_theme;

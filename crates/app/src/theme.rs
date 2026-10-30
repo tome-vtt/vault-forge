@@ -34,9 +34,12 @@ pub struct Palette {
     control: Color32,
     toggle_off: Color32,
     pub accent: Color32,
+    pub accent_pale: Color32,
     negative: Color32,
     negative_edge: Color32,
-    warning: Color32,
+    pub warning: Color32,
+    pub warning_wash: Color32,
+    pub warning_edge: Color32,
 }
 
 const fn hex(rgb: u32) -> Color32 {
@@ -62,9 +65,12 @@ pub const LIGHT: Palette = Palette {
     control: hex(0xcdced1),
     toggle_off: hex(0xb9bcbf),
     accent: hex(0x1b6c80),
+    accent_pale: hex(0xe3eff2),
     negative: hex(0xc4242a),
     negative_edge: hex(0xefc4c2),
     warning: hex(0x92400e),
+    warning_wash: hex(0xfffbeb),
+    warning_edge: hex(0xfde68a),
 };
 
 pub const DARK: Palette = Palette {
@@ -86,9 +92,12 @@ pub const DARK: Palette = Palette {
     control: hex(0x45474a),
     toggle_off: hex(0x55585b),
     accent: hex(0x5fb8cc),
+    accent_pale: hex(0x163038),
     negative: hex(0xef6b6b),
     negative_edge: hex(0x5a2a2c),
     warning: hex(0xe8b45a),
+    warning_wash: hex(0x2b2213),
+    warning_edge: hex(0x5a4520),
 };
 
 pub fn palette(ui: &egui::Ui) -> &'static Palette {
@@ -327,7 +336,49 @@ pub fn medium(text: impl Into<String>) -> egui::RichText {
 /// The demo's text field: 40 tall, filling the width it is given, with a 1px edge and 10px
 /// corners.
 pub fn input(ui: &mut egui::Ui, edit: egui::TextEdit<'_>) -> egui::Response {
-    field(ui, edit, CornerRadius::same(10))
+    field(ui, edit, CornerRadius::same(10), 40.0)
+}
+
+/// The demo's smaller field, 32 tall with 8px corners, as the Books search is.
+pub fn small_input(ui: &mut egui::Ui, edit: egui::TextEdit<'_>) -> egui::Response {
+    field(ui, edit, CornerRadius::same(8), 32.0)
+}
+
+/// One Setup section: its title and description on the left, 340 wide, and its panel on the
+/// right. A narrow window stacks the description above the panel.
+pub fn section(
+    ui: &mut egui::Ui,
+    describe: impl FnOnce(&mut egui::Ui),
+    panel: impl FnOnce(&mut egui::Ui),
+) {
+    let narrow = ui.ctx().content_rect().width() <= NARROW;
+    let layout = if narrow {
+        egui::Layout::top_down(egui::Align::Min)
+    } else {
+        egui::Layout::left_to_right(egui::Align::Min)
+    };
+    ui.with_layout(layout, |ui| {
+        let width = if narrow { ui.available_width() } else { 340.0 };
+        let column = egui::Layout::top_down(egui::Align::Min);
+        ui.allocate_ui_with_layout(egui::vec2(width, 0.0), column, |ui| {
+            ui.set_width(width);
+            describe(ui);
+        });
+        if narrow {
+            ui.add_space(12.0 - ui.spacing().item_spacing.y);
+        } else {
+            ui.add_space(24.0);
+        }
+        egui::Frame::new()
+            .fill(ui.visuals().faint_bg_color)
+            .corner_radius(16.0)
+            .inner_margin(16.0)
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                // The row around it is horizontal; the panel's contents stack.
+                ui.vertical(panel);
+            });
+    });
 }
 
 /// The demo's path line: a field joined to the button that fills it, as one 40-tall control.
@@ -360,7 +411,7 @@ pub fn pathline(
             sw: 10,
             ..CornerRadius::ZERO
         };
-        let field = field(ui, edit, left);
+        let field = field(ui, edit, left, 40.0);
         // The button has no left edge of its own: the shared edge is the field's.
         let edge = button.rect.left() + 0.5;
         ui.painter().vline(
@@ -373,7 +424,12 @@ pub fn pathline(
     .inner
 }
 
-fn field(ui: &mut egui::Ui, edit: egui::TextEdit<'_>, corners: CornerRadius) -> egui::Response {
+fn field(
+    ui: &mut egui::Ui,
+    edit: egui::TextEdit<'_>,
+    corners: CornerRadius,
+    height: f32,
+) -> egui::Response {
     let p = palette(ui);
     ui.scope(|ui| {
         let v = ui.visuals_mut();
@@ -389,8 +445,8 @@ fn field(ui: &mut egui::Ui, edit: egui::TextEdit<'_>, corners: CornerRadius) -> 
         }
         let field = ui.add(
             edit.desired_width(f32::INFINITY)
-                .margin(egui::vec2(12.0, 10.0))
-                .min_size(egui::vec2(0.0, 40.0))
+                .margin(egui::vec2(12.0, (height - 20.0) / 2.0))
+                .min_size(egui::vec2(0.0, height))
                 .align(egui::Align2::LEFT_CENTER),
         );
         ring_corners(&field, corners);
