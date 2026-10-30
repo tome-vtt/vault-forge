@@ -389,7 +389,7 @@ impl Engine {
                 }
             }),
             Command::CancelDownload(id) => profiles.get(&id).map(|p| {
-                for address in [&p.address, &p.images_address] {
+                for (address, _) in p.downloads() {
                     self.game_data.cancel(address);
                 }
             }),
@@ -419,22 +419,19 @@ impl Engine {
                 self.game_data.check(address);
             }
         }
-        // A download the profile no longer wants (images switched off) stops, unless another
-        // profile still downloads that address.
-        for (address, _) in old.downloads() {
-            let wanted = |p: &Profile| p.downloads().iter().any(|(a, _)| *a == address);
-            if !profiles.list().iter().any(wanted) {
-                self.game_data.cancel(address);
-            }
-        }
         let _ = self.events.send(Event::ProfileSaved(id));
         self.release_unused(profiles, &old)?;
         Ok(new)
     }
 
-    /// Removes the cached copy of each of `old`'s addresses that no profile uses any more.
+    /// Stops each of `old`'s downloads that no profile downloads any more (images switched
+    /// off), and removes the cached copy of each of its addresses that no profile uses.
     fn release_unused(&self, profiles: &Profiles, old: &Profile) -> Result<(), String> {
         for address in [&old.address, &old.images_address] {
+            let downloads = |p: &Profile| p.downloads().iter().any(|(a, _)| a == address);
+            if !profiles.list().iter().any(downloads) {
+                self.game_data.cancel(address);
+            }
             if !address.is_empty() && !profiles.list().iter().any(|p| p.uses(address)) {
                 self.game_data.release(address)?;
             }

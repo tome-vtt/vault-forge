@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use vault_forge_engine::{
     Book, Command, DataState, Engine, Event, Group, Profile, ProfileDraft, Rules,
@@ -346,11 +346,61 @@ fn switching_images_off_mid_download_stops_it_and_leaves_no_partial_folder() {
         ..profile
     }));
 
+    // Until the cancelled download has stopped, Convert stays off.
+    let saved = engine.profiles().remove(0);
+    let data = HashMap::from([
+        (
+            address.clone(),
+            DataState::Ready {
+                books: Vec::new(),
+                bytes: 1,
+                downloaded: SystemTime::UNIX_EPOCH,
+                newer: false,
+            },
+        ),
+        (images.clone(), DataState::Unpacking),
+    ]);
+    assert!(saved.is_downloading(&data));
+    assert!(!saved.can_convert(&data));
     let state = wait(&events, &images, |s| {
         !matches!(s, DataState::Downloading { .. })
     });
     assert_eq!(state, DataState::Missing { size: None });
     assert!(cache_entries(dir.path()).is_empty());
+}
+
+#[test]
+fn switching_images_off_leaves_another_profiles_images_download_running() {
+    let server = Server::start();
+    let images = format!("{}/endless.zip", server.url);
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let [thursday, sunday] =
+        [("Thursday", "/thursday.zip"), ("Sunday", "/sunday.zip")].map(|(name, path)| {
+            let profile = Profile {
+                images: true,
+                images_address: images.clone(),
+                ..create(&engine, &events, name, &server.put(path, game_data(1, 0)))
+            };
+            engine.send(Command::SaveProfile(profile.clone()));
+            profile
+        });
+    engine.send(Command::DownloadImages(thursday.clone()));
+    let bytes = |s: &DataState| match s {
+        DataState::Downloading { bytes, .. } => *bytes,
+        _ => 0,
+    };
+    let before = bytes(&wait(&events, &images, |s| bytes(s) > 0));
+
+    engine.send(Command::SaveProfile(Profile {
+        images: false,
+        ..sunday
+    }));
+
+    // Far past the few reports already on their way when a cancel lands.
+    wait(&events, &images, |s| bytes(s) > before + 8 * 1024 * 1024);
+    engine.send(Command::CancelDownload(thursday.id));
+    wait(&events, &images, |s| bytes(s) == 0);
 }
 
 #[test]
