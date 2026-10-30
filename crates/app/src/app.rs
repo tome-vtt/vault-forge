@@ -1117,6 +1117,43 @@ mod tests {
     }
 
     #[test]
+    fn a_group_heading_does_not_stick_when_the_page_scrolls_past_the_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        let ready = DataState::Ready {
+            books: five_books(),
+            bytes: 1,
+            downloaded: UNIX_EPOCH,
+            newer: false,
+        };
+        game_data(&events, ready);
+        harness.run();
+        // The wheel turns over the section's description, beside the list, so only the page
+        // scrolls, 40 points at a time, until the list has gone past the top.
+        let beside = harness
+            .get_by_label("Convert only books you own.")
+            .rect()
+            .center();
+        for _ in 0..20 {
+            harness.hover_at(beside);
+            harness.event(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -40.0),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.run();
+            assert_eq!(
+                harness.get_all_by_label("Supplements · 0 of 5").count(),
+                1,
+                "no stuck copy of the heading"
+            );
+        }
+        assert!(harness.get_by_label("Book 5").rect().bottom() < 0.0);
+    }
+
+    #[test]
     fn clicking_anywhere_on_a_book_row_ticks_it() {
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
