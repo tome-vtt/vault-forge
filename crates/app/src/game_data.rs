@@ -36,35 +36,29 @@ impl GameDataSection {
             Rules::Dnd5e => "5eTools",
             Rules::Pf2e => "Pf2eTools",
         };
-        theme::section(
-            ui,
-            |ui| {
-                ui.label(theme::medium("Game data").size(16.0));
-                ui.weak(format!(
-                    "The {kind} data the books are read from. Paste its download address \
-                     once; Vault Forge downloads, unpacks and updates it."
-                ));
-            },
-            |ui| {
-                ui.label(theme::medium("Game rules"));
-                let mut rules = profile.rules;
-                let choices = [Rules::Dnd5e, Rules::Pf2e].map(|r| (r, rules_name(r)));
-                theme::segmented(ui, &mut rules, &choices, false);
-                if rules != profile.rules {
-                    engine.send(Command::SaveProfile(Profile {
-                        rules,
-                        ..profile.clone()
-                    }));
-                }
-                ui.add_space(16.0);
-                ui.label(theme::medium("Download address"));
-                let busy = profile.is_downloading(data);
-                self.address_line(ui, engine, profile, data.get(&profile.address), busy, kind);
-                ui.add_space(12.0);
-                ui.separator();
-                self.images(ui, engine, profile, data);
-            },
+        let about = format!(
+            "The {kind} data the books are read from. Paste its download address \
+             once; Vault Forge downloads, unpacks and updates it."
         );
+        theme::section(ui, "Game data", &about, |ui| {
+            ui.label(theme::medium("Game rules"));
+            let mut rules = profile.rules;
+            let choices = [Rules::Dnd5e, Rules::Pf2e].map(|r| (r, rules_name(r)));
+            theme::segmented(ui, &mut rules, &choices, false);
+            if rules != profile.rules {
+                engine.send(Command::SaveProfile(Profile {
+                    rules,
+                    ..profile.clone()
+                }));
+            }
+            ui.add_space(16.0);
+            ui.label(theme::medium("Download address"));
+            let busy = profile.is_downloading(data);
+            self.address_line(ui, engine, profile, data.get(&profile.address), busy, kind);
+            ui.add_space(12.0);
+            ui.separator();
+            self.images(ui, engine, profile, data);
+        });
     }
 
     fn address_line(
@@ -185,7 +179,7 @@ impl GameDataSection {
         data: &HashMap<String, DataState>,
     ) {
         let mut on = profile.images;
-        if theme::toggle(ui, &mut on, "Also download book images").changed() {
+        if theme::switch(ui, &mut on, "Also download book images").changed() {
             engine.send(Command::SaveProfile(Profile {
                 images: on,
                 ..profile.clone()

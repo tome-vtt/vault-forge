@@ -195,11 +195,10 @@ fn chosen_books_round_trip_through_the_converter_config_file() {
     let (engine, events) = start(dir.path());
     let profile = create(&engine, &events, "Thursday");
 
-    engine.send(Command::SaveProfile(Profile {
-        books: vec!["XPHB".into(), "PS-Z".into()],
-        adventures: vec!["CoS".into()],
-        ..profile
-    }));
+    let mut chosen = profile;
+    chosen.config.sources.book = vec!["XPHB".into(), "PS-Z".into()];
+    chosen.config.sources.adventure = vec!["CoS".into()];
+    engine.send(Command::SaveProfile(chosen));
 
     let text = std::fs::read_to_string(dir.path().join("profiles/thursday.yaml")).unwrap();
     let config: serde_yaml_ng::Value = serde_yaml_ng::from_str(&text).unwrap();
@@ -210,8 +209,8 @@ fn chosen_books_round_trip_through_the_converter_config_file() {
     drop(engine);
     let (engine, _) = start(dir.path());
     let reopened = &engine.profiles()[0];
-    assert_eq!(reopened.books, ["XPHB", "PS-Z"]);
-    assert_eq!(reopened.adventures, ["CoS"]);
+    assert_eq!(reopened.config.sources.book, ["XPHB", "PS-Z"]);
+    assert_eq!(reopened.config.sources.adventure, ["CoS"]);
 }
 
 #[test]
@@ -219,11 +218,9 @@ fn switching_game_rules_clears_the_chosen_books() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, events) = start(dir.path());
     let profile = create(&engine, &events, "Thursday");
-    let chosen = Profile {
-        books: vec!["XPHB".into()],
-        adventures: vec!["CoS".into()],
-        ..profile
-    };
+    let mut chosen = profile;
+    chosen.config.sources.book = vec!["XPHB".into()];
+    chosen.config.sources.adventure = vec!["CoS".into()];
     engine.send(Command::SaveProfile(chosen.clone()));
 
     engine.send(Command::SaveProfile(Profile {
@@ -233,5 +230,5 @@ fn switching_game_rules_clears_the_chosen_books() {
 
     let saved = &engine.profiles()[0];
     assert_eq!(saved.rules, Rules::Pf2e);
-    assert!(saved.books.is_empty() && saved.adventures.is_empty());
+    assert!(saved.config.sources.book.is_empty() && saved.config.sources.adventure.is_empty());
 }

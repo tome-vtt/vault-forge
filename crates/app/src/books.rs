@@ -24,8 +24,8 @@ impl BooksSection {
             rules: profile.rules,
             search: String::new(),
             chosen_only: false,
-            book_codes: profile.books.join(", "),
-            adventure_codes: profile.adventures.join(", "),
+            book_codes: profile.config.sources.book.join(", "),
+            adventure_codes: profile.config.sources.adventure.join(", "),
         }
     }
 
@@ -40,7 +40,7 @@ impl BooksSection {
             Some(DataState::Ready { books, .. }) => books.as_slice(),
             _ => &[],
         };
-        theme::section(
+        theme::section_with(
             ui,
             |ui| describe(ui, profile, books),
             |ui| {
@@ -139,11 +139,11 @@ impl BooksSection {
                 let codes = typed_codes(text);
                 let mut typed = profile.clone();
                 if adventures {
-                    typed.adventures = codes;
+                    typed.config.sources.adventure = codes;
                 } else {
-                    typed.books = codes;
+                    typed.config.sources.book = codes;
                 }
-                if typed.books != profile.books || typed.adventures != profile.adventures {
+                if typed.config.sources != profile.config.sources {
                     engine.send(Command::SaveProfile(typed));
                 }
             }
@@ -157,7 +157,8 @@ fn describe(ui: &mut egui::Ui, profile: &Profile, books: &[Book]) {
     let p = theme::palette(ui);
     ui.label(theme::medium("Books").size(16.0));
     ui.weak("Tick the books and adventures you own. Each one becomes notes in the vault.");
-    let chosen: Vec<&String> = profile.books.iter().chain(&profile.adventures).collect();
+    let sources = &profile.config.sources;
+    let chosen: Vec<&String> = sources.book.iter().chain(&sources.adventure).collect();
     if !chosen.is_empty() {
         ui.add_space(16.0);
         ui.horizontal_wrapped(|ui| {

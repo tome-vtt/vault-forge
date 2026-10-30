@@ -4,44 +4,30 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-
 use crate::Profile;
-
-/// The parts of the converter config file Vault Forge writes.
-#[derive(Serialize, Deserialize)]
-struct Config {
-    paths: Paths,
-    #[serde(default)]
-    sources: Sources,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Paths {
-    compendium: String,
-    rules: String,
-}
-
-#[derive(Default, Serialize, Deserialize)]
-struct Sources {
-    #[serde(default)]
-    book: Vec<String>,
-    #[serde(default)]
-    adventure: Vec<String>,
-}
 
 pub(crate) struct ProfileFiles {
     dir: PathBuf,
+    templates: PathBuf,
 }
 
 impl ProfileFiles {
     pub(crate) fn open(app_data: &Path) -> io::Result<Self> {
         let dir = app_data.join("profiles");
+        let templates = app_data.join("templates");
         std::fs::create_dir_all(&dir)?;
-        Ok(Self { dir })
+        std::fs::create_dir_all(&templates)?;
+        Ok(Self { dir, templates })
     }
 
-    fn config_path(&self, id: &str) -> PathBuf {
+    /// Writes a template the app ships, for the converter to read, and returns its full path.
+    pub(crate) fn write_template(&self, name: &str, text: &str) -> io::Result<PathBuf> {
+        let path = std::path::absolute(self.templates.join(name))?;
+        write_atomic(&path, text)?;
+        Ok(path)
+    }
+
+    pub(crate) fn config_path(&self, id: &str) -> PathBuf {
         self.dir.join(format!("{id}.yaml"))
     }
 
@@ -66,17 +52,15 @@ impl ProfileFiles {
             let parsed = std::fs::read_to_string(&path)
                 .ok()
                 .and_then(|text| serde_yaml_ng::from_str::<Profile>(&text).ok());
+            // A missing or unreadable config reads as the defaults, as a new profile has.
+            let config = std::fs::read_to_string(self.config_path(id))
+                .ok()
+                .and_then(|text| serde_yaml_ng::from_str(&text).ok())
+                .unwrap_or_default();
             if let Some(profile) = parsed {
-                // A missing or unreadable config file leaves no books chosen.
-                let sources = std::fs::read_to_string(self.config_path(id))
-                    .ok()
-                    .and_then(|text| serde_yaml_ng::from_str::<Config>(&text).ok())
-                    .map(|config| config.sources)
-                    .unwrap_or_default();
                 profiles.push(Profile {
                     id: id.to_owned(),
-                    books: sources.book,
-                    adventures: sources.adventure,
+                    config,
                     ..profile
                 });
             }
@@ -84,20 +68,9 @@ impl ProfileFiles {
         Ok(profiles)
     }
 
-    /// Writes the converter config, with the profile's chosen books, beside the profile's own
-    /// fields.
+    /// Writes the profile's converter config, and its own fields beside it.
     pub(crate) fn save(&self, p: &Profile) -> io::Result<()> {
-        let config = Config {
-            paths: Paths {
-                compendium: "compendium/".into(),
-                rules: "rules/".into(),
-            },
-            sources: Sources {
-                book: p.books.clone(),
-                adventure: p.adventures.clone(),
-            },
-        };
-        let config = serde_yaml_ng::to_string(&config).map_err(io::Error::other)?;
+        let config = serde_yaml_ng::to_string(&p.config).map_err(io::Error::other)?;
         let beside = serde_yaml_ng::to_string(p).map_err(io::Error::other)?;
         write_atomic(&self.config_path(&p.id), &config)?;
         write_atomic(&self.beside_path(&p.id), &beside)
@@ -114,6 +87,19 @@ impl ProfileFiles {
         }
         Ok(())
     }
+}
+
+/// The name and path of each file in a folder.
+pub(crate) fn files_in(folder: &Path) -> io::Result<Vec<(String, PathBuf)>> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(folder)? {
+        let entry = entry?;
+        files.push((
+            entry.file_name().to_string_lossy().into_owned(),
+            entry.path(),
+        ));
+    }
+    Ok(files)
 }
 
 // Write beside, then rename, so a crash never leaves a half-written file.

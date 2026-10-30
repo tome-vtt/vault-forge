@@ -3,9 +3,11 @@
 
 mod app;
 mod books;
+mod file_manager;
 mod game_data;
 mod new_profile;
 mod os_theme;
+mod setup;
 mod theme;
 
 use eframe::egui;
