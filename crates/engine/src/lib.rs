@@ -9,6 +9,7 @@ mod downloader;
 mod game_data;
 mod profile_files;
 mod profiles;
+mod release_check;
 mod settings_file;
 
 use std::collections::HashMap;
@@ -156,6 +157,9 @@ pub enum Command {
     DownloadGameData(String),
     CancelDownload(String),
     SetAppearance(Appearance),
+    /// Asks the latest-release address (GitHub's API; the app sends [`LATEST_RELEASE`]) whether a
+    /// newer Vault Forge is out. Answers only when one is; a failed check stays silent.
+    CheckRelease(String),
 }
 
 #[derive(Debug)]
@@ -167,9 +171,20 @@ pub enum Event {
         address: String,
         state: DataState,
     },
+    /// A newer Vault Forge than [`VERSION`] is out; `page` is its release page.
+    NewerRelease { version: String, page: String },
     /// A command could not be carried out; the message is for the user.
     Failed(String),
 }
+
+/// This Vault Forge's version.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The bundled converter's pinned version.
+pub const CONVERTER_VERSION: &str = "3.3.7";
+
+/// Where GitHub says which Vault Forge release is the newest.
+pub const LATEST_RELEASE: &str = "https://api.github.com/repos/tome-vtt/vault-forge/releases/latest";
 
 pub struct Engine {
     profiles: Mutex<Profiles>,
@@ -249,6 +264,10 @@ impl Engine {
             }),
             Command::SetAppearance(appearance) => {
                 self.settings.lock().unwrap().set_appearance(appearance)
+            }
+            Command::CheckRelease(url) => {
+                release_check::check(url, self.events.clone());
+                Ok(())
             }
         };
         if let Err(message) = outcome {
