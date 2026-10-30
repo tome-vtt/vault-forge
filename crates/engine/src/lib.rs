@@ -365,6 +365,28 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The bundled converter's pinned version.
 pub const CONVERTER_VERSION: &str = "3.3.7";
 
+/// The sha256 of each file the bundle step takes from the pinned converter release: the native
+/// build for each platform the app ships on, and the examples. The platform names are the
+/// release's own.
+pub const CONVERTER_SHA256: [(&str, &str); 4] = [
+    (
+        "windows-x86_64",
+        "14cb4eb0c3a09ffb79137f64e44c3ffd99705d308f1dbb3fd1d3e3626b875ff9",
+    ),
+    (
+        "osx-aarch_64",
+        "057673515ba1c97c776bf5c475131cd452f0dea90bd29593c27568abe130436e",
+    ),
+    (
+        "linux-x86_64",
+        "cdc8cfcbf49d7173034349cae6504de11775f4ae6847229e68a55316daa3c4cb",
+    ),
+    (
+        "examples",
+        "3ea6c053c700177ebe451ebf52570ef1408d1639ce8140937798a08fa7687118",
+    ),
+];
+
 /// Where GitHub says which Vault Forge release is the newest.
 pub const LATEST_RELEASE: &str =
     "https://api.github.com/repos/tome-vtt/vault-forge/releases/latest";
