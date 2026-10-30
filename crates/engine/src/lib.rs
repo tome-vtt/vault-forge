@@ -425,10 +425,6 @@ pub struct ConvertedNotes {
 
 const WAIT_FOR_CONVERSION: &str = "Wait for the conversion to finish.";
 
-fn bundled_converter() -> PathBuf {
-    bundled_converter_for(&std::env::current_exe().unwrap_or_default())
-}
-
 /// The bundled converter of the app program at `app`: in the `converter` folder beside it, or
 /// where the Mac app (`Contents/Resources`) and the Linux packages (`usr/lib/vault-forge`) keep
 /// it. Beside the app when none is there.
@@ -449,7 +445,8 @@ fn bundled_converter_for(app: &Path) -> PathBuf {
 
 impl Engine {
     pub fn start(app_data: PathBuf) -> io::Result<(Engine, Receiver<Event>)> {
-        Self::start_with_converter(app_data, bundled_converter())
+        let app = std::env::current_exe().unwrap_or_default();
+        Self::start_with_converter(app_data, bundled_converter_for(&app))
     }
 
     /// [`Engine::start`] with another converter program in place of the bundled one.
@@ -618,6 +615,7 @@ impl Engine {
     }
 }
 
+// Tested here, not through the front door: the app program's own place cannot be set from outside.
 #[cfg(test)]
 mod tests {
     use super::bundled_converter_for;
