@@ -3661,6 +3661,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "vault-forge-bundle"
+version = "0.1.0"
+dependencies = [
+ "ring",
+ "tempfile",
+ "ureq",
+ "vault-forge-engine",
+ "zip",
+]
+
+[[package]]
 name = "vault-forge-engine"
 version = "0.1.0"
 dependencies = [

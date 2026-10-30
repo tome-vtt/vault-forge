@@ -30,6 +30,15 @@ cargo run -p vault-forge
 cargo test
 ```
 
+Converting needs the converter beside the app. The bundle step downloads the pinned
+ttrpg-convert-cli release for your platform, checks its sha256 and puts the converter, its licence
+and the release's examples in a `converter` folder in the folder you name. A checksum that differs
+from the pin fails the step. The version and checksums are pinned in `crates/engine/src/lib.rs`.
+
+```sh
+cargo run -p vault-forge-bundle -- target/debug
+```
+
 ## Licence
 
 Vault Forge is licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your

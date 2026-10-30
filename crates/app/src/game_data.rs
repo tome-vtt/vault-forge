@@ -290,7 +290,7 @@ fn size(bytes: u64) -> String {
 }
 
 /// "26 Oct 2026", in UTC.
-fn date(time: SystemTime) -> String {
+pub(crate) fn date(time: SystemTime) -> String {
     const MONTHS: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];

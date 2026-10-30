@@ -355,12 +355,18 @@ fn switching_images_off_mid_download_stops_it_and_leaves_no_partial_folder() {
     let stopping = wait(&events, &images, |s| *s == DataState::Stopping);
     data.insert(images.clone(), stopping);
     assert!(saved.is_downloading(&data));
-    assert!(!saved.can_convert(&data));
+    assert_eq!(
+        saved.convert_blocker(&data, None),
+        Some("Wait for the download to finish.")
+    );
     // Nothing reports it running again once it is stopping.
     let stopped = wait(&events, &images, |_| true);
     assert_eq!(stopped, DataState::Missing { size: None });
     data.insert(images.clone(), stopped);
-    assert!(saved.can_convert(&data));
+    assert_ne!(
+        saved.convert_blocker(&data, None),
+        Some("Wait for the download to finish.")
+    );
     assert_eq!(cache_entries(dir.path()), copies);
 }
 
@@ -439,7 +445,10 @@ fn switching_images_off_leaves_another_profiles_images_download_running() {
         .find(|p| p.id == sunday.id)
         .unwrap();
     assert!(!sunday.is_downloading(&data));
-    assert!(sunday.can_convert(&data));
+    assert_ne!(
+        sunday.convert_blocker(&data, None),
+        Some("Wait for the download to finish.")
+    );
     engine.send(Command::CancelDownload(thursday.id));
     wait(&events, &images, |s| bytes(s) == 0);
 }
