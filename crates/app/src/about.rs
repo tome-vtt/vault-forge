@@ -4,7 +4,6 @@ use vault_forge_engine::{CONVERTER_VERSION, VERSION};
 
 use crate::app::narrow_column;
 use crate::game_data::MONTHS;
-use crate::obsidian_setup::{code, text_button};
 use crate::theme;
 
 const MIT: &str = include_str!("../../../LICENSE-MIT");
@@ -44,10 +43,10 @@ pub fn show(ui: &mut egui::Ui, newer: Option<&(String, String, String)>) -> bool
         });
         row(ui, wide, "Licences", |ui| {
             ui.label("Vault Forge: MIT or Apache-2.0. Converter: Apache-2.0.");
-            licences = text_button(ui, "View licences");
+            licences = theme::text_button(ui, "View licences");
         });
         row(ui, wide, "Source", |ui| {
-            code(ui, "github.com/tome-vtt/vault-forge")
+            theme::code(ui, "github.com/tome-vtt/vault-forge")
         });
     });
     licences

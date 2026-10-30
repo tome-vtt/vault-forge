@@ -55,9 +55,9 @@ pub fn show(ui: &mut egui::Ui, engine: &Engine, profile: Option<&Profile>) -> Op
             });
             step(ui, 2, |ui| {
                 ui.label("Press Import and choose");
-                code(ui, "admonitions-5e.json");
+                theme::code(ui, "admonitions-5e.json");
                 ui.label(".");
-                if text_button(ui, "Show the file") {
+                if theme::text_button(ui, "Show the file") {
                     show = Some(ADMONITIONS_STYLES);
                 }
             });
@@ -72,7 +72,7 @@ pub fn show(ui: &mut egui::Ui, engine: &Engine, profile: Option<&Profile>) -> Op
             step(ui, 2, |ui| {
                 let paths = profile.map_or_else(Paths::default, |p| p.config.paths.clone());
                 ui.label("Set Bestiary Folder to");
-                code(ui, &paths.bestiary_folder());
+                theme::code(ui, &paths.bestiary_folder());
                 ui.label(".");
             });
             step(ui, 3, |ui| {
@@ -85,9 +85,9 @@ pub fn show(ui: &mut egui::Ui, engine: &Engine, profile: Option<&Profile>) -> Op
             heading(ui, "Turn on the style snippets");
             step(ui, 1, |ui| {
                 ui.label("Copy the snippet files into your vault's");
-                code(ui, ".obsidian/snippets");
+                theme::code(ui, ".obsidian/snippets");
                 ui.label("folder.");
-                if text_button(ui, "Show the files") {
+                if theme::text_button(ui, "Show the files") {
                     show = Some(CSS_SNIPPET);
                 }
             });
@@ -161,19 +161,4 @@ fn step(ui: &mut egui::Ui, n: usize, add: impl FnOnce(&mut egui::Ui)) {
         ui.label(format!("{n}."));
         add(ui);
     });
-}
-
-/// A file or folder name as the demo marks code: monospace on a raised chip.
-pub fn code(ui: &mut egui::Ui, text: &str) {
-    egui::Frame::new()
-        .fill(theme::palette(ui).raised)
-        .corner_radius(4)
-        .inner_margin(egui::Margin::symmetric(5, 1))
-        .show(ui, |ui| ui.monospace(text));
-}
-
-/// The demo's text button: accent, medium weight, no frame.
-pub fn text_button(ui: &mut egui::Ui, text: &str) -> bool {
-    let text = theme::medium(text).color(theme::palette(ui).accent);
-    ui.add(egui::Button::new(text).frame(false)).clicked()
 }

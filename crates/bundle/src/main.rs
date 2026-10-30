@@ -10,9 +10,7 @@ use std::io::{self, Cursor, Read};
 use std::path::Path;
 use std::process::ExitCode;
 
-use vault_forge_engine::{
-    ADMONITIONS_STYLES, CONVERTER_LICENCE, CONVERTER_SHA256, CONVERTER_VERSION, CSS_SNIPPET,
-};
+use vault_forge_engine::{ADMONITIONS_STYLES, CONVERTER_SHA256, CONVERTER_VERSION, CSS_SNIPPET};
 
 const RELEASES: &str = "https://github.com/ebullient/ttrpg-convert-cli/releases/download";
 
@@ -76,7 +74,7 @@ fn bundle(base: &str, pins: &[(&str, &str)], platform: &str, out: &Path) -> Resu
     };
     for (from, to) in [
         (format!("{top}/bin/{exe}"), exe),
-        (format!("{top}/LICENSE"), CONVERTER_LICENCE),
+        (format!("{top}/LICENSE"), "LICENSE"),
     ] {
         let mut entry = zip
             .by_name(&from)

@@ -417,8 +417,6 @@ pub const CONVERTER_SHA256: [(&str, &str); 4] = [
 pub const ADMONITIONS_STYLES: &str = "examples/admonitions/admonitions-5e.json";
 /// One of the converter's CSS snippets; the others sit in the same folder.
 pub const CSS_SNIPPET: &str = "examples/css-snippets/dnd5e-compendium.css";
-/// The converter's own Apache-2.0 licence.
-pub const CONVERTER_LICENCE: &str = "LICENSE";
 
 /// Where GitHub says which Vault Forge release is the newest.
 pub const LATEST_RELEASE: &str =
