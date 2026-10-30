@@ -145,7 +145,7 @@ impl Profile {
         self.address == address || self.images_address == address
     }
 
-    /// How many books and adventures are chosen.
+    /// How many books are chosen, adventures included.
     pub fn book_count(&self) -> usize {
         self.config.sources.book.len() + self.config.sources.adventure.len()
     }
@@ -399,6 +399,18 @@ pub struct Engine {
     events: Sender<Event>,
 }
 
+/// The notes in the vault folders a conversion replaces.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConvertedNotes {
+    pub notes: usize,
+    /// When the newest of them was written.
+    pub written: SystemTime,
+    /// The folders, as the profile names them (`compendium/`).
+    pub folders: Vec<String>,
+}
+
+const WAIT_FOR_CONVERSION: &str = "Wait for the conversion to finish.";
+
 /// The bundled converter: in the `converter` folder beside the app.
 fn bundled_converter() -> PathBuf {
     let app = std::env::current_exe().unwrap_or_default();
@@ -442,9 +454,9 @@ impl Engine {
         self.profiles.lock().unwrap().file(id)
     }
 
-    /// How many notes the profile's compendium and rules folders hold in its vault, and when they
-    /// were written; `None` when they hold none, so converting replaces nothing.
-    pub fn converted_notes(&self, id: &str) -> Option<(usize, SystemTime)> {
+    /// The notes an earlier conversion left in the profile's vault; `None` when there are none,
+    /// so converting replaces nothing.
+    pub fn converted_notes(&self, id: &str) -> Option<ConvertedNotes> {
         let profiles = self.profiles.lock().unwrap();
         conversion::converted_notes(profiles.get(id).ok()?)
     }
@@ -465,6 +477,9 @@ impl Engine {
             Command::RenameProfile { id, name } => profiles.rename(&id, &name).map(|()| {
                 let _ = self.events.send(Event::ProfileSaved(id));
             }),
+            Command::DeleteProfile(id) if self.conversion.converting() == Some(id.clone()) => {
+                Err(WAIT_FOR_CONVERSION.into())
+            }
             Command::DeleteProfile(id) => {
                 let old = profiles.get(&id).ok().cloned();
                 profiles.delete(&id).and_then(|()| {
@@ -478,6 +493,11 @@ impl Engine {
                     self.game_data.check(address);
                 }
             }),
+            Command::DownloadGameData(profile)
+                if self.converting_from(&profiles, &profile.address) =>
+            {
+                Err(WAIT_FOR_CONVERSION.into())
+            }
             Command::DownloadGameData(profile) => self
                 .save(&mut profiles, profile)
                 .map(|p| self.game_data.download(&p.address, Kind::GameData)),
@@ -528,6 +548,11 @@ impl Engine {
     /// Saves a changed profile and returns it as saved.
     fn save(&self, profiles: &mut Profiles, profile: Profile) -> Result<Profile, String> {
         let old = profiles.get(&profile.id)?.clone();
+        // Its old copy would be removed while the converter reads it.
+        let converting = self.conversion.converting() == Some(profile.id.clone());
+        if converting && profile.address != old.address {
+            return Err(WAIT_FOR_CONVERSION.into());
+        }
         let id = profile.id.clone();
         profiles.save(profile)?;
         let new = profiles.get(&id)?.clone();
@@ -541,6 +566,13 @@ impl Engine {
         let _ = self.events.send(Event::ProfileSaved(id));
         self.release_unused(profiles, &old)?;
         Ok(new)
+    }
+
+    /// Whether the running conversion reads the address's game data, which nothing may replace
+    /// or remove until it ends.
+    fn converting_from(&self, profiles: &Profiles, address: &str) -> bool {
+        let converting = self.conversion.converting();
+        converting.is_some_and(|id| profiles.get(&id).is_ok_and(|p| p.address == address))
     }
 
     /// Stops each of `old`'s downloads that no profile downloads any more (images switched

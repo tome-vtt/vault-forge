@@ -8,7 +8,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
-use crate::{Event, Profile, converter, holding_folder};
+use crate::{ConvertedNotes, Event, Profile, converter, holding_folder};
 
 pub(crate) struct Conversion {
     converter: PathBuf,
@@ -66,7 +66,7 @@ impl Conversion {
         let (events, running) = (self.events.clone(), self.running.clone());
         let (vault, folders) = (profile.vault.clone(), folders(profile));
         std::thread::spawn(move || {
-            for line in lines.map_while(Result::ok) {
+            for line in lines {
                 let id = id.clone();
                 let _ = events.send(Event::ConversionLog { id, line });
             }
@@ -118,6 +118,16 @@ impl Conversion {
     }
 }
 
+/// Closing the app stops its conversion, rather than leave the converter running unseen.
+impl Drop for Conversion {
+    fn drop(&mut self) {
+        let id = self.converting();
+        if let Some(id) = id {
+            self.cancel(&id);
+        }
+    }
+}
+
 const CANCELLED: &str = "Conversion cancelled, so your vault was not changed.";
 
 /// The converter's exit code as one plain sentence; `None` when it was stopped from outside.
@@ -140,35 +150,44 @@ fn explain(code: Option<i32>) -> String {
 /// The vault folders a conversion replaces: the compendium and rules folders, leaving out one
 /// inside the other, since replacing the outer one replaces it too.
 fn folders(profile: &Profile) -> Vec<String> {
-    let paths = &profile.config.paths;
-    let both = [paths.compendium.clone(), paths.rules.clone()];
-    let mut folders: Vec<String> = Vec::new();
-    for folder in &both {
-        let inside = both
-            .iter()
-            .any(|o| o != folder && Path::new(folder).starts_with(o));
-        if !inside && !folders.contains(folder) {
-            folders.push(folder.clone());
-        }
+    let (compendium, rules) = (
+        &profile.config.paths.compendium,
+        &profile.config.paths.rules,
+    );
+    if Path::new(rules).starts_with(compendium) {
+        vec![compendium.clone()]
+    } else if Path::new(compendium).starts_with(rules) {
+        vec![rules.clone()]
+    } else {
+        vec![compendium.clone(), rules.clone()]
     }
-    folders
 }
 
-/// How many notes the profile's compendium and rules folders hold in the vault, and when the
-/// compendium folder was written; `None` when they hold none.
-pub(crate) fn converted_notes(profile: &Profile) -> Option<(usize, SystemTime)> {
-    fn count(dir: &Path) -> usize {
-        let entries = fs::read_dir(dir).into_iter().flatten().flatten();
-        entries
-            .map(|e| match e.path() {
-                p if p.is_dir() => count(&p),
-                _ => 1,
-            })
-            .sum()
+/// The notes the profile's compendium and rules folders hold in the vault; `None` when they hold
+/// none.
+// ponytail: walks the folders on the caller's thread; move it to a worker if a vault of many
+// thousand notes makes Convert pause.
+pub(crate) fn converted_notes(profile: &Profile) -> Option<ConvertedNotes> {
+    fn walk(dir: &Path, notes: &mut usize, newest: &mut SystemTime) {
+        for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, notes, newest);
+            } else {
+                *notes += 1;
+                let written = entry.metadata().and_then(|m| m.modified());
+                *newest = (*newest).max(written.unwrap_or(SystemTime::UNIX_EPOCH));
+            }
+        }
     }
     let folders = folders(profile);
-    let notes: usize = folders.iter().map(|f| count(&profile.vault.join(f))).sum();
-    let compendium = profile.vault.join(&profile.config.paths.compendium);
-    let when = fs::metadata(compendium).and_then(|m| m.modified()).ok();
-    (notes > 0).then(|| (notes, when.unwrap_or(SystemTime::UNIX_EPOCH)))
+    let (mut notes, mut written) = (0, SystemTime::UNIX_EPOCH);
+    for folder in &folders {
+        walk(&profile.vault.join(folder), &mut notes, &mut written);
+    }
+    (notes > 0).then_some(ConvertedNotes {
+        notes,
+        written,
+        folders,
+    })
 }

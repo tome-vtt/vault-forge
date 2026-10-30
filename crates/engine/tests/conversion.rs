@@ -229,6 +229,7 @@ fn log_lines_arrive_in_the_order_the_converter_prints_them() {
             "Writing compendium/XPHB.md",
             "Warning: no image file for img/bestiary/Vrock.webp",
             "Writing rules/conditions.md",
+            "Read caf\u{FFFD}.json",
             "Done",
         ]
     );
@@ -321,6 +322,40 @@ fn a_second_conversion_is_refused_while_one_runs() {
 }
 
 #[test]
+fn the_game_data_a_conversion_reads_stays_until_it_ends() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let first = setup.engine.profiles()[0].id.clone();
+    choose(&setup, &first, &["HANG"]);
+    let second = profile(&setup, "Friday", &address, &["XPHB"]);
+    setup.engine.send(Command::Convert(first.clone()));
+    wait(
+        &setup.events,
+        |e| matches!(e, Event::ConversionLog { line, .. } if line == "Waiting"),
+    );
+    let refused = |command| {
+        setup.engine.send(command);
+        let reply = setup.events.recv_timeout(Duration::from_secs(30)).unwrap();
+        assert!(
+            matches!(&reply, Event::Failed(m) if m == "Wait for the conversion to finish."),
+            "{reply:?}"
+        );
+    };
+
+    refused(Command::DownloadGameData(second));
+    refused(Command::DeleteProfile(first.clone()));
+    let profiles = setup.engine.profiles().into_iter();
+    let mut moved = profiles.into_iter().find(|p| p.id == first).unwrap();
+    moved.address = "http://127.0.0.1:1/other.zip".into();
+    refused(Command::SaveProfile(moved));
+
+    setup.engine.send(Command::CancelConversion(first));
+    wait(&setup.events, |e| {
+        matches!(e, Event::ConversionEnded { .. })
+    });
+}
+
+#[test]
 fn the_engine_says_whether_the_vault_has_converted_notes() {
     let address = serve_game_data();
     let setup = setup(&address);
@@ -329,8 +364,10 @@ fn the_engine_says_whether_the_vault_has_converted_notes() {
 
     convert(&setup, &id);
 
-    let (notes, _) = setup.engine.converted_notes(&id).unwrap();
-    assert_eq!(notes, 2);
+    let notes = setup.engine.converted_notes(&id).unwrap();
+    assert_eq!(notes.notes, 2);
+    assert_eq!(notes.folders, ["compendium/", "rules/"]);
+    assert!(notes.written > std::time::SystemTime::UNIX_EPOCH);
 }
 
 #[test]

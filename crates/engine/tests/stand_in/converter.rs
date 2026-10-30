@@ -3,6 +3,7 @@
 //! stdout and stderr, and writes a note per chosen book into the config's compendium folder and
 //! one into its rules folder. A chosen book named EXIT1 or EXIT2 makes it end with that exit code
 //! once its notes are written; HANG makes it wait until it is killed.
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::{env, fs, process, thread, time::Duration};
 
@@ -49,6 +50,8 @@ fn main() {
     fs::create_dir_all(&rules).unwrap();
     fs::write(rules.join("conditions.md"), "# Conditions\n").unwrap();
     println!("Writing {}conditions.md", text("rules"));
+    // A line that is not UTF-8, as a Windows code page prints "café".
+    std::io::stdout().write_all(b"Read caf\xe9.json\n").unwrap();
     for (book, code) in [("EXIT1", 1), ("EXIT2", 2)] {
         if books.iter().any(|b| b == book) {
             eprintln!("Error: stopping with exit code {code}");

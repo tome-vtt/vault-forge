@@ -1,12 +1,12 @@
 //! The screens: the sidebar, New profile and the profile view. They only ask the Engine.
 use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
 
 use eframe::egui;
 use vault_forge_engine::{
-    Appearance, CONVERTER_VERSION, Command, DataState, Engine, Event, Profile, Rules, VERSION,
-    is_valid_name,
+    Appearance, CONVERTER_VERSION, Command, ConvertedNotes, DataState, Engine, Event, Profile,
+    Rules, VERSION, is_valid_name,
 };
 
 use crate::books::BooksSection;
@@ -33,9 +33,7 @@ enum Dialog {
     /// Converting again over the notes of an earlier conversion.
     Replace {
         id: String,
-        notes: usize,
-        when: SystemTime,
-        folders: [String; 2],
+        notes: ConvertedNotes,
     },
 }
 
@@ -444,16 +442,7 @@ impl App {
         self.error = None;
         let id = profile.id.clone();
         match self.engine.converted_notes(&id) {
-            Some((notes, when)) => {
-                let paths = &profile.config.paths;
-                let folders = [paths.compendium.clone(), paths.rules.clone()];
-                self.dialog = Some(Dialog::Replace {
-                    id,
-                    notes,
-                    when,
-                    folders,
-                });
-            }
+            Some(notes) => self.dialog = Some(Dialog::Replace { id, notes }),
             None => self.engine.send(Command::Convert(id)),
         }
     }
@@ -565,12 +554,7 @@ impl App {
                         }
                     });
                 }
-                Dialog::Replace {
-                    id,
-                    notes,
-                    when,
-                    folders,
-                } => {
+                Dialog::Replace { id, notes } => {
                     let p = theme::palette(ui);
                     theme::dialog_title(ui, "Replace the converted notes?");
                     ui.label(
@@ -578,14 +562,14 @@ impl App {
                             "This vault has {} notes from the conversion on {}. Converting again \
                              rewrites the two folders below, so any edits you made inside them \
                              will be lost.",
-                            thousands(*notes),
-                            crate::game_data::date(*when),
+                            thousands(notes.notes),
+                            crate::game_data::date(notes.written),
                         ))
                         .color(p.text2),
                     );
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
-                        for folder in folders.iter() {
+                        for folder in &notes.folders {
                             egui::Frame::new()
                                 .fill(p.raised)
                                 .corner_radius(4)
@@ -1099,7 +1083,8 @@ mod tests {
             2,
             "the step and its log line"
         );
-        harness.get_by_label("0 m 0 s");
+        // The elapsed time, whatever the clock says by now.
+        harness.get_by_label_contains(" m ");
         harness.get_by_label("Log");
         harness.get_by_label("Live");
         harness.get_by_label("Reading data");

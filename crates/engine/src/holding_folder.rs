@@ -7,13 +7,9 @@ use std::path::{Path, PathBuf};
 /// Inside the vault, so the swap is a rename on one disk; Obsidian leaves dot folders alone.
 const NAME: &str = ".vault-forge-holding";
 
-pub(crate) fn path(vault: &Path) -> PathBuf {
-    vault.join(NAME)
-}
-
 /// An empty holding folder in the vault, clearing any a stopped app left behind.
 pub(crate) fn create(vault: &Path) -> io::Result<PathBuf> {
-    let holding = path(vault);
+    let holding = vault.join(NAME);
     discard(&holding)?;
     fs::create_dir_all(&holding)?;
     Ok(holding)
