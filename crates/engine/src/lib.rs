@@ -19,8 +19,8 @@ mod settings_file;
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use app_settings::AppSettings;
 use conversion::Conversion;
 use game_data::{GameData, Kind};
-use profile_files::ProfileFiles;
+use last_run::LastRuns;
 use profiles::Profiles;
 
 pub use last_run::{Fix, LastRun, LogLevel, Warning, log_level};
@@ -437,6 +437,7 @@ pub struct Engine {
     settings: Mutex<AppSettings>,
     game_data: GameData,
     conversion: Conversion,
+    last_runs: Arc<LastRuns>,
     events: Sender<Event>,
 }
 
@@ -485,11 +486,13 @@ impl Engine {
         let settings = Mutex::new(AppSettings::open(&app_data));
         let (events, receiver) = channel();
         let game_data = GameData::open(&app_data, events.clone())?;
+        let last_runs = Arc::new(LastRuns::open(&app_data)?);
         let engine = Engine {
             profiles,
             settings,
             game_data,
-            conversion: Conversion::new(converter, ProfileFiles::open(&app_data)?, events.clone()),
+            conversion: Conversion::new(converter, last_runs.clone(), events.clone()),
+            last_runs,
             events,
         };
         Ok((engine, receiver))
@@ -522,7 +525,7 @@ impl Engine {
 
     /// The record of the profile's most recent conversion; `None` before its first.
     pub fn last_run(&self, id: &str) -> Option<LastRun> {
-        self.conversion.last_run(id)
+        self.last_runs.load(id)
     }
 
     pub fn appearance(&self) -> Appearance {
@@ -596,7 +599,7 @@ impl Engine {
                 self.conversion.cancel(&id);
                 Ok(())
             }
-            Command::SaveLog { id, to } => self.conversion.save_log(&id, &to),
+            Command::SaveLog { id, to } => self.last_runs.save_log(&id, &to),
             Command::SetAppearance(appearance) => {
                 self.settings.lock().unwrap().set_appearance(appearance)
             }

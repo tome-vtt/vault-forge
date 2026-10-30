@@ -1,8 +1,41 @@
 //! Last run: the record of a profile's most recent conversion, the only one kept. Each
 //! conversion that runs to its end replaces it; a cancelled one leaves it as it was.
+use std::io;
+use std::path::Path;
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
+
+use crate::profile_files::ProfileFiles;
+
+/// The profiles' last runs, each kept beside its profile's files.
+pub(crate) struct LastRuns {
+    files: ProfileFiles,
+}
+
+impl LastRuns {
+    pub(crate) fn open(app_data: &Path) -> io::Result<Self> {
+        let files = ProfileFiles::open(app_data)?;
+        Ok(Self { files })
+    }
+
+    /// The record the Last run tab shows; `None` before the profile's first.
+    pub(crate) fn load(&self, id: &str) -> Option<LastRun> {
+        self.files.last_run(id)
+    }
+
+    /// Replaces the profile's record.
+    pub(crate) fn save(&self, id: &str, run: &LastRun) -> io::Result<()> {
+        self.files.save_last_run(id, run)
+    }
+
+    /// Writes the log of the profile's last run to the file.
+    pub(crate) fn save_log(&self, id: &str, to: &Path) -> Result<(), String> {
+        let run = self.load(id).ok_or("This profile has no log yet.")?;
+        let text: String = run.log.iter().map(|line| format!("{line}\n")).collect();
+        std::fs::write(to, text).map_err(|e| format!("Could not save the log: {e}"))
+    }
+}
 
 /// The record of a profile's most recent conversion: its counts, warnings and log.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,11 +63,12 @@ pub struct LastRun {
     pub log: Vec<String>,
 }
 
-/// A warning line from the log, and where it came from: the step the converter was on, which is
-/// the last ordinary line before it.
+/// A warning from the log, and where it came from: the step the converter was on, which is the
+/// last ordinary line before it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Warning {
-    pub line: String,
+    /// The warning as the log words it, without its level mark (`🔸 WARN|`, `Warning:`).
+    pub text: String,
     pub step: String,
 }
 
@@ -92,7 +126,7 @@ pub(crate) fn warnings(log: &[String]) -> Vec<Warning> {
     for line in log {
         match log_level(line) {
             LogLevel::Warning => warnings.push(Warning {
-                line: line.clone(),
+                text: without_level(line).to_owned(),
                 step: step.to_owned(),
             }),
             LogLevel::Info => step = line,
@@ -100,4 +134,19 @@ pub(crate) fn warnings(log: &[String]) -> Vec<Warning> {
         }
     }
     warnings
+}
+
+/// A warning line after its level mark: `🔸 WARN| `, or a leading `Warning:` or `Warn`.
+fn without_level(line: &str) -> &str {
+    let rest = match line.split_once('|') {
+        Some((level, rest)) if level.ends_with("WARN") => rest,
+        _ => ["warning", "warn"]
+            .iter()
+            .find(|mark| {
+                line.get(..mark.len())
+                    .is_some_and(|l| l.eq_ignore_ascii_case(mark))
+            })
+            .map_or(line, |mark| &line[mark.len()..]),
+    };
+    rest.trim_start_matches(':').trim()
 }
