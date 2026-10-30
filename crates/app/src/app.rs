@@ -247,10 +247,7 @@ impl App {
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // ponytail: Convert does nothing yet; the conversion ticket wires it.
-                ui.add_enabled(
-                    profile.can_convert(&self.data),
-                    egui::Button::new("Convert"),
-                );
+                theme::primary_button(ui, profile.can_convert(&self.data), "Convert");
             });
         });
         ui.add_space(12.0);
@@ -547,10 +544,9 @@ mod tests {
     }
 
     #[test]
-    fn convert_stays_disabled_while_the_book_images_download() {
+    fn book_images_have_their_own_download_and_hold_convert_with_a_cancel_while_running() {
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, events) = harness_on_profile(dir.path());
-        harness.run();
         let profile = harness.state().engine.profiles().remove(0);
         let images_address = "http://127.0.0.1:1/img.zip".to_string();
         harness.state().engine.send(Command::SaveProfile(Profile {
@@ -558,17 +554,26 @@ mod tests {
             images_address: images_address.clone(),
             ..profile
         }));
-        let ready = DataState::Ready {
+        // Reopened, so the screen's address field starts with the saved address.
+        harness.state_mut().game_data = None;
+        let ready = |newer| DataState::Ready {
             books: 5,
             bytes: 412_000_000,
             downloaded: UNIX_EPOCH,
-            newer: false,
+            newer,
         };
-        game_data(&events, ready.clone());
+        game_data(&events, ready(false));
         let images = |state| Event::GameData {
             address: images_address.clone(),
             state,
         };
+        events
+            .send(images(DataState::Missing { size: None }))
+            .unwrap();
+        harness.run();
+        harness.get_by_label("Check for update");
+        harness.get_by_label("Download images");
+
         events
             .send(images(DataState::Downloading {
                 bytes: 1_000_000,
@@ -580,10 +585,17 @@ mod tests {
             convert_disabled(&harness),
             "no Convert while images download"
         );
+        harness.get_by_label("Cancel");
 
-        events.send(images(ready)).unwrap();
+        events.send(images(ready(true))).unwrap();
+        harness.run();
+        harness.get_by_label("Update images");
+
+        events.send(images(ready(false))).unwrap();
         harness.run();
         assert!(!convert_disabled(&harness));
+        assert!(harness.query_by_label("Download images").is_none());
+        assert!(harness.query_by_label("Update images").is_none());
     }
 
     #[test]

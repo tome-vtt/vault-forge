@@ -7,6 +7,7 @@ use eframe::egui;
 use vault_forge_engine::{Command, DataState, Engine, Profile, Rules};
 
 use crate::app::rules_name;
+use crate::theme;
 
 /// The section for one open profile, holding the addresses while they are being typed.
 pub struct GameDataSection {
@@ -47,20 +48,19 @@ impl GameDataSection {
             ui.add_space(24.0);
             panel(ui, |ui| {
                 ui.strong("Game rules");
-                ui.horizontal(|ui| {
-                    for rules in [Rules::Dnd5e, Rules::Pf2e] {
-                        let on = profile.rules == rules;
-                        if ui.selectable_label(on, rules_name(rules)).clicked() && !on {
-                            engine.send(Command::SaveProfile(Profile {
-                                rules,
-                                ..profile.clone()
-                            }));
-                        }
-                    }
-                });
+                let mut rules = profile.rules;
+                let choices = [Rules::Dnd5e, Rules::Pf2e].map(|r| (r, rules_name(r)));
+                theme::segmented(ui, &mut rules, &choices, false);
+                if rules != profile.rules {
+                    engine.send(Command::SaveProfile(Profile {
+                        rules,
+                        ..profile.clone()
+                    }));
+                }
                 ui.add_space(16.0);
                 ui.strong("Download address");
-                self.address_line(ui, engine, profile, data.get(&profile.address), kind);
+                let busy = profile.is_downloading(data);
+                self.address_line(ui, engine, profile, data.get(&profile.address), busy, kind);
                 ui.add_space(12.0);
                 ui.separator();
                 self.images(ui, engine, profile, data);
@@ -74,12 +74,10 @@ impl GameDataSection {
         engine: &Engine,
         profile: &Profile,
         state: Option<&DataState>,
+        // Any of the profile's downloads running, so Cancel stays while only the images download.
+        busy: bool,
         kind: &str,
     ) {
-        let busy = matches!(
-            state,
-            Some(DataState::Downloading { .. } | DataState::Unpacking)
-        );
         let edited = self.address.trim() != profile.address;
         let id = profile.id.clone();
         ui.horizontal(|ui| {
@@ -113,13 +111,9 @@ impl GameDataSection {
                 engine.send(command);
             }
         });
-        if busy {
+        if state.is_some_and(DataState::is_busy) {
             ui.add_space(12.0);
-            ui.add(
-                egui::ProgressBar::new(0.0)
-                    .animate(true)
-                    .desired_height(6.0),
-            );
+            theme::track(ui);
         }
         ui.horizontal_wrapped(|ui| match state {
             Some(DataState::Downloading { bytes, elapsed }) => {
@@ -175,7 +169,7 @@ impl GameDataSection {
         data: &HashMap<String, DataState>,
     ) {
         let mut on = profile.images;
-        if ui.checkbox(&mut on, "Also download book images").changed() {
+        if theme::toggle(ui, &mut on, "Also download book images").changed() {
             engine.send(Command::SaveProfile(Profile {
                 images: on,
                 ..profile.clone()
@@ -195,17 +189,36 @@ impl GameDataSection {
         }
         ui.add_space(8.0);
         ui.strong("Book images download address");
-        let field = ui.add(
-            egui::TextEdit::singleline(&mut self.images_address)
-                .hint_text("https://…/images.zip")
-                .font(egui::TextStyle::Monospace),
-        );
-        if field.lost_focus() && self.images_address.trim() != profile.images_address {
-            engine.send(Command::SaveProfile(Profile {
-                images_address: self.images_address.clone(),
-                ..profile.clone()
-            }));
-        }
+        let edited = self.images_address.trim() != profile.images_address;
+        // No button while running: the Download address line's Cancel stops the images too.
+        let label = match state {
+            _ if edited => Some("Download images"),
+            Some(s) if s.is_busy() => None,
+            Some(DataState::Ready { newer: false, .. }) => None,
+            Some(DataState::Ready { newer: true, .. }) => Some("Update images"),
+            _ => Some("Download images"),
+        };
+        ui.horizontal(|ui| {
+            let field = ui.add(
+                egui::TextEdit::singleline(&mut self.images_address)
+                    .hint_text("https://…/images.zip")
+                    .font(egui::TextStyle::Monospace),
+            );
+            let can_press = !self.images_address.trim().is_empty();
+            let pressed = label.is_some_and(|label| {
+                ui.add_enabled(can_press, egui::Button::new(label))
+                    .clicked()
+            });
+            if (pressed || field.lost_focus()) && edited {
+                engine.send(Command::SaveProfile(Profile {
+                    images_address: self.images_address.clone(),
+                    ..profile.clone()
+                }));
+            }
+            if pressed {
+                engine.send(Command::DownloadImages(profile.id.clone()));
+            }
+        });
         ui.horizontal_wrapped(|ui| match state {
             Some(DataState::Downloading { bytes, .. }) => {
                 ui.weak(format!("Downloading images… {} so far.", size(*bytes)));
