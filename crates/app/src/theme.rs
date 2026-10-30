@@ -163,7 +163,7 @@ fn visuals(p: &Palette, base: Visuals) -> Visuals {
     let mut v = base;
     v.panel_fill = p.ground;
     v.window_fill = p.surface;
-    v.window_stroke = Stroke::NONE;
+    v.window_stroke = Stroke::new(1.0, p.border);
     v.window_corner_radius = CornerRadius::same(12);
     v.window_shadow = Shadow {
         offset: [0, 16],
@@ -225,6 +225,13 @@ pub fn sheet(ui: &egui::Ui, width: f32) -> egui::Frame {
             })
             .inner_margin(24)
     }
+}
+
+/// The demo's dialog: no edge, 12px corners, 24 padding and a soft shadow.
+pub fn dialog(ctx: &egui::Context) -> egui::Frame {
+    egui::Frame::window(&ctx.global_style())
+        .stroke(Stroke::NONE)
+        .inner_margin(24)
 }
 
 /// The near-black main action; grey and muted while it cannot be pressed.
@@ -304,6 +311,7 @@ pub fn pathline(ui: &mut egui::Ui, edit: egui::TextEdit<'_>, button: &str) -> eg
                 .corner_radius(right)
                 .min_size(egui::vec2(0.0, 40.0)),
         );
+        ring_corners(&button, right);
         let left = CornerRadius {
             nw: 10,
             sw: 10,
@@ -336,12 +344,14 @@ fn field(ui: &mut egui::Ui, edit: egui::TextEdit<'_>, corners: CornerRadius) -> 
             state.bg_stroke = Stroke::new(1.0, p.border);
             state.corner_radius = corners;
         }
-        ui.add(
+        let field = ui.add(
             edit.desired_width(f32::INFINITY)
                 .margin(egui::vec2(12.0, 10.0))
                 .min_size(egui::vec2(0.0, 40.0))
                 .align(egui::Align2::LEFT_CENTER),
-        )
+        );
+        ring_corners(&field, corners);
+        field
     })
     .inner
 }
@@ -355,13 +365,18 @@ pub fn focus_ring(ctx: &egui::Context) {
     else {
         return;
     };
-    // Text fields have 10px corners, buttons and rows 6 to 8; the outline follows them out.
-    let corners = if ctx.text_edit_focused() { 12 } else { 9 };
-    let accent = if ctx.theme() == Theme::Dark {
-        DARK.accent
-    } else {
-        LIGHT.accent
+    // The outline follows the control's corners out; a square corner stays square.
+    let corners = ctx
+        .data(|d| d.get_temp::<CornerRadius>(focused.id))
+        .unwrap_or(CornerRadius::same(6));
+    let out = |r: u8| if r == 0 { 0 } else { r + 2 };
+    let corners = CornerRadius {
+        nw: out(corners.nw),
+        ne: out(corners.ne),
+        sw: out(corners.sw),
+        se: out(corners.se),
     };
+    let accent = ctx.global_style().visuals.hyperlink_color;
     let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("focus_ring"));
     ctx.layer_painter(layer).rect_stroke(
         focused.rect.expand(2.0),
@@ -369,6 +384,13 @@ pub fn focus_ring(ctx: &egui::Context) {
         Stroke::new(2.0, accent),
         egui::StrokeKind::Outside,
     );
+}
+
+/// Tells `focus_ring` the corners of a control not drawn with the usual 6px ones.
+fn ring_corners(response: &egui::Response, corners: CornerRadius) {
+    response
+        .ctx
+        .data_mut(|d| d.insert_temp(response.id, corners));
 }
 
 /// A sidebar row: full width, with an optional tag such as the profile's rules on the right.
@@ -395,10 +417,12 @@ fn row(ui: &mut egui::Ui, selected: bool, text: egui::RichText, tag: &str) -> eg
             .corner_radius(8)
             .min_size(egui::vec2(ui.available_width(), 32.0));
         // The tag is part of the row's name for screen readers, so an empty one is left out.
-        ui.add(match tag {
+        let row = ui.add(match tag {
             "" => button.right_text(egui::Atom::grow()),
             tag => button.right_text(egui::RichText::new(tag).small().color(p.muted)),
-        })
+        });
+        ring_corners(&row, CornerRadius::same(8));
+        row
     })
     .inner
 }

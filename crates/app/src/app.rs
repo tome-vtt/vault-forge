@@ -278,7 +278,8 @@ impl App {
         };
         let mut cancel = false;
         let mut command = None;
-        egui::Modal::new(egui::Id::unique("profile_dialog")).show(ctx, |ui| match dialog {
+        let modal = egui::Modal::new(egui::Id::unique("profile_dialog")).frame(theme::dialog(ctx));
+        modal.show(ctx, |ui| match dialog {
             Dialog::Rename { id, name } => {
                 ui.heading("Rename profile");
                 let edit = theme::input(ui, egui::TextEdit::singleline(name));
@@ -405,24 +406,26 @@ mod tests {
     fn a_saved_choice_draws_the_first_frame_in_its_theme() {
         let dir = tempfile::tempdir().unwrap();
         let (engine, _) = Engine::start(dir.path().to_path_buf()).unwrap();
-        engine.send(Command::SetAppearance(Appearance::Dark));
+        engine.send(Command::SetAppearance(Appearance::Light));
         drop(engine);
 
         let (engine, events) = Engine::start(dir.path().to_path_buf()).unwrap();
         let (os, os_theme) = mpsc::channel();
-        os.send(Theme::Light).unwrap();
-        let mut app = App::new(engine, events, os_theme);
+        os.send(Theme::Dark).unwrap();
+        let mut shell = crate::Shell(App::new(engine, events, os_theme));
         let ctx = egui::Context::default();
         theme::install(&ctx);
-        // What the window does before each frame, then the frame itself.
-        app.apply_theme(&ctx);
+        // What the window does before each frame, then the frame itself. Without the saved
+        // choice, egui would draw this frame dark.
+        let mut input = egui::RawInput::default();
+        eframe::App::raw_input_hook(&mut shell, &ctx, &mut input);
         let mut first_frame_dark = None;
-        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = ctx.run_ui(input, |ui| {
             first_frame_dark = Some(ui.visuals().dark_mode);
-            app.ui(ui);
+            shell.0.ui(ui);
         });
         output.textures_delta.clear();
-        assert_eq!(first_frame_dark, Some(true));
+        assert_eq!(first_frame_dark, Some(false));
     }
 
     #[test]
