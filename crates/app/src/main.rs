@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod game_data;
 mod new_profile;
 mod theme;
 
@@ -25,7 +26,18 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| {
             theme::install(&cc.egui_ctx);
-            Ok(Box::new(Shell(app::App::new(engine, events))))
+            // Worker threads send events while the window sleeps, so each one wakes it.
+            let (forward, received) = std::sync::mpsc::channel();
+            let ctx = cc.egui_ctx.clone();
+            std::thread::spawn(move || {
+                for event in events {
+                    if forward.send(event).is_err() {
+                        break;
+                    }
+                    ctx.request_repaint();
+                }
+            });
+            Ok(Box::new(Shell(app::App::new(engine, received))))
         }),
     )
 }

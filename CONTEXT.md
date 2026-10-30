@@ -17,6 +17,10 @@ _Avoid_: source data, data folder, dataset
 The app's store of downloaded game data, one copy per download address, shared by every profile using it.
 _Avoid_: download folder, data store
 
+**Book images**:
+The optional second download a profile can switch on, holding the books' portraits and maps, from a second address the user pastes. Off by default.
+_Avoid_: assets, media, img
+
 **Book**:
 One source in the game data (a rulebook, supplement or adventure), named by its source code such as XPHB.
 _Avoid_: source, module
