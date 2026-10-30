@@ -15,11 +15,19 @@ updates it.
 
 Early development. Nothing is released yet.
 
-## Platforms
+## Install
 
-- Windows x64: installer
-- macOS on Apple Silicon: `.dmg` (unsigned for now; right-click and choose Open the first time)
-- Linux x64: AppImage and `.deb`
+Download the package for your computer from the
+[latest release](https://github.com/tome-vtt/vault-forge/releases/latest). Each one includes the
+converter, so there is nothing else to install.
+
+- **Windows x64:** the installer.
+- **macOS on Apple Silicon:** the `.dmg`. Open it and drag Vault Forge into Applications. The app
+  is not signed yet, so the first time, right-click Vault Forge in Applications, choose **Open**,
+  then **Open** again. After that it opens normally.
+- **Linux x64:** pick the `.deb` on Debian, Ubuntu, Mint or Pop!_OS, and install it with
+  `sudo apt install ./vault-forge_<version>_amd64.deb`. On any other distribution, pick the
+  AppImage: make it executable (`chmod +x vault-forge_<version>_x86_64.AppImage`) and run it.
 
 ## Building
 
