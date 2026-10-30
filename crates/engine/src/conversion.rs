@@ -69,7 +69,7 @@ impl Conversion {
         let (stop, stopped) = channel::<()>();
         let (events, poll_id) = (self.events.clone(), id.clone());
         let (poll_holding, poll_folders) = (holding.clone(), folders.clone());
-        // ponytail: counts every note once a second; count from the log if large runs lag.
+        // ponytail: counts every note once a second; count from the log if large conversions lag.
         std::thread::spawn(move || {
             let mut last = Vec::new();
             while let Err(RecvTimeoutError::Timeout) = stopped.recv_timeout(Duration::from_secs(1))
@@ -192,7 +192,8 @@ fn folders(profile: &Profile) -> Result<Vec<String>, String> {
     let inside = |folder: &str, what: &str| {
         let checked = vault_folder(folder, what)?;
         let rooted = folder.trim_start().starts_with(['/', '\\']);
-        match rooted || Path::new(&checked).starts_with(holding_folder::NAME) {
+        let holding = Path::new(&checked.to_lowercase()).starts_with(holding_folder::NAME);
+        match rooted || holding {
             true => Err(format!(
                 "The {what} folder must be a folder inside the vault."
             )),

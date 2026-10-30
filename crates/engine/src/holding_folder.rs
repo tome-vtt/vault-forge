@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 /// Obsidian leaves dot folders alone.
 pub(crate) const NAME: &str = ".vault-forge-holding";
 
-/// The start of the name a vault folder takes in the holding folder while it is replaced.
+/// The start of the name a vault folder takes in the holding folder while it is replaced; the
+/// folder's own name follows, so a user can tell which old folder is which.
 const REPLACED: &str = ".replaced-";
 
 /// An empty holding folder in the vault, clearing any a stopped app left behind, unless it still
@@ -45,10 +46,11 @@ pub(crate) fn swap(holding: &Path, vault: &Path, folders: &[String]) -> Result<(
         moved.push((from, to));
         io::Result::Ok(())
     };
-    let outcome = folders.iter().enumerate().try_for_each(|(i, folder)| {
+    let outcome = folders.iter().try_for_each(|folder| {
         let (old, new) = (vault.join(folder), holding.join(folder));
         if old.exists() {
-            rename(old.clone(), holding.join(format!("{REPLACED}{i}")))?;
+            let name = folder.trim_end_matches('/').replace('/', "_");
+            rename(old.clone(), holding.join(format!("{REPLACED}{name}")))?;
         }
         if new.exists() {
             fs::create_dir_all(old.parent().unwrap_or(vault))?;

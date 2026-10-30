@@ -420,6 +420,7 @@ fn a_folder_outside_the_vault_is_refused_and_left_alone() {
         format!("{}/", outside.display()),
         "../Documents/".into(),
         ".vault-forge-holding/".into(),
+        ".Vault-Forge-Holding/notes/".into(),
     ] {
         let edited = saved.replace(
             "compendium: compendium/",
@@ -457,13 +458,20 @@ fn a_swap_that_fails_partway_puts_every_folder_back() {
     fill(&setup.vault);
     let before = files(&setup.vault);
     let id = setup.engine.profiles()[0].id.clone();
-    // A folder that cannot be moved, as one open in another program on Windows. The compendium
-    // is swapped in first, so the rules folder fails after it.
-    let rules = setup.vault.join("rules");
-    std::fs::set_permissions(&rules, std::fs::Permissions::from_mode(0o555)).unwrap();
-    if std::fs::write(rules.join("probe"), "").is_ok() {
-        return; // Running as root, which permissions do not stop.
+    // A folder that cannot be moved, as one open in another program on Windows: a folder
+    // without write permission cannot move to another parent. The compendium is swapped in
+    // first, so the rules folder fails after it.
+    let read_only = |folder: &Path| {
+        std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o555)).unwrap();
+    };
+    let probe = setup._dir.path().join("probe");
+    std::fs::create_dir(&probe).unwrap();
+    read_only(&probe);
+    if std::fs::rename(&probe, setup.vault.join("probe")).is_ok() {
+        return; // Running as root, or on a system that allows it.
     }
+    let rules = setup.vault.join("rules");
+    read_only(&rules);
 
     let (_, converted, message) = convert(&setup, &id);
 
@@ -482,7 +490,9 @@ fn old_notes_a_swap_could_not_put_back_are_kept() {
     let address = serve_game_data();
     let setup = setup(&address);
     let id = setup.engine.profiles()[0].id.clone();
-    let kept = setup.vault.join(".vault-forge-holding/.replaced-0/old.md");
+    let kept = setup
+        .vault
+        .join(".vault-forge-holding/.replaced-compendium/old.md");
     std::fs::create_dir_all(kept.parent().unwrap()).unwrap();
     std::fs::write(&kept, "old compendium note").unwrap();
 
