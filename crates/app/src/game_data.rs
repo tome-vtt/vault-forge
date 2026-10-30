@@ -36,17 +36,29 @@ impl GameDataSection {
             Rules::Dnd5e => "5eTools",
             Rules::Pf2e => "Pf2eTools",
         };
-        ui.horizontal_top(|ui| {
+        // A narrow window stacks the description above the panel.
+        let narrow = ui.ctx().content_rect().width() <= theme::NARROW;
+        let layout = if narrow {
+            egui::Layout::top_down(egui::Align::Min)
+        } else {
+            egui::Layout::left_to_right(egui::Align::Min)
+        };
+        ui.with_layout(layout, |ui| {
+            let width = if narrow { ui.available_width() } else { 340.0 };
             let column = egui::Layout::top_down(egui::Align::Min);
-            ui.allocate_ui_with_layout(egui::vec2(340.0, 0.0), column, |ui| {
-                ui.set_width(340.0);
+            ui.allocate_ui_with_layout(egui::vec2(width, 0.0), column, |ui| {
+                ui.set_width(width);
                 ui.label(theme::medium("Game data").size(16.0));
                 ui.weak(format!(
                     "The {kind} data the books are read from. Paste its download address \
                      once; Vault Forge downloads, unpacks and updates it."
                 ));
             });
-            ui.add_space(24.0);
+            if narrow {
+                ui.add_space(12.0 - ui.spacing().item_spacing.y);
+            } else {
+                ui.add_space(24.0);
+            }
             panel(ui, |ui| {
                 ui.label(theme::medium("Game rules"));
                 let mut rules = profile.rules;
