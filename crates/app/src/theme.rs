@@ -298,8 +298,13 @@ pub fn input(ui: &mut egui::Ui, edit: egui::TextEdit<'_>) -> egui::Response {
 }
 
 /// The demo's path line: a field joined to the button that fills it, as one 40-tall control.
-/// Returns the button's response.
-pub fn pathline(ui: &mut egui::Ui, edit: egui::TextEdit<'_>, button: &str) -> egui::Response {
+/// Returns the field's response and the button's.
+pub fn pathline(
+    ui: &mut egui::Ui,
+    edit: egui::TextEdit<'_>,
+    button: &str,
+    enabled: bool,
+) -> (egui::Response, egui::Response) {
     let p = palette(ui);
     let layout = egui::Layout::right_to_left(egui::Align::Center);
     ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 40.0), layout, |ui| {
@@ -310,7 +315,8 @@ pub fn pathline(ui: &mut egui::Ui, edit: egui::TextEdit<'_>, button: &str) -> eg
             se: 10,
             ..CornerRadius::ZERO
         };
-        let button = ui.add(
+        let button = ui.add_enabled(
+            enabled,
             egui::Button::new(button)
                 .corner_radius(right)
                 .min_size(egui::vec2(0.0, 40.0)),
@@ -321,7 +327,7 @@ pub fn pathline(ui: &mut egui::Ui, edit: egui::TextEdit<'_>, button: &str) -> eg
             sw: 10,
             ..CornerRadius::ZERO
         };
-        field(ui, edit, left);
+        let field = field(ui, edit, left);
         // The button has no left edge of its own: the shared edge is the field's.
         let edge = button.rect.left() + 0.5;
         ui.painter().vline(
@@ -329,7 +335,7 @@ pub fn pathline(ui: &mut egui::Ui, edit: egui::TextEdit<'_>, button: &str) -> eg
             button.rect.y_range().shrink(1.0),
             Stroke::new(1.0, p.border),
         );
-        button
+        (field, button)
     })
     .inner
 }
@@ -492,7 +498,7 @@ pub fn segmented<T: PartialEq + Copy>(
 pub fn toggle(ui: &mut egui::Ui, on: &mut bool, label: &str) -> egui::Response {
     let p = palette(ui);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(label).color(p.text));
+        ui.label(medium(label).color(p.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let (rect, mut response) =
                 ui.allocate_exact_size(egui::vec2(32.0, 18.0), egui::Sense::click());
@@ -506,11 +512,9 @@ pub fn toggle(ui: &mut egui::Ui, on: &mut bool, label: &str) -> egui::Response {
             });
             let painter = ui.painter();
             painter.rect_filled(rect, 9, if *on { p.primary } else { p.toggle_off });
-            let x = if *on {
-                rect.right() - 9.0
-            } else {
-                rect.left() + 9.0
-            };
+            // The demo's knob slides over 120 ms.
+            let t = ui.ctx().animate_bool_with_time(response.id, *on, 0.12);
+            let x = egui::lerp(rect.left() + 9.0..=rect.right() - 9.0, t);
             painter.circle_filled(egui::pos2(x, rect.center().y), 7.0, p.surface);
             response
         })
