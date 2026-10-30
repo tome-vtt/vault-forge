@@ -651,7 +651,7 @@ mod tests {
     #[test]
     fn the_game_data_panel_stacks_its_rows() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut harness, _events) = harness_on_profile(dir.path());
+        let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
         harness.run();
         let bounds = |label| {
             harness
@@ -668,7 +668,7 @@ mod tests {
     #[test]
     fn download_sends_the_address_as_typed() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut harness, _events) = harness_on_profile(dir.path());
+        let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
         harness.run();
         let typed = "http://127.0.0.1:1/other.zip";
         harness.state_mut().game_data.as_mut().unwrap().address = typed.into();
