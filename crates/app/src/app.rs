@@ -1,9 +1,13 @@
 //! The screens: the sidebar, New profile and the profile view. They only ask the Engine.
+use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
 
 use eframe::egui;
-use vault_forge_engine::{Appearance, Command, Engine, Event, Profile, Rules, is_valid_name};
+use vault_forge_engine::{
+    Appearance, Command, DataState, Engine, Event, Profile, Rules, is_valid_name,
+};
 
+use crate::game_data::GameDataSection;
 use crate::new_profile::NewProfile;
 use crate::theme;
 
@@ -24,6 +28,9 @@ pub struct App {
     new_profile: NewProfile,
     dialog: Option<Dialog>,
     error: Option<String>,
+    /// The latest state of each download address, from the Engine's events.
+    data: HashMap<String, DataState>,
+    game_data: Option<GameDataSection>,
     /// The narrow window's folded sidebar is showing.
     menu_open: bool,
     /// The OS theme where the window cannot report it (Linux).
@@ -69,6 +76,8 @@ impl App {
             new_profile: NewProfile::default(),
             dialog: None,
             error: None,
+            data: HashMap::new(),
+            game_data: None,
             menu_open: false,
             os_theme,
         }
@@ -96,6 +105,9 @@ impl App {
                     if matches!(&self.screen, Screen::Profile(open) if *open == id) {
                         self.screen = first_screen(&self.engine);
                     }
+                }
+                Event::GameData { address, state } => {
+                    self.data.insert(address, state);
                 }
                 Event::Failed(message) => self.error = Some(message),
             }
@@ -255,8 +267,24 @@ impl App {
     }
 
     fn profile_view(&mut self, ui: &mut egui::Ui, profile: &Profile) {
-        ui.heading(&profile.name);
-        ui.label(rules_name(profile.rules));
+        // Opening a profile checks its game data for newer data.
+        if self.game_data.as_ref().is_none_or(|s| s.id != profile.id) {
+            self.game_data = Some(GameDataSection::new(profile));
+            self.engine.send(Command::CheckGameData(profile.id.clone()));
+        }
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.heading(&profile.name);
+                ui.label(rules_name(profile.rules));
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // ponytail: Convert does nothing yet; the conversion ticket wires it.
+                ui.add_enabled(
+                    profile.can_convert(&self.data),
+                    egui::Button::new("Convert"),
+                );
+            });
+        });
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             let (id, name) = (profile.id.clone(), profile.name.clone());
@@ -270,6 +298,10 @@ impl App {
                 self.dialog = Some(Dialog::Delete { id, name });
             }
         });
+        ui.add_space(24.0);
+        if let Some(section) = &mut self.game_data {
+            section.show(ui, &self.engine, profile, &self.data);
+        }
     }
 
     fn dialog(&mut self, ctx: &egui::Context) {
@@ -326,6 +358,9 @@ mod tests {
 
     use eframe::egui::Theme;
     use egui_kittest::Harness;
+    use std::sync::mpsc::Sender;
+    use std::time::{Duration, UNIX_EPOCH};
+
     use egui_kittest::kittest::{NodeT, Queryable};
     use vault_forge_engine::{Appearance, ProfileDraft};
 
@@ -517,6 +552,124 @@ mod tests {
         assert_eq!(harness.get_all_by_label("Thursday campaign").count(), 2);
         harness.get_by_label("Profiles /");
         harness.get_by_label("Thursday campaign PF2e");
+    }
+
+    /// The app on one profile, with the test sending the events the Engine would.
+    fn harness_on_profile(dir: &std::path::Path) -> (Harness<'static, App>, Sender<Event>) {
+        let (engine, _) = Engine::start(dir.to_path_buf()).unwrap();
+        engine.send(Command::CreateProfile(ProfileDraft {
+            name: "Thursday".into(),
+            rules: Rules::Dnd5e,
+            // Nothing listens there, so the check on opening fails at once and quietly.
+            address: "http://127.0.0.1:1/data.zip".into(),
+            vault: "/vault".into(),
+        }));
+        let (events, received) = std::sync::mpsc::channel();
+        let harness = Harness::builder()
+            .with_context_setup(theme::install)
+            .build_ui_state(
+                |ui, app: &mut App| app.ui(ui),
+                App::new(engine, received, mpsc::channel().1),
+            );
+        (harness, events)
+    }
+
+    fn game_data(events: &Sender<Event>, state: DataState) {
+        let address = "http://127.0.0.1:1/data.zip".into();
+        events.send(Event::GameData { address, state }).unwrap();
+    }
+
+    fn convert_disabled(harness: &Harness<'_, App>) -> bool {
+        harness
+            .get_by_label("Convert")
+            .accesskit_node()
+            .is_disabled()
+    }
+
+    #[test]
+    fn the_setup_screen_shows_each_game_data_state_from_engine_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path());
+        // 26 Oct 2026, mid-afternoon UTC.
+        let downloaded = UNIX_EPOCH + Duration::from_secs(20_752 * 86_400 + 15 * 3600);
+
+        game_data(
+            &events,
+            DataState::Downloading {
+                bytes: 148_000_000,
+                elapsed: Duration::from_secs(21),
+            },
+        );
+        harness.run();
+        harness.get_by_label("Downloading… 148 MB so far, 0 m 21 s. Unpacking follows.");
+        harness.get_by_label("Cancel");
+        assert!(convert_disabled(&harness), "no Convert while downloading");
+
+        let ready = |newer| DataState::Ready {
+            books: 5,
+            bytes: 412_000_000,
+            downloaded,
+            newer,
+        };
+        game_data(&events, ready(false));
+        harness.run();
+        harness.get_by_label("Ready");
+        harness
+            .get_by_label("5 books and adventures · 412 MB · downloaded 26 Oct 2026, up to date");
+        harness.get_by_label("Check for update");
+        assert!(!convert_disabled(&harness));
+
+        game_data(&events, ready(true));
+        harness.run();
+        harness.get_by_label("Newer data");
+        harness.get_by_label("Update");
+
+        game_data(&events, DataState::NotGameData);
+        harness.run();
+        harness.get_by_label("Not game data");
+        harness.get_by_label_contains("so it isn't 5eTools data.");
+        harness.get_by_label("Download");
+        assert!(convert_disabled(&harness));
+    }
+
+    #[test]
+    fn convert_stays_disabled_while_the_book_images_download() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path());
+        harness.run();
+        let profile = harness.state().engine.profiles().remove(0);
+        let images_address = "http://127.0.0.1:1/img.zip".to_string();
+        harness.state().engine.send(Command::SaveProfile(Profile {
+            images: true,
+            images_address: images_address.clone(),
+            ..profile
+        }));
+        let ready = DataState::Ready {
+            books: 5,
+            bytes: 412_000_000,
+            downloaded: UNIX_EPOCH,
+            newer: false,
+        };
+        game_data(&events, ready.clone());
+        let images = |state| Event::GameData {
+            address: images_address.clone(),
+            state,
+        };
+        events
+            .send(images(DataState::Downloading {
+                bytes: 1_000_000,
+                elapsed: Duration::from_secs(1),
+            }))
+            .unwrap();
+        harness.run();
+        assert!(
+            convert_disabled(&harness),
+            "no Convert while images download"
+        );
+
+        events.send(images(ready)).unwrap();
+        harness.run();
+        assert!(!convert_disabled(&harness));
     }
 
     #[test]
