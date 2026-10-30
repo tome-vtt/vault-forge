@@ -1,6 +1,7 @@
 //! The screens: the sidebar, New profile and the profile view. They only ask the Engine.
 use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
+use std::time::{Instant, SystemTime};
 
 use eframe::egui;
 use vault_forge_engine::{
@@ -21,8 +22,28 @@ enum Screen {
 }
 
 enum Dialog {
-    Rename { id: String, name: String },
-    Delete { id: String, name: String },
+    Rename {
+        id: String,
+        name: String,
+    },
+    Delete {
+        id: String,
+        name: String,
+    },
+    /// Converting again over the notes of an earlier conversion.
+    Replace {
+        id: String,
+        notes: usize,
+        when: SystemTime,
+        folders: [String; 2],
+    },
+}
+
+/// The conversion running in the app, from the Engine's events.
+struct Running {
+    id: String,
+    started: Instant,
+    log: Vec<String>,
 }
 
 pub struct App {
@@ -43,6 +64,9 @@ pub struct App {
     menu_open: bool,
     /// The newer release's version and page, once the release check has found one.
     newer_release: Option<(String, String)>,
+    running: Option<Running>,
+    /// The profile whose last conversion ended, whether it converted, and the sentence saying how.
+    ended: Option<(String, bool, String)>,
     /// The OS theme where the window cannot report it (Linux).
     os_theme: Receiver<egui::Theme>,
 }
@@ -93,6 +117,8 @@ impl App {
             saved: None,
             menu_open: false,
             newer_release: None,
+            running: None,
+            ended: None,
             os_theme,
         }
     }
@@ -129,9 +155,27 @@ impl App {
                     self.saved = None;
                     self.error = Some(message);
                 }
-                Event::ConversionStarted(_)
-                | Event::ConversionLog { .. }
-                | Event::ConversionEnded { .. } => {}
+                Event::ConversionStarted(id) => {
+                    self.ended = None;
+                    self.running = Some(Running {
+                        id,
+                        started: Instant::now(),
+                        log: Vec::new(),
+                    });
+                }
+                Event::ConversionLog { id, line } => {
+                    if let Some(running) = self.running.as_mut().filter(|r| r.id == id) {
+                        running.log.push(line);
+                    }
+                }
+                Event::ConversionEnded {
+                    id,
+                    converted,
+                    message,
+                } => {
+                    self.running = None;
+                    self.ended = Some((id, converted, message));
+                }
                 Event::NewerRelease { version, page } => {
                     self.newer_release = Some((version, page));
                 }
@@ -328,21 +372,56 @@ impl App {
         {
             self.books = Some(BooksSection::new(profile));
         }
+        let converting = self.running.as_ref().map(|r| r.id.as_str());
+        let here = converting == Some(profile.id.as_str());
+        let n = profile.book_count();
+        let books = format!("{n} book{}", if n == 1 { "" } else { "s" });
+        let mut convert = false;
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.heading(&profile.name);
-                ui.label(rules_name(profile.rules));
+                let rules = rules_name(profile.rules);
+                if here {
+                    let vault = profile.vault.display();
+                    ui.label(format!("{rules} · converting {books} into {vault}"));
+                } else {
+                    ui.label(rules);
+                }
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // ponytail: Convert does nothing yet; the conversion ticket wires it.
-                theme::primary_button(
-                    ui,
-                    profile.convert_blocker(&self.data, None).is_none(),
-                    "Convert",
-                );
+                if here {
+                    theme::primary_button(ui, false, "Converting…");
+                    if ui.button("Cancel").clicked() {
+                        let id = profile.id.clone();
+                        self.engine.send(Command::CancelConversion(id));
+                    }
+                } else {
+                    let blocker = profile.convert_blocker(&self.data, converting);
+                    let label = format!("Convert {books}");
+                    convert = theme::primary_button(ui, blocker.is_none(), &label).clicked();
+                    if let Some(reason) = blocker {
+                        ui.weak(reason);
+                    }
+                }
             });
         });
+        if convert {
+            self.convert(profile);
+        }
+        if let Some((_, converted, message)) = self.ended.as_ref().filter(|e| e.0 == profile.id) {
+            let p = theme::palette(ui);
+            let ink = if *converted {
+                p.text2
+            } else {
+                ui.visuals().error_fg_color
+            };
+            ui.colored_label(ink, message);
+        }
         ui.add_space(24.0);
+        if let Some(running) = self.running.as_ref().filter(|_| here) {
+            converting_view(ui, running);
+            return;
+        }
         egui::ScrollArea::vertical().show(ui, |ui| {
             if let Some(section) = &mut self.game_data {
                 section.show(ui, &self.engine, profile, &self.data);
@@ -358,6 +437,25 @@ impl App {
             ui.add_space(24.0);
             self.profile_file(ui, profile);
         });
+    }
+
+    /// Converts at once, or first asks to replace the notes an earlier conversion left.
+    fn convert(&mut self, profile: &Profile) {
+        self.error = None;
+        let id = profile.id.clone();
+        match self.engine.converted_notes(&id) {
+            Some((notes, when)) => {
+                let paths = &profile.config.paths;
+                let folders = [paths.compendium.clone(), paths.rules.clone()];
+                self.dialog = Some(Dialog::Replace {
+                    id,
+                    notes,
+                    when,
+                    folders,
+                });
+            }
+            None => self.engine.send(Command::Convert(id)),
+        }
     }
 
     fn profile_file(&mut self, ui: &mut egui::Ui, profile: &Profile) {
@@ -467,6 +565,45 @@ impl App {
                         }
                     });
                 }
+                Dialog::Replace {
+                    id,
+                    notes,
+                    when,
+                    folders,
+                } => {
+                    let p = theme::palette(ui);
+                    theme::dialog_title(ui, "Replace the converted notes?");
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "This vault has {} notes from the conversion on {}. Converting again \
+                             rewrites the two folders below, so any edits you made inside them \
+                             will be lost.",
+                            thousands(*notes),
+                            crate::game_data::date(*when),
+                        ))
+                        .color(p.text2),
+                    );
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        for folder in folders.iter() {
+                            egui::Frame::new()
+                                .fill(p.raised)
+                                .corner_radius(4)
+                                .inner_margin(egui::Margin::symmetric(8, 2))
+                                .show(ui, |ui| ui.monospace(folder.as_str()));
+                        }
+                    });
+                    ui.label(
+                        egui::RichText::new("Notes anywhere else in the vault are not touched.")
+                            .color(p.text2),
+                    );
+                    theme::dialog_actions(ui, |ui| {
+                        cancel = ui.button("Cancel").clicked();
+                        if theme::primary_button(ui, true, "Replace and convert").clicked() {
+                            command = Some(Command::Convert(id.clone()));
+                        }
+                    });
+                }
             }
         });
         if let Some(command) = command {
@@ -477,6 +614,69 @@ impl App {
             self.dialog = None;
         }
     }
+}
+
+/// The running conversion: the step the converter is on, the time so far and its live log.
+fn converting_view(ui: &mut egui::Ui, running: &Running) {
+    let p = theme::palette(ui);
+    ui.horizontal(|ui| {
+        let step = running
+            .log
+            .last()
+            .map_or("Starting the converter", String::as_str);
+        ui.label(theme::medium(step));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let secs = running.started.elapsed().as_secs();
+            ui.weak(format!("{} m {} s", secs / 60, secs % 60));
+        });
+    });
+    // The track repaints every frame, which keeps the time current too.
+    theme::track(ui);
+    ui.weak("The converter does not report a total, so there is no percentage.");
+    ui.add_space(24.0);
+    egui::Frame::new()
+        .stroke(egui::Stroke::new(1.0, p.border))
+        .corner_radius(12)
+        .inner_margin(16)
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(theme::medium("Log").size(16.0));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.weak("Live");
+                });
+            });
+            let height = ui.text_style_height(&egui::TextStyle::Monospace);
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, true])
+                .stick_to_bottom(true)
+                .show_rows(ui, height, running.log.len(), |ui, rows| {
+                    for line in &running.log[rows] {
+                        let text = egui::RichText::new(line).monospace();
+                        let lower = line.to_lowercase();
+                        let text = if lower.starts_with("error") {
+                            text.color(ui.visuals().error_fg_color)
+                        } else if lower.starts_with("warn") {
+                            text.color(p.warning)
+                        } else {
+                            text.color(p.text2)
+                        };
+                        ui.label(text);
+                    }
+                });
+        });
+}
+
+/// 4212 as "4,212".
+fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -687,7 +887,16 @@ mod tests {
         dir: &std::path::Path,
         width: f32,
     ) -> (Harness<'static, App>, Sender<Event>) {
-        let (engine, _) = Engine::start(dir.to_path_buf()).unwrap();
+        let (harness, events, _) = harness_on_profile_heard(dir, width);
+        (harness, events)
+    }
+
+    /// As `harness_on_profile`, also handing the test the Engine's own events.
+    fn harness_on_profile_heard(
+        dir: &std::path::Path,
+        width: f32,
+    ) -> (Harness<'static, App>, Sender<Event>, Receiver<Event>) {
+        let (engine, heard) = Engine::start(dir.to_path_buf()).unwrap();
         engine.send(Command::CreateProfile(ProfileDraft {
             name: "Thursday".into(),
             rules: Rules::Dnd5e,
@@ -703,7 +912,7 @@ mod tests {
                 |ui, app: &mut App| app.ui(ui),
                 App::new(engine, received, mpsc::channel().1),
             );
-        (harness, events)
+        (harness, events, heard)
     }
 
     fn game_data(events: &Sender<Event>, state: DataState) {
@@ -725,9 +934,192 @@ mod tests {
 
     fn convert_disabled(harness: &Harness<'_, App>) -> bool {
         harness
-            .get_by_label("Convert")
+            .get_all_by_role(egui::accesskit::Role::Button)
+            .find(|n| {
+                n.accesskit_node()
+                    .label()
+                    .is_some_and(|l| l.starts_with("Convert "))
+            })
+            .unwrap()
             .accesskit_node()
             .is_disabled()
+    }
+
+    /// Whether the Engine was sent Convert: the test's Engine has no game data of its own, so
+    /// it refuses every Convert this way.
+    fn convert_sent(heard: &Receiver<Event>) -> bool {
+        heard
+            .try_iter()
+            .any(|e| matches!(&e, Event::Failed(m) if m == "Download the game data first."))
+    }
+
+    /// Chooses the first of `five_books` and saves the profile, as ticking it would.
+    fn choose_a_book(harness: &Harness<'_, App>) {
+        let mut profile = harness.state().engine.profiles().remove(0);
+        profile.config.sources.book = vec!["B1".into()];
+        harness.state().engine.send(Command::SaveProfile(profile));
+    }
+
+    fn ready() -> DataState {
+        DataState::Ready {
+            books: five_books(),
+            bytes: 412_000_000,
+            downloaded: UNIX_EPOCH,
+            newer: false,
+        }
+    }
+
+    #[test]
+    fn convert_names_the_book_count_and_says_why_it_is_held() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        let held = |harness: &mut Harness<'_, App>, reason: &str| {
+            harness.run_steps(2);
+            assert!(convert_disabled(harness), "held: {reason}");
+            harness.get_by_label(reason);
+        };
+
+        game_data(&events, DataState::Missing { size: None });
+        held(&mut harness, "Download the game data first.");
+        harness.get_by_label("Convert 0 books");
+
+        game_data(&events, ready());
+        held(&mut harness, "Choose at least one book first.");
+
+        choose_a_book(&harness);
+        harness.run();
+        assert!(!convert_disabled(&harness));
+        harness.get_by_label("Convert 1 book");
+
+        let downloading = DataState::Downloading {
+            bytes: 0,
+            elapsed: Duration::ZERO,
+        };
+        game_data(&events, downloading);
+        held(&mut harness, "Wait for the download to finish.");
+
+        game_data(&events, ready());
+        events
+            .send(Event::ConversionStarted("friday".into()))
+            .unwrap();
+        held(&mut harness, "Another profile is converting.");
+    }
+
+    #[test]
+    fn converting_again_asks_first_to_replace_the_converted_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        std::fs::create_dir_all(vault.join("compendium")).unwrap();
+        std::fs::write(vault.join("compendium/old.md"), "old").unwrap();
+        let (mut harness, events, heard) = harness_on_profile_heard(dir.path(), 1280.0);
+        let profile = harness.state().engine.profiles().remove(0);
+        harness
+            .state()
+            .engine
+            .send(Command::SaveProfile(Profile { vault, ..profile }));
+        choose_a_book(&harness);
+        game_data(&events, ready());
+        harness.run();
+
+        harness.get_by_label("Convert 1 book").click();
+        harness.run();
+        harness.get_by_label("Replace the converted notes?");
+        harness.get_by_label_contains("This vault has 1 notes from the conversion on ");
+        harness.get_by_label("compendium/");
+        harness.get_by_label("rules/");
+        harness.get_by_label("Notes anywhere else in the vault are not touched.");
+        assert!(!convert_sent(&heard), "not before the answer");
+
+        harness.get_by_label("Cancel").click();
+        harness.run();
+        assert!(
+            harness
+                .query_by_label("Replace the converted notes?")
+                .is_none()
+        );
+        assert!(!convert_sent(&heard), "Cancel converts nothing");
+
+        harness.get_by_label("Convert 1 book").click();
+        harness.run();
+        harness.get_by_label("Replace and convert").click();
+        harness.run();
+        assert!(
+            harness
+                .query_by_label("Replace the converted notes?")
+                .is_none()
+        );
+        assert!(convert_sent(&heard));
+    }
+
+    #[test]
+    fn a_vault_with_no_converted_notes_converts_without_asking() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events, heard) = harness_on_profile_heard(dir.path(), 1280.0);
+        choose_a_book(&harness);
+        game_data(&events, ready());
+        harness.run();
+
+        harness.get_by_label("Convert 1 book").click();
+        harness.run();
+
+        assert!(
+            harness
+                .query_by_label("Replace the converted notes?")
+                .is_none()
+        );
+        assert!(convert_sent(&heard));
+    }
+
+    #[test]
+    fn the_converting_state_shows_the_step_the_time_the_live_log_and_cancel() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        choose_a_book(&harness);
+        game_data(&events, ready());
+        let id = harness.state().engine.profiles()[0].id.clone();
+        events.send(Event::ConversionStarted(id.clone())).unwrap();
+        for line in [
+            "Reading data",
+            "Warning: no image file for img/bestiary/Vrock.webp",
+            "Writing compendium/spells",
+        ] {
+            let line = line.into();
+            let id = id.clone();
+            events.send(Event::ConversionLog { id, line }).unwrap();
+        }
+        harness.run_steps(2);
+
+        let button = harness.get_by_label("Converting…");
+        assert!(button.accesskit_node().is_disabled());
+        harness.get_by_label("D&D 5e · converting 1 book into /vault");
+        assert_eq!(
+            harness
+                .get_all_by_label("Writing compendium/spells")
+                .count(),
+            2,
+            "the step and its log line"
+        );
+        harness.get_by_label("0 m 0 s");
+        harness.get_by_label("Log");
+        harness.get_by_label("Live");
+        harness.get_by_label("Reading data");
+        harness.get_by_label("Warning: no image file for img/bestiary/Vrock.webp");
+        assert!(harness.query_by_label("Game rules").is_none(), "no setup");
+        harness.get_by_label("Cancel").click();
+        harness.run_steps(2);
+
+        let message = "Conversion cancelled, so your vault was not changed.";
+        events
+            .send(Event::ConversionEnded {
+                id,
+                converted: false,
+                message: message.into(),
+            })
+            .unwrap();
+        harness.run();
+        harness.get_by_label(message);
+        assert!(!convert_disabled(&harness));
+        harness.get_by_label("Game rules");
     }
 
     #[test]
@@ -765,6 +1157,7 @@ mod tests {
     fn the_setup_screen_shows_each_game_data_state_from_engine_events() {
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        choose_a_book(&harness);
         // 26 Oct 2026, mid-afternoon UTC.
         let downloaded = UNIX_EPOCH + Duration::from_secs(20_752 * 86_400 + 15 * 3600);
 
@@ -812,6 +1205,7 @@ mod tests {
     fn book_images_have_their_own_download_and_hold_convert_with_a_cancel_while_running() {
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        choose_a_book(&harness);
         let profile = harness.state().engine.profiles().remove(0);
         let images_address = "http://127.0.0.1:1/img.zip".to_string();
         harness.state().engine.send(Command::SaveProfile(Profile {
