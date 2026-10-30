@@ -19,6 +19,15 @@ pub(crate) fn start(
         Rules::Dnd5e => "5e",
         Rules::Pf2e => "pf2e",
     };
+    #[cfg(target_os = "macos")]
+    {
+        // The unsigned app's converter keeps the download's quarantine flag, which stops it
+        // running; clearing it can fail harmlessly when there is none.
+        let _ = Command::new("/usr/bin/xattr")
+            .args(["-d", "com.apple.quarantine"])
+            .arg(program)
+            .output();
+    }
     let (reader, writer) = io::pipe()?;
     let mut command = Command::new(program);
     command
