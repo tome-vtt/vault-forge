@@ -1128,8 +1128,8 @@ mod tests {
         };
         game_data(&events, ready);
         harness.run();
-        // The wheel turns over the section's description, beside the list, so only the page
-        // scrolls, 40 points at a time, until the list has gone past the top.
+        // The five books fit the list, so the wheel, turned where the description first sits,
+        // scrolls only the page, 40 points at a time, until the list has gone past the top.
         let beside = harness
             .get_by_label("Convert only books you own.")
             .rect()
