@@ -584,6 +584,19 @@ mod tests {
     }
 
     #[test]
+    fn download_sends_the_address_as_typed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path());
+        harness.run();
+        let typed = "http://127.0.0.1:1/other.zip";
+        harness.state_mut().game_data.as_mut().unwrap().address = typed.into();
+        harness.run();
+        harness.get_by_label("Download").click();
+        harness.run();
+        assert_eq!(harness.state().engine.profiles()[0].address, typed);
+    }
+
+    #[test]
     fn the_setup_screen_shows_each_game_data_state_from_engine_events() {
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, events) = harness_on_profile(dir.path());
