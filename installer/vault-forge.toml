@@ -1,4 +1,4 @@
-# The Windows installer, built with Silk Setup v0.2.1 by .github/workflows/release.yml.
+# The Windows installer, built with Silk Setup v0.2.1 by sign-and-package.ps1.
 # No theme: Silk's default look. Relative paths resolve from this file's folder.
 product = "Vault Forge"
 # The release stamps the real version with --version.
@@ -20,8 +20,8 @@ start_menu = true
 desktop = true
 
 # Azure Artifact Signing, on the packed uninstaller and then the installer, with the identity
-# TomeVTT's release-desktop.yml uses. The workflow logs in to Azure and installs the
-# TrustedSigning module first, and gives the endpoint its default.
+# TomeVTT's release-desktop.yml uses. The release logs in to Azure, installs the
+# TrustedSigning module and gives the endpoint its default first.
 [sign]
 command = "pwsh"
 args = ["-NoProfile", "-NonInteractive", "-Command", '''Invoke-TrustedSigning -Endpoint $env:AZURE_CODESIGNING_ENDPOINT -CodeSigningAccountName $env:AZURE_CODESIGNING_ACCOUNT -CertificateProfileName $env:AZURE_CODESIGNING_PROFILE -Files '{file}' -FileDigest SHA256 -TimestampRfc3161 http://timestamp.acs.microsoft.com -TimestampDigest SHA256''']

@@ -44,9 +44,10 @@ cargo run -p vault-forge-bundle -- target/debug
 Push a tag that equals the workspace version in `Cargo.toml`, such as `v0.1.0`. A tag with a
 suffix, such as `v0.2.0-rc.1`, publishes a pre-release, which the app's release check ignores.
 `.github/workflows/release.yml` then builds the app and its bundled converter on GitHub's Windows
-runner and runs the real converter once on the tiny sample in `installer/smoke/`. It signs the app,
-builds a per-user installer with Silk Setup (`installer/vault-forge.toml`), signs it and verifies
-both signatures. Only then does it publish the installer to a GitHub release.
+runner and runs the real converter once on the tiny sample in `installer/smoke/`. Then
+`installer/sign-and-package.ps1` signs the app, builds a per-user installer with Silk Setup
+(`installer/vault-forge.toml`), signs it and verifies both signatures. Only then does the workflow
+publish the installer to a GitHub release.
 
 The workflow needs a `release` environment holding the Azure signing variables TomeVTT's desktop
 release uses (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
