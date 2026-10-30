@@ -584,6 +584,23 @@ mod tests {
     }
 
     #[test]
+    fn the_game_data_panel_stacks_its_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path());
+        harness.run();
+        let bounds = |label| {
+            harness
+                .get_by_label(label)
+                .accesskit_node()
+                .raw_bounds()
+                .unwrap()
+        };
+        let (rules, address) = (bounds("Game rules"), bounds("Download address"));
+        assert_eq!(rules.x0, address.x0);
+        assert!(address.y0 > rules.y1);
+    }
+
+    #[test]
     fn download_sends_the_address_as_typed() {
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, _events) = harness_on_profile(dir.path());
@@ -593,6 +610,7 @@ mod tests {
         harness.run();
         harness.get_by_label("Download").click();
         harness.run();
+        assert_eq!(harness.state().error, None);
         assert_eq!(harness.state().engine.profiles()[0].address, typed);
     }
 

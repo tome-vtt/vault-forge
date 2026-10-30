@@ -37,7 +37,8 @@ impl GameDataSection {
             Rules::Pf2e => "Pf2eTools",
         };
         ui.horizontal_top(|ui| {
-            ui.allocate_ui(egui::vec2(340.0, 0.0), |ui| {
+            let column = egui::Layout::top_down(egui::Align::Min);
+            ui.allocate_ui_with_layout(egui::vec2(340.0, 0.0), column, |ui| {
                 ui.set_width(340.0);
                 ui.label(theme::medium("Game data").size(16.0));
                 ui.weak(format!(
@@ -267,7 +268,8 @@ fn panel(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
         .inner_margin(16.0)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            add(ui);
+            // The row around it is horizontal; the panel's contents stack.
+            ui.vertical(add);
         });
 }
 
