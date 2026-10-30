@@ -38,6 +38,10 @@ impl Conversion {
         }
     }
 
+    pub(crate) fn converter(&self) -> &Path {
+        &self.converter
+    }
+
     pub(crate) fn last_run(&self, id: &str) -> Option<LastRun> {
         self.files.last_run(id)
     }

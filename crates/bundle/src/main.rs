@@ -10,7 +10,7 @@ use std::io::{self, Cursor, Read};
 use std::path::Path;
 use std::process::ExitCode;
 
-use vault_forge_engine::{CONVERTER_SHA256, CONVERTER_VERSION};
+use vault_forge_engine::{ADMONITIONS_STYLES, CONVERTER_SHA256, CONVERTER_VERSION, CSS_SNIPPET};
 
 const RELEASES: &str = "https://github.com/ebullient/ttrpg-convert-cli/releases/download";
 
@@ -53,6 +53,12 @@ fn bundle(base: &str, pins: &[(&str, &str)], platform: &str, out: &Path) -> Resu
     let native = fetch(base, pins, platform)?;
     let examples = fetch(base, pins, "examples")?;
     let failed = |e: &dyn std::fmt::Display| format!("Could not bundle the converter: {e}");
+    let mut examples = zip::ZipArchive::new(Cursor::new(examples)).map_err(|e| failed(&e))?;
+    for shown in [ADMONITIONS_STYLES, CSS_SNIPPET] {
+        if examples.index_for_name(shown).is_none() {
+            return Err(failed(&format!("the examples have no {shown}")));
+        }
+    }
     let into = out.join("converter");
     match fs::remove_dir_all(&into) {
         Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(failed(&e)),
@@ -83,9 +89,8 @@ fn bundle(base: &str, pins: &[(&str, &str)], platform: &str, out: &Path) -> Resu
         fs::set_permissions(into.join(exe), executable).map_err(|e| failed(&e))?;
     }
 
-    let mut zip = zip::ZipArchive::new(Cursor::new(examples)).map_err(|e| failed(&e))?;
-    for i in 0..zip.len() {
-        let mut entry = zip.by_index(i).map_err(|e| failed(&e))?;
+    for i in 0..examples.len() {
+        let mut entry = examples.by_index(i).map_err(|e| failed(&e))?;
         let Some(name) = entry.enclosed_name() else {
             continue;
         };
@@ -184,17 +189,22 @@ mod tests {
 
     /// A release like the converter's, with a Linux build and the examples.
     fn release() -> (String, Vec<u8>, Vec<u8>) {
+        release_with_examples(&[
+            ("docs/index.md", "docs"),
+            ("examples/templates/tools2md/spell2md.txt", "a template"),
+            ("examples/admonitions/admonitions-5e.json", "the call-outs"),
+            ("examples/css-snippets/dnd5e-compendium.css", "a snippet"),
+        ])
+    }
+
+    fn release_with_examples(examples: &[(&str, &str)]) -> (String, Vec<u8>, Vec<u8>) {
         let top = format!("ttrpg-convert-cli-{CONVERTER_VERSION}-linux-x86_64");
         let native = zip(&[
             (&format!("{top}/bin/ttrpg-convert"), "the converter"),
             (&format!("{top}/LICENSE"), "Apache License 2.0"),
             (&format!("{top}/README.md"), "readme"),
         ]);
-        let examples = zip(&[
-            ("docs/index.md", "docs"),
-            ("examples/templates/tools2md/spell2md.txt", "a template"),
-            ("examples/css-snippets/dnd5e.css", "a snippet"),
-        ]);
+        let examples = zip(examples);
         let files = HashMap::from([
             (
                 format!("ttrpg-convert-cli-{CONVERTER_VERSION}-linux-x86_64.zip"),
@@ -227,7 +237,13 @@ mod tests {
             read("examples/templates/tools2md/spell2md.txt"),
             "a template"
         );
-        assert_eq!(read("examples/css-snippets/dnd5e.css"), "a snippet");
+        assert_eq!(
+            read("examples/css-snippets/dnd5e-compendium.css"),
+            "a snippet"
+        );
+        // Where the Engine names the files the Obsidian setup screen shows.
+        assert_eq!(read(ADMONITIONS_STYLES), "the call-outs");
+        assert_eq!(read(CSS_SNIPPET), "a snippet");
         assert!(!out.path().join("converter/docs").exists());
         assert!(!out.path().join("converter/README.md").exists());
         #[cfg(unix)]
@@ -255,6 +271,23 @@ mod tests {
         let error = bundle(&base, &pins, "linux-x86_64", out.path()).unwrap_err();
 
         assert!(error.contains("not the pinned"), "{error}");
+        assert!(!out.path().join("converter").exists());
+    }
+
+    #[test]
+    fn examples_missing_a_file_the_setup_screen_shows_fail_and_bundle_nothing() {
+        let (base, native, examples) =
+            release_with_examples(&[("examples/css-snippets/dnd5e-compendium.css", "a snippet")]);
+        let out = tempfile::tempdir().unwrap();
+        let pins = [
+            ("linux-x86_64", sha256(&native)),
+            ("examples", sha256(&examples)),
+        ];
+        let pins = pins.each_ref().map(|(n, s)| (*n, s.as_str()));
+
+        let error = bundle(&base, &pins, "linux-x86_64", out.path()).unwrap_err();
+
+        assert!(error.contains(ADMONITIONS_STYLES), "{error}");
         assert!(!out.path().join("converter").exists());
     }
 

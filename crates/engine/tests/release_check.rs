@@ -12,7 +12,9 @@ fn release_at(tag: &str, page: &str) -> String {
         "http://{}/repos/tome-vtt/vault-forge/releases/latest",
         listener.local_addr().unwrap()
     );
-    let body = format!(r#"{{"tag_name":"{tag}","html_url":"{page}","name":"Vault Forge {tag}"}}"#);
+    let body = format!(
+        r#"{{"tag_name":"{tag}","html_url":"{page}","name":"Vault Forge {tag}","published_at":"2026-10-27T09:14:05Z"}}"#
+    );
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             let mut reader = BufReader::new(stream.try_clone().unwrap());
@@ -50,11 +52,18 @@ fn check(url: &str) -> Vec<Event> {
 }
 
 #[test]
-fn a_newer_release_sends_its_version_and_page() {
+fn a_newer_release_sends_its_version_page_and_release_day() {
     let events = check(&latest_release("v99.0.0"));
     match events.as_slice() {
-        [Event::NewerRelease { version, page }] => {
+        [
+            Event::NewerRelease {
+                version,
+                page,
+                released,
+            },
+        ] => {
             assert_eq!(version, "99.0.0");
+            assert_eq!(released, "2026-10-27");
             assert_eq!(
                 page,
                 "https://github.com/tome-vtt/vault-forge/releases/tag/v99.0.0"

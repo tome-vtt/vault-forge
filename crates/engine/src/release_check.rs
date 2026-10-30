@@ -13,6 +13,8 @@ const RELEASES_PAGE: &str = "https://github.com/tome-vtt/vault-forge/releases/";
 struct Release {
     tag_name: String,
     html_url: String,
+    #[serde(default)]
+    published_at: String,
 }
 
 pub(crate) fn check(url: String, events: Sender<Event>) {
@@ -27,6 +29,7 @@ pub(crate) fn check(url: String, events: Sender<Event>) {
             let _ = events.send(Event::NewerRelease {
                 version: version.to_owned(),
                 page: release.html_url,
+                released: release.published_at.chars().take(10).collect(),
             });
         }
     });

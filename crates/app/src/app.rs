@@ -1,4 +1,5 @@
-//! The screens: the sidebar, New profile and the profile view. They only ask the Engine.
+//! The screens: the sidebar, New profile, the profile view, Obsidian setup and About. They only
+//! ask the Engine.
 use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
 use std::time::{Instant, SystemTime};
@@ -10,19 +11,21 @@ use vault_forge_engine::{
 };
 
 use crate::books::BooksSection;
-use crate::file_manager;
 use crate::game_data::GameDataSection;
 use crate::last_run::{self, LastRunView};
 use crate::new_profile::NewProfile;
 use crate::setup::SetupSections;
-use crate::theme;
+use crate::{about, file_manager, obsidian_setup, theme};
 
 enum Screen {
     NewProfile,
     Profile(String),
+    ObsidianSetup,
+    About,
 }
 
 enum Dialog {
+    Licences,
     Rename {
         id: String,
         name: String,
@@ -69,8 +72,10 @@ pub struct App {
     saved: Option<String>,
     /// The narrow window's folded sidebar is showing.
     menu_open: bool,
-    /// The newer release's version and page, once the release check has found one.
-    newer_release: Option<(String, String)>,
+    /// The newer release's version, page and day, once the release check has found one.
+    newer_release: Option<(String, String, String)>,
+    /// The profile open last, whose folders Obsidian setup names.
+    last_open: Option<String>,
     running: Option<Running>,
     /// The profile whose last conversion ended, whether it converted, and the sentence saying how.
     ended: Option<(String, bool, String)>,
@@ -128,6 +133,7 @@ impl App {
             saved: None,
             menu_open: false,
             newer_release: None,
+            last_open: None,
             running: None,
             ended: None,
             tab: Tab::Setup,
@@ -198,8 +204,12 @@ impl App {
                     self.ended = Some((id, converted, message));
                     self.last_run = None;
                 }
-                Event::NewerRelease { version, page } => {
-                    self.newer_release = Some((version, page));
+                Event::NewerRelease {
+                    version,
+                    page,
+                    released,
+                } => {
+                    self.newer_release = Some((version, page, released));
                 }
             }
         }
@@ -210,9 +220,11 @@ impl App {
         let profiles = self.engine.profiles();
         let open = match &self.screen {
             Screen::Profile(id) => profiles.iter().find(|p| p.id == *id),
-            Screen::NewProfile => None,
+            _ => None,
         };
-        if open.is_none() {
+        if let Some(profile) = open {
+            self.last_open = Some(profile.id.clone());
+        } else if matches!(self.screen, Screen::Profile(_)) {
             self.screen = Screen::NewProfile;
         }
         let width = ui.ctx().content_rect().width();
@@ -288,17 +300,18 @@ impl App {
                             self.menu_open = true;
                         }
                     }
-                    match open {
-                        Some(profile) => {
+                    let title = match (open, &self.screen) {
+                        (Some(profile), _) => {
                             if width > theme::PHONE {
                                 ui.weak("Profiles /");
                             }
-                            ui.label(theme::medium(&profile.name));
+                            &profile.name
                         }
-                        None => {
-                            ui.label(theme::medium("New profile"));
-                        }
-                    }
+                        (None, Screen::ObsidianSetup) => "Obsidian setup",
+                        (None, Screen::About) => "About",
+                        (None, _) => "New profile",
+                    };
+                    ui.label(theme::medium(title));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         self.versions_and_notice(ui, narrow, phone);
                     });
@@ -310,9 +323,23 @@ impl App {
                 if let Some(message) = &self.error {
                     ui.colored_label(ui.visuals().error_fg_color, message);
                 }
-                match open {
-                    Some(profile) => self.profile_view(ui, profile),
-                    None => self.new_profile.show(ui, &self.engine, profiles.is_empty()),
+                match (open, &self.screen) {
+                    (Some(profile), _) => self.profile_view(ui, profile),
+                    (None, Screen::ObsidianSetup) => {
+                        let last = profiles
+                            .iter()
+                            .find(|p| Some(&p.id) == self.last_open.as_ref());
+                        let profile = last.or(profiles.first());
+                        if let Some(e) = obsidian_setup::show(ui, &self.engine, profile) {
+                            self.error = Some(e);
+                        }
+                    }
+                    (None, Screen::About) => {
+                        if about::show(ui, self.newer_release.as_ref()) {
+                            self.dialog = Some(Dialog::Licences);
+                        }
+                    }
+                    (None, _) => self.new_profile.show(ui, &self.engine, profiles.is_empty()),
                 }
             });
         if narrow {
@@ -344,6 +371,15 @@ impl App {
             self.go(Screen::NewProfile);
         }
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+            // Bottom up: About is the last row, Obsidian setup above it.
+            let on_about = matches!(self.screen, Screen::About);
+            if theme::nav_row(ui, on_about, "About", "").clicked() {
+                self.go(Screen::About);
+            }
+            let on_setup = matches!(self.screen, Screen::ObsidianSetup);
+            if theme::nav_row(ui, on_setup, "Obsidian setup", "").clicked() {
+                self.go(Screen::ObsidianSetup);
+            }
             let margin = egui::Margin {
                 left: 10,
                 right: 10,
@@ -595,7 +631,7 @@ impl App {
 
     /// The top bar's right side, right to left: the versions, then the new-version notice when one
     /// arrived. Narrow drops the versions; phone-sized keeps only the notice's dot and link.
-    fn versions_and_notice(&self, ui: &mut egui::Ui, narrow: bool, phone: bool) {
+    fn versions_and_notice(&mut self, ui: &mut egui::Ui, narrow: bool, phone: bool) {
         if !narrow {
             ui.label(
                 egui::RichText::new(format!(
@@ -606,11 +642,14 @@ impl App {
             );
             ui.add_space(8.0);
         }
-        let Some((version, page)) = &self.newer_release else {
+        let Some((version, ..)) = &self.newer_release else {
             return;
         };
+        let version = version.clone();
         ui.spacing_mut().item_spacing.x = 8.0;
-        ui.hyperlink_to(theme::medium("See what's new"), page);
+        if ui.link(theme::medium("See what's new")).clicked() {
+            self.go(Screen::About);
+        }
         if !phone {
             ui.label(format!("Vault Forge {version} is out"));
         }
@@ -629,6 +668,11 @@ impl App {
         modal.show(ctx, |ui| {
             ui.set_width(theme::dialog_width(ctx));
             match dialog {
+                Dialog::Licences => {
+                    theme::dialog_title(ui, "Licences");
+                    about::licences(ui);
+                    theme::dialog_actions(ui, |ui| cancel = ui.button("Close").clicked());
+                }
                 Dialog::Rename { id, name } => {
                     let title = theme::dialog_title(ui, "Rename profile");
                     let edit =
@@ -2065,6 +2109,7 @@ mod tests {
             .send(Event::NewerRelease {
                 version: "1.1.0".into(),
                 page: "https://github.com/tome-vtt/vault-forge/releases/tag/v1.1.0".into(),
+                released: "2026-10-27".into(),
             })
             .unwrap();
         harness.run();
@@ -2080,6 +2125,7 @@ mod tests {
             .send(Event::NewerRelease {
                 version: "1.1.0".into(),
                 page: "https://github.com/tome-vtt/vault-forge/releases/tag/v1.1.0".into(),
+                released: "2026-10-27".into(),
             })
             .unwrap();
         let mut harness = Harness::builder()
@@ -2111,5 +2157,128 @@ mod tests {
         assert!(phone.query_by_label(&versions).is_none());
         assert!(phone.query_by_label("Vault Forge 1.1.0 is out").is_none());
         phone.get_by_label("See what's new");
+    }
+
+    /// The address the last frame asked the OS to open.
+    fn opened_url(harness: &Harness<'_, App>) -> Option<String> {
+        let commands = &harness.output().platform_output.commands;
+        commands.iter().find_map(|c| match c {
+            egui::OutputCommand::OpenUrl(open) => Some(open.url.clone()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn the_obsidian_setup_screen_lists_the_plugins_each_opening_its_own_page_in_obsidian() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut harness = harness(dir.path());
+        harness.get_by_label("Obsidian setup").click();
+        harness.run();
+
+        harness
+            .get_by_label("What the converted notes need inside Obsidian. Install once per vault.");
+        for plugin in [
+            "Admonitions",
+            "Fantasy Statblocks",
+            "Dice Roller",
+            "Initiative Tracker",
+        ] {
+            harness.get_by_label(plugin);
+        }
+        assert_eq!(harness.get_all_by_label("Required").count(), 1);
+        assert_eq!(harness.get_all_by_label("Recommended").count(), 3);
+        harness.get_by_label("Show the file");
+        harness.get_by_label("Show the files");
+
+        let mut opened = Vec::new();
+        for i in 0..4 {
+            harness
+                .get_all_by_label("Open in Obsidian")
+                .nth(i)
+                .unwrap()
+                .click();
+            harness.step();
+            opened.push(opened_url(&harness).unwrap());
+            harness.run();
+        }
+        assert_eq!(
+            opened,
+            [
+                "obsidian://show-plugin?id=obsidian-admonition",
+                "obsidian://show-plugin?id=obsidian-5e-statblocks",
+                "obsidian://show-plugin?id=obsidian-dice-roller",
+                "obsidian://show-plugin?id=initiative-tracker",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_obsidian_setup_screen_points_the_bestiary_folder_at_the_open_profiles_compendium() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        let mut profile = harness.state().engine.profiles()[0].clone();
+        profile.config.paths.compendium = "lore/".into();
+        harness.state().engine.send(Command::SaveProfile(profile));
+
+        harness.get_by_label("Obsidian setup").click();
+        harness.run();
+
+        harness.get_by_label("lore/bestiary");
+        assert!(harness.query_by_label("compendium/bestiary").is_none());
+    }
+
+    #[test]
+    fn with_no_profile_the_obsidian_setup_screen_shows_the_usual_bestiary_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut harness = harness(dir.path());
+        harness.get_by_label("Obsidian setup").click();
+        harness.run();
+
+        harness.get_by_label("compendium/bestiary");
+    }
+
+    #[test]
+    fn the_about_screen_names_the_versions_the_licences_and_the_unofficial_notice() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut harness = harness(dir.path());
+        harness.get_by_label("About").click();
+        harness.run();
+
+        harness.get_by_label("About Vault Forge");
+        harness.get_by_label(
+            "A desktop window for ttrpg-convert-cli. Unofficial: not made or endorsed by the \
+             converter's author.",
+        );
+        harness.get_by_label(vault_forge_engine::VERSION);
+        harness.get_by_label("No newer version found.");
+        harness.get_by_label(&format!(
+            "ttrpg-convert-cli {} by ebullient, bundled",
+            vault_forge_engine::CONVERTER_VERSION
+        ));
+        harness.get_by_label("Vault Forge: MIT or Apache-2.0. Converter: Apache-2.0.");
+        harness.get_by_label("github.com/tome-vtt/vault-forge");
+
+        harness.get_by_label("View licences").click();
+        harness.run();
+        harness.get_by_label("MIT, for Vault Forge");
+        harness.get_by_label("Apache-2.0, for Vault Forge and the converter");
+    }
+
+    #[test]
+    fn see_whats_new_opens_about_with_the_newer_version_and_its_release_day() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut harness = top_bar_with_notice(dir.path(), 1280.0);
+        harness.get_by_label("See what's new").click();
+        harness.run();
+
+        harness.get_by_label("About Vault Forge");
+        harness.get_by_label("1.1.0, released 27 Oct 2026 ·");
+        harness.get_by_label("Download from GitHub").click();
+        harness.step();
+        assert_eq!(
+            opened_url(&harness).as_deref(),
+            Some("https://github.com/tome-vtt/vault-forge/releases/tag/v1.1.0")
+        );
     }
 }

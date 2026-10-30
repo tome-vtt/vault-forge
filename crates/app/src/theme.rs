@@ -760,3 +760,18 @@ pub fn preference(appearance: Appearance) -> egui::ThemePreference {
         Appearance::Dark => egui::ThemePreference::Dark,
     }
 }
+
+/// A file or folder name as the demo marks code: monospace on a raised chip.
+pub fn code(ui: &mut egui::Ui, text: &str) {
+    egui::Frame::new()
+        .fill(palette(ui).raised)
+        .corner_radius(4)
+        .inner_margin(egui::Margin::symmetric(5, 1))
+        .show(ui, |ui| ui.monospace(text));
+}
+
+/// The demo's text button: accent, medium weight, no frame.
+pub fn text_button(ui: &mut egui::Ui, text: &str) -> bool {
+    let text = medium(text).color(palette(ui).accent);
+    ui.add(egui::Button::new(text).frame(false)).clicked()
+}

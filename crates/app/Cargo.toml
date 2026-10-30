@@ -20,3 +20,20 @@ tempfile = "3.27.0"
 # The OS colour scheme on Linux, where the window layer does not report it.
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
+
+# The macOS and Linux packages, made by cargo-packager once the release build and the bundle step
+# have put the app and its converter in target/release. Paths are from this folder.
+[package.metadata.packager]
+product-name = "Vault Forge"
+identifier = "io.github.tome-vtt.vault-forge"
+description = "Turns your own 5eTools or Pathfinder 2e data into Obsidian notes."
+out-dir = "../../target/packages"
+binaries-dir = "../../target/release"
+resources = [{ src = "../../target/release/converter", target = "converter" }]
+category = "Utility"
+# ponytail: a plain square in the accent colour, which the AppImage requires; swap for a designed icon.
+icons = ["icons/icon.png"]
+
+# Ad-hoc, not a developer signature: Apple Silicon calls a downloaded bundle with none damaged.
+[package.metadata.packager.macos]
+signing-identity = "-"

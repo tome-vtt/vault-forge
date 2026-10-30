@@ -107,6 +107,15 @@ impl Default for Paths {
     }
 }
 
+impl Paths {
+    /// Where the converter writes monsters in the vault, which Fantasy Statblocks reads as its
+    /// Bestiary Folder: `compendium/bestiary`.
+    pub fn bestiary_folder(&self) -> String {
+        let compendium = self.compendium.trim_end_matches('/');
+        format!("{compendium}/bestiary")
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Images {
@@ -352,10 +361,12 @@ pub enum Event {
         address: String,
         state: DataState,
     },
-    /// A newer Vault Forge than [`VERSION`] is out; `page` is its release page.
+    /// A newer Vault Forge than [`VERSION`] is out; `page` is its release page and `released`
+    /// its day, `2026-10-27`, or empty when GitHub does not say.
     NewerRelease {
         version: String,
         page: String,
+        released: String,
     },
     /// The profile's conversion started.
     ConversionStarted(String),
@@ -411,6 +422,12 @@ pub const CONVERTER_SHA256: [(&str, &str); 4] = [
     ),
 ];
 
+/// The bundled files the Obsidian setup screen shows, by their place in the converter's folder;
+/// the bundle step refuses a release whose examples lack them.
+pub const ADMONITIONS_STYLES: &str = "examples/admonitions/admonitions-5e.json";
+/// One of the converter's CSS snippets; the others sit in the same folder.
+pub const CSS_SNIPPET: &str = "examples/css-snippets/dnd5e-compendium.css";
+
 /// Where GitHub says which Vault Forge release is the newest.
 pub const LATEST_RELEASE: &str =
     "https://api.github.com/repos/tome-vtt/vault-forge/releases/latest";
@@ -435,18 +452,28 @@ pub struct ConvertedNotes {
 
 const WAIT_FOR_CONVERSION: &str = "Wait for the conversion to finish.";
 
-/// The bundled converter: in the `converter` folder beside the app.
-fn bundled_converter() -> PathBuf {
-    let app = std::env::current_exe().unwrap_or_default();
+/// The bundled converter of the app program at `app`: in the `converter` folder beside it, or
+/// where the Mac app (`Contents/Resources`) and the Linux packages (`usr/lib/vault-forge`) keep
+/// it. Beside the app when none is there.
+fn bundled_converter_for(app: &Path) -> PathBuf {
     let beside = app.parent().unwrap_or(Path::new(""));
-    beside
-        .join("converter")
-        .join(format!("ttrpg-convert{}", std::env::consts::EXE_SUFFIX))
+    let above = beside.parent().unwrap_or(Path::new(""));
+    let exe = format!("ttrpg-convert{}", std::env::consts::EXE_SUFFIX);
+    [
+        beside.to_path_buf(),
+        above.join("Resources"),
+        above.join("lib").join("vault-forge"),
+    ]
+    .iter()
+    .map(|folder| folder.join("converter").join(&exe))
+    .find(|converter| converter.is_file())
+    .unwrap_or_else(|| beside.join("converter").join(&exe))
 }
 
 impl Engine {
     pub fn start(app_data: PathBuf) -> io::Result<(Engine, Receiver<Event>)> {
-        Self::start_with_converter(app_data, bundled_converter())
+        let app = std::env::current_exe().unwrap_or_default();
+        Self::start_with_converter(app_data, bundled_converter_for(&app))
     }
 
     /// [`Engine::start`] with another converter program in place of the bundled one.
@@ -471,6 +498,12 @@ impl Engine {
     /// The profiles for the sidebar, by name.
     pub fn profiles(&self) -> Vec<Profile> {
         self.profiles.lock().unwrap().list().to_vec()
+    }
+
+    /// A file bundled in the converter's folder, such as [`ADMONITIONS_STYLES`].
+    pub fn bundled_file(&self, name: &str) -> PathBuf {
+        let converter = self.conversion.converter();
+        converter.parent().unwrap_or(Path::new("")).join(name)
     }
 
     /// The profile's converter config file, which the converter can also run from the command line.
@@ -618,5 +651,42 @@ impl Engine {
             }
         }
         Ok(())
+    }
+}
+
+// Tested here, not through the front door: the app program's own place cannot be set from outside.
+#[cfg(test)]
+mod tests {
+    use super::bundled_converter_for;
+
+    #[test]
+    fn the_converter_is_found_where_each_package_puts_it() {
+        let exe = format!("ttrpg-convert{}", std::env::consts::EXE_SUFFIX);
+        for (app, folder) in [
+            ("build/vault-forge", "build/converter"),
+            (
+                "Vault Forge.app/Contents/MacOS/vault-forge",
+                "Vault Forge.app/Contents/Resources/converter",
+            ),
+            ("usr/bin/vault-forge", "usr/lib/vault-forge/converter"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let converter = dir.path().join(folder).join(&exe);
+            std::fs::create_dir_all(converter.parent().unwrap()).unwrap();
+            std::fs::write(&converter, "").unwrap();
+
+            assert_eq!(bundled_converter_for(&dir.path().join(app)), converter);
+        }
+    }
+
+    #[test]
+    fn a_missing_converter_is_looked_for_beside_the_app() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = format!("ttrpg-convert{}", std::env::consts::EXE_SUFFIX);
+
+        assert_eq!(
+            bundled_converter_for(&dir.path().join("usr/bin/vault-forge")),
+            dir.path().join("usr/bin/converter").join(exe)
+        );
     }
 }

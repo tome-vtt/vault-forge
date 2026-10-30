@@ -270,11 +270,12 @@ fn size(bytes: u64) -> String {
     }
 }
 
+pub(crate) const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
 /// "26 Oct 2026", in UTC.
 pub(crate) fn date(time: SystemTime) -> String {
-    const MONTHS: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
     let days = time
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
