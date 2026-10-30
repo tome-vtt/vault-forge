@@ -93,7 +93,7 @@ impl LastRunView {
             for (i, (folder, notes)) in run.folders.iter().take(shown).enumerate() {
                 ui.add_space(7.0);
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(folder).monospace());
+                    ui.label(egui::RichText::new(folder).monospace().size(13.0));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(thousands(*notes));
                     });
@@ -278,15 +278,14 @@ fn failed(ui: &mut egui::Ui, run: &LastRun, action: &mut Option<Action>) {
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                let fix = match run.fix {
-                    Some(Fix::DownloadAddress) => Some("Check the download address"),
-                    Some(Fix::Vault) => Some("Show the vault folder"),
-                    None => None,
-                };
-                if let (Some(fix), Some(label)) = (run.fix, fix)
-                    && ui.button(label).clicked()
-                {
-                    *action = Some(Action::Fix(fix));
+                if let Some(fix) = run.fix {
+                    let label = match fix {
+                        Fix::DownloadAddress => "Check the download address",
+                        Fix::Vault => "Show the vault folder",
+                    };
+                    if ui.button(label).clicked() {
+                        *action = Some(Action::Fix(fix));
+                    }
                 }
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.x = 12.0;

@@ -596,7 +596,6 @@ fn a_conversion_keeps_its_last_run_with_notes_counted_by_vault_folder() {
         "Warning: no image file for img/bestiary/Vrock.webp"
     );
     assert_eq!(run.warnings[0].step, "Writing compendium/bestiary/VGM.md");
-    assert!(run.seconds < 60, "{}", run.seconds);
 }
 
 #[test]

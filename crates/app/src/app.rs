@@ -1218,6 +1218,7 @@ mod tests {
         harness.get_by_label_contains(" m ");
         harness.get_by_label("Log");
         harness.get_by_label("Live");
+        harness.get_by_label("Running");
         harness.get_by_label("Reading data");
         harness.get_by_label("Warning: no image file for img/bestiary/Vrock.webp");
         assert!(harness.query_by_label("Game rules").is_none(), "no setup");
