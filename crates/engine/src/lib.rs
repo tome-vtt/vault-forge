@@ -172,7 +172,10 @@ pub enum Event {
         state: DataState,
     },
     /// A newer Vault Forge than [`VERSION`] is out; `page` is its release page.
-    NewerRelease { version: String, page: String },
+    NewerRelease {
+        version: String,
+        page: String,
+    },
     /// A command could not be carried out; the message is for the user.
     Failed(String),
 }
@@ -184,7 +187,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const CONVERTER_VERSION: &str = "3.3.7";
 
 /// Where GitHub says which Vault Forge release is the newest.
-pub const LATEST_RELEASE: &str = "https://api.github.com/repos/tome-vtt/vault-forge/releases/latest";
+pub const LATEST_RELEASE: &str =
+    "https://api.github.com/repos/tome-vtt/vault-forge/releases/latest";
 
 pub struct Engine {
     profiles: Mutex<Profiles>,

@@ -7,7 +7,7 @@ mod new_profile;
 mod theme;
 
 use eframe::egui;
-use vault_forge_engine::Engine;
+use vault_forge_engine::{Command, Engine, LATEST_RELEASE};
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -21,6 +21,7 @@ fn main() -> eframe::Result {
         .map(|d| d.data_dir().to_path_buf())
         .expect("no home folder to keep app data in");
     let (engine, events) = Engine::start(app_data).expect("could not open the app data folder");
+    engine.send(Command::CheckRelease(LATEST_RELEASE.into()));
     eframe::run_native(
         "Vault Forge",
         options,

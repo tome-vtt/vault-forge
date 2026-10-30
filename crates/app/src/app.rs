@@ -4,7 +4,8 @@ use std::sync::mpsc::Receiver;
 
 use eframe::egui;
 use vault_forge_engine::{
-    Appearance, Command, DataState, Engine, Event, Profile, Rules, is_valid_name,
+    Appearance, CONVERTER_VERSION, Command, DataState, Engine, Event, Profile, Rules, VERSION,
+    is_valid_name,
 };
 
 use crate::game_data::GameDataSection;
@@ -33,6 +34,8 @@ pub struct App {
     game_data: Option<GameDataSection>,
     /// The narrow window's folded sidebar is showing.
     menu_open: bool,
+    /// The newer release's version and page, once the release check has found one.
+    newer_release: Option<(String, String)>,
 }
 
 /// The demo's reading column for forms and text pages: left-aligned, at most 760 wide.
@@ -77,6 +80,7 @@ impl App {
             data: HashMap::new(),
             game_data: None,
             menu_open: false,
+            newer_release: None,
         }
     }
 
@@ -97,6 +101,9 @@ impl App {
                     self.data.insert(address, state);
                 }
                 Event::Failed(message) => self.error = Some(message),
+                Event::NewerRelease { version, page } => {
+                    self.newer_release = Some((version, page));
+                }
             }
         }
     }
@@ -178,6 +185,9 @@ impl App {
                             ui.strong("New profile");
                         }
                     }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        self.versions_and_notice(ui, narrow);
+                    });
                 });
             });
         let sheet = egui::CentralPanel::default()
@@ -270,6 +280,32 @@ impl App {
         if let Some(section) = &mut self.game_data {
             section.show(ui, &self.engine, profile, &self.data);
         }
+    }
+
+    /// The top bar's right side, right to left: the versions, then the new-version notice when one
+    /// arrived. Narrow, only the notice's dot and link stay.
+    fn versions_and_notice(&self, ui: &mut egui::Ui, narrow: bool) {
+        if !narrow {
+            ui.label(
+                egui::RichText::new(format!(
+                    "Vault Forge {VERSION} · converter {CONVERTER_VERSION}"
+                ))
+                .small()
+                .weak(),
+            );
+            ui.add_space(8.0);
+        }
+        let Some((version, page)) = &self.newer_release else {
+            return;
+        };
+        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.hyperlink_to("See what's new", page);
+        if !narrow {
+            ui.label(format!("Vault Forge {version} is out"));
+        }
+        let (dot, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+        ui.painter()
+            .circle_filled(dot.center(), 3.0, theme::palette(ui).accent);
     }
 
     fn dialog(&mut self, ctx: &egui::Context) {
@@ -612,5 +648,33 @@ mod tests {
         // The top bar's breadcrumb and the screen's title.
         assert_eq!(harness.get_all_by_label("New profile").count(), 2);
         assert!(harness.state().engine.profiles().is_empty());
+    }
+
+    #[test]
+    fn the_top_bar_shows_the_versions_and_the_new_version_notice_only_once_it_arrives() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, _) = Engine::start(dir.path().to_path_buf()).unwrap();
+        let (events, received) = std::sync::mpsc::channel();
+        let mut harness = Harness::builder()
+            .with_size([1280.0, 820.0])
+            .with_context_setup(theme::install)
+            .build_ui_state(|ui, app: &mut App| app.ui(ui), App::new(engine, received));
+        harness.run();
+        harness.get_by_label(&format!(
+            "Vault Forge {} · converter {}",
+            vault_forge_engine::VERSION,
+            vault_forge_engine::CONVERTER_VERSION
+        ));
+        assert!(harness.query_by_label("See what's new").is_none());
+
+        events
+            .send(Event::NewerRelease {
+                version: "1.1.0".into(),
+                page: "https://github.com/tome-vtt/vault-forge/releases/tag/v1.1.0".into(),
+            })
+            .unwrap();
+        harness.run();
+        harness.get_by_label("Vault Forge 1.1.0 is out");
+        harness.get_by_label("See what's new");
     }
 }
