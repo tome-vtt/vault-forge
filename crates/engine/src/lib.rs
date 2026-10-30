@@ -3,11 +3,13 @@
 //!
 //! The front door: [`Engine::start`] opens the app data folder and returns the Engine and an
 //! event receiver; screens call [`Engine::send`] and drain the receiver every frame.
+mod app_settings;
 mod data_cache;
 mod downloader;
 mod game_data;
 mod profile_files;
 mod profiles;
+mod settings_file;
 
 use std::collections::HashMap;
 use std::io;
@@ -18,6 +20,7 @@ use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
+use app_settings::AppSettings;
 use game_data::{GameData, Kind};
 use profiles::Profiles;
 
@@ -104,6 +107,16 @@ impl DataState {
     }
 }
 
+/// How the app looks. System follows the OS theme, even when it changes while the app is open.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
 /// What the user fills in to create a profile.
 #[derive(Clone, Debug, Default)]
 pub struct ProfileDraft {
@@ -142,6 +155,7 @@ pub enum Command {
     /// Downloads, or updates, the profile's game data and its images when switched on.
     DownloadGameData(String),
     CancelDownload(String),
+    SetAppearance(Appearance),
 }
 
 #[derive(Debug)]
@@ -159,6 +173,7 @@ pub enum Event {
 
 pub struct Engine {
     profiles: Mutex<Profiles>,
+    settings: Mutex<AppSettings>,
     game_data: GameData,
     events: Sender<Event>,
 }
@@ -166,10 +181,12 @@ pub struct Engine {
 impl Engine {
     pub fn start(app_data: PathBuf) -> io::Result<(Engine, Receiver<Event>)> {
         let profiles = Mutex::new(Profiles::open(&app_data)?);
+        let settings = Mutex::new(AppSettings::open(&app_data));
         let (events, receiver) = channel();
         let game_data = GameData::open(&app_data, events.clone())?;
         let engine = Engine {
             profiles,
+            settings,
             game_data,
             events,
         };
@@ -179,6 +196,10 @@ impl Engine {
     /// The profiles for the sidebar, by name.
     pub fn profiles(&self) -> Vec<Profile> {
         self.profiles.lock().unwrap().list().to_vec()
+    }
+
+    pub fn appearance(&self) -> Appearance {
+        self.settings.lock().unwrap().appearance()
     }
 
     // ponytail: profile commands are small file writes, so they run on the caller's thread;
@@ -226,6 +247,9 @@ impl Engine {
                     self.game_data.cancel(address);
                 }
             }),
+            Command::SetAppearance(appearance) => {
+                self.settings.lock().unwrap().set_appearance(appearance)
+            }
         };
         if let Err(message) = outcome {
             let _ = self.events.send(Event::Failed(message));

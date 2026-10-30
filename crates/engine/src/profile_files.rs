@@ -72,8 +72,8 @@ impl ProfileFiles {
     }
 }
 
-// Write beside, then rename, so a crash never leaves a half-written profile.
-fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
+// Write beside, then rename, so a crash never leaves a half-written file.
+pub(crate) fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, text)?;
     std::fs::rename(tmp, path)

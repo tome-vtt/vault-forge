@@ -4,6 +4,7 @@
 mod app;
 mod game_data;
 mod new_profile;
+mod theme;
 
 use eframe::egui;
 use vault_forge_engine::Engine;
@@ -24,6 +25,7 @@ fn main() -> eframe::Result {
         "Vault Forge",
         options,
         Box::new(|cc| {
+            theme::install(&cc.egui_ctx);
             // Worker threads send events while the window sleeps, so each one wakes it.
             let (forward, received) = std::sync::mpsc::channel();
             let ctx = cc.egui_ctx.clone();
