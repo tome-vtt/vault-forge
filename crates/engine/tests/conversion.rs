@@ -52,7 +52,10 @@ struct Setup {
 
 /// An Engine running the stand-in converter, with game data downloaded for the address.
 fn setup(address: &str) -> Setup {
-    setup_with(address, PathBuf::from(env!("CARGO_BIN_EXE_stand-in-converter")))
+    setup_with(
+        address,
+        PathBuf::from(env!("CARGO_BIN_EXE_stand-in-converter")),
+    )
 }
 
 /// [`setup`] running the converter program given.
@@ -235,7 +238,11 @@ fn the_converter_loses_the_quarantine_flag_before_it_runs() {
             .status
             .success()
     };
-    assert!(xattr(&["-w", "com.apple.quarantine", "0081;00000000;Safari;"]));
+    assert!(xattr(&[
+        "-w",
+        "com.apple.quarantine",
+        "0081;00000000;Safari;"
+    ]));
     let setup = setup_with(&address, converter.clone());
     let id = setup.engine.profiles()[0].id.clone();
 
