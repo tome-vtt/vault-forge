@@ -52,10 +52,14 @@ struct Setup {
 
 /// An Engine running the stand-in converter, with game data downloaded for the address.
 fn setup(address: &str) -> Setup {
+    setup_with(address, PathBuf::from(env!("CARGO_BIN_EXE_stand-in-converter")))
+}
+
+/// [`setup`] running the converter program given.
+fn setup_with(address: &str, converter: PathBuf) -> Setup {
     let dir = tempfile::tempdir().unwrap();
     let vault = dir.path().join("vault");
     std::fs::create_dir(&vault).unwrap();
-    let converter = PathBuf::from(env!("CARGO_BIN_EXE_stand-in-converter"));
     let (engine, events) = Engine::start_with_converter(dir.path().join("app"), converter).unwrap();
     let setup = Setup {
         _dir: dir,
@@ -211,6 +215,34 @@ fn a_finished_conversion_replaces_both_folders_and_nothing_else() {
             "rules/conditions.md"
         ]
     );
+}
+
+/// A converter unpacked from a downloaded, unsigned Mac app carries the quarantine flag, which
+/// stops it running.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_converter_loses_the_quarantine_flag_before_it_runs() {
+    let address = serve_game_data();
+    let dir = tempfile::tempdir().unwrap();
+    let converter = dir.path().join("ttrpg-convert");
+    std::fs::copy(env!("CARGO_BIN_EXE_stand-in-converter"), &converter).unwrap();
+    let xattr = |args: &[&str]| {
+        std::process::Command::new("xattr")
+            .args(args)
+            .arg(&converter)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    };
+    assert!(xattr(&["-w", "com.apple.quarantine", "0081;00000000;Safari;"]));
+    let setup = setup_with(&address, converter.clone());
+    let id = setup.engine.profiles()[0].id.clone();
+
+    let (_, converted, message) = convert(&setup, &id);
+
+    assert!(converted, "{message}");
+    assert!(!xattr(&["-p", "com.apple.quarantine"]));
 }
 
 #[test]

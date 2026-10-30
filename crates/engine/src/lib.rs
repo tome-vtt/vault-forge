@@ -425,13 +425,26 @@ pub struct ConvertedNotes {
 
 const WAIT_FOR_CONVERSION: &str = "Wait for the conversion to finish.";
 
-/// The bundled converter: in the `converter` folder beside the app.
 fn bundled_converter() -> PathBuf {
-    let app = std::env::current_exe().unwrap_or_default();
+    bundled_converter_for(&std::env::current_exe().unwrap_or_default())
+}
+
+/// The bundled converter of the app program at `app`: in the `converter` folder beside it, or
+/// where the Mac app (`Contents/Resources`) and the Linux packages (`usr/lib/vault-forge`) keep
+/// it. Beside the app when none is there.
+fn bundled_converter_for(app: &Path) -> PathBuf {
     let beside = app.parent().unwrap_or(Path::new(""));
-    beside
-        .join("converter")
-        .join(format!("ttrpg-convert{}", std::env::consts::EXE_SUFFIX))
+    let above = beside.parent().unwrap_or(Path::new(""));
+    let exe = format!("ttrpg-convert{}", std::env::consts::EXE_SUFFIX);
+    [
+        beside.to_path_buf(),
+        above.join("Resources"),
+        above.join("lib").join("vault-forge"),
+    ]
+    .iter()
+    .map(|folder| folder.join("converter").join(&exe))
+    .find(|converter| converter.is_file())
+    .unwrap_or_else(|| beside.join("converter").join(&exe))
 }
 
 impl Engine {
@@ -602,5 +615,41 @@ impl Engine {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bundled_converter_for;
+
+    #[test]
+    fn the_converter_is_found_where_each_package_puts_it() {
+        let exe = format!("ttrpg-convert{}", std::env::consts::EXE_SUFFIX);
+        for (app, folder) in [
+            ("build/vault-forge", "build/converter"),
+            (
+                "Vault Forge.app/Contents/MacOS/vault-forge",
+                "Vault Forge.app/Contents/Resources/converter",
+            ),
+            ("usr/bin/vault-forge", "usr/lib/vault-forge/converter"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let converter = dir.path().join(folder).join(&exe);
+            std::fs::create_dir_all(converter.parent().unwrap()).unwrap();
+            std::fs::write(&converter, "").unwrap();
+
+            assert_eq!(bundled_converter_for(&dir.path().join(app)), converter);
+        }
+    }
+
+    #[test]
+    fn a_missing_converter_is_looked_for_beside_the_app() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = format!("ttrpg-convert{}", std::env::consts::EXE_SUFFIX);
+
+        assert_eq!(
+            bundled_converter_for(&dir.path().join("usr/bin/vault-forge")),
+            dir.path().join("usr/bin/converter").join(exe)
+        );
     }
 }
