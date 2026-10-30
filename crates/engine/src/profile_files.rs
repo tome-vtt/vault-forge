@@ -17,7 +17,7 @@ impl ProfileFiles {
         Ok(Self { dir })
     }
 
-    fn config_path(&self, id: &str) -> PathBuf {
+    pub(crate) fn config_path(&self, id: &str) -> PathBuf {
         self.dir.join(format!("{id}.yaml"))
     }
 
@@ -42,9 +42,15 @@ impl ProfileFiles {
             let parsed = std::fs::read_to_string(&path)
                 .ok()
                 .and_then(|text| serde_yaml_ng::from_str::<Profile>(&text).ok());
+            // A missing or unreadable config reads as the defaults, as a new profile has.
+            let config = std::fs::read_to_string(self.config_path(id))
+                .ok()
+                .and_then(|text| serde_yaml_ng::from_str(&text).ok())
+                .unwrap_or_default();
             if let Some(profile) = parsed {
                 profiles.push(Profile {
                     id: id.to_owned(),
+                    config,
                     ..profile
                 });
             }
@@ -52,10 +58,11 @@ impl ProfileFiles {
         Ok(profiles)
     }
 
-    /// Writes the converter config it is given beside the profile's own fields.
-    pub(crate) fn save(&self, p: &Profile, config: &str) -> io::Result<()> {
+    /// Writes the profile's converter config, and its own fields beside it.
+    pub(crate) fn save(&self, p: &Profile) -> io::Result<()> {
+        let config = serde_yaml_ng::to_string(&p.config).map_err(io::Error::other)?;
         let beside = serde_yaml_ng::to_string(p).map_err(io::Error::other)?;
-        write_atomic(&self.config_path(&p.id), config)?;
+        write_atomic(&self.config_path(&p.id), &config)?;
         write_atomic(&self.beside_path(&p.id), &beside)
     }
 

@@ -11,7 +11,7 @@ mod profile_files;
 mod profiles;
 mod settings_file;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -46,6 +46,61 @@ pub struct Profile {
     /// Where the book images download from, when `images` is on. The user pastes it.
     #[serde(default)]
     pub images_address: String,
+    /// What the converter reads: saved as the profile's converter config file, not beside it.
+    #[serde(skip)]
+    pub config: ConverterConfig,
+    /// The user's own template folder; none means the converter's built-in templates.
+    #[serde(default)]
+    pub templates: Option<PathBuf>,
+}
+
+/// A profile's converter config, with ttrpg-convert-cli's own key names.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ConverterConfig {
+    pub sources: Sources,
+    pub paths: Paths,
+    pub images: Images,
+    pub use_dice_roller: bool,
+    /// Also selects the YAML statblock monster template, for the Fantasy Statblocks plugin.
+    pub yaml_statblocks: bool,
+    /// Template file per note type. The Engine fills it on every save from `yaml_statblocks` and
+    /// the profile's template folder; anything set here is replaced.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub template: BTreeMap<String, PathBuf>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Sources {
+    /// 5eTools homebrew JSON files, converted alongside the books.
+    pub homebrew: Vec<PathBuf>,
+}
+
+/// The two vault folders a conversion writes, relative to the vault.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Paths {
+    pub compendium: String,
+    pub rules: String,
+}
+
+impl Default for Paths {
+    fn default() -> Self {
+        Self {
+            compendium: "compendium/".into(),
+            rules: "rules/".into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Images {
+    /// Copy the game data's own images into the vault.
+    pub copy_internal: bool,
+    /// Also download images the data only links to on the web.
+    pub copy_external: bool,
 }
 
 impl Profile {
@@ -148,7 +203,7 @@ pub enum Command {
         name: String,
     },
     DeleteProfile(String),
-    /// Saves the profile's changed rules, addresses or images switch.
+    /// Saves any change to the profile: rules, addresses, vault, converter config or templates.
     SaveProfile(Profile),
     /// Reports the profile's game data and asks the server whether it has newer data.
     CheckGameData(String),
@@ -162,6 +217,8 @@ pub enum Command {
 pub enum Event {
     ProfileCreated(String),
     ProfileDeleted(String),
+    /// A change to the profile was written to its files.
+    ProfileSaved(String),
     /// The download at an address changed state; every profile using the address shares it.
     GameData {
         address: String,
@@ -198,6 +255,11 @@ impl Engine {
         self.profiles.lock().unwrap().list().to_vec()
     }
 
+    /// The profile's converter config file, which the converter can also run from the command line.
+    pub fn profile_file(&self, id: &str) -> PathBuf {
+        self.profiles.lock().unwrap().file(id)
+    }
+
     pub fn appearance(&self) -> Appearance {
         self.settings.lock().unwrap().appearance()
     }
@@ -211,7 +273,9 @@ impl Engine {
             Command::CreateProfile(draft) => profiles.create(draft).map(|id| {
                 let _ = self.events.send(Event::ProfileCreated(id));
             }),
-            Command::RenameProfile { id, name } => profiles.rename(&id, &name),
+            Command::RenameProfile { id, name } => profiles.rename(&id, &name).map(|()| {
+                let _ = self.events.send(Event::ProfileSaved(id));
+            }),
             Command::DeleteProfile(id) => {
                 let old = profiles.get(&id).ok().cloned();
                 profiles.delete(&id).and_then(|()| {
@@ -230,6 +294,7 @@ impl Engine {
                         self.game_data.check(address);
                     }
                 }
+                let _ = self.events.send(Event::ProfileSaved(id));
                 self.release_unused(&profiles, &old)
             }),
             Command::CheckGameData(id) => profiles.get(&id).map(|p| {
