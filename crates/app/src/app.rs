@@ -1,17 +1,18 @@
 //! The screens: the sidebar, New profile and the profile view. They only ask the Engine.
 use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use eframe::egui;
 use vault_forge_engine::{
-    Appearance, CONVERTER_VERSION, Command, ConvertedNotes, DataState, Engine, Event, Profile,
-    Rules, VERSION, is_valid_name,
+    Appearance, CONVERTER_VERSION, Command, ConvertedNotes, DataState, Engine, Event, Fix, LastRun,
+    Profile, Rules, VERSION, is_valid_name,
 };
 
 use crate::books::BooksSection;
 use crate::file_manager;
 use crate::game_data::GameDataSection;
+use crate::last_run::{self, LastRunView};
 use crate::new_profile::NewProfile;
 use crate::setup::SetupSections;
 use crate::theme;
@@ -35,6 +36,13 @@ enum Dialog {
         id: String,
         notes: ConvertedNotes,
     },
+}
+
+/// The profile view's tabs.
+#[derive(PartialEq)]
+enum Tab {
+    Setup,
+    Run,
 }
 
 /// The conversion running in the app, from the Engine's events.
@@ -66,6 +74,10 @@ pub struct App {
     running: Option<Running>,
     /// The profile whose last conversion ended, whether it converted, and the sentence saying how.
     ended: Option<(String, bool, String)>,
+    tab: Tab,
+    /// The open profile's last run, as the Engine last read it.
+    last_run: Option<(String, Option<LastRun>)>,
+    last_run_view: LastRunView,
     /// The OS theme where the window cannot report it (Linux).
     os_theme: Receiver<egui::Theme>,
 }
@@ -118,6 +130,9 @@ impl App {
             newer_release: None,
             running: None,
             ended: None,
+            tab: Tab::Setup,
+            last_run: None,
+            last_run_view: LastRunView::default(),
             os_theme,
         }
     }
@@ -156,6 +171,7 @@ impl App {
                 }
                 Event::ConversionStarted(id) => {
                     self.ended = None;
+                    self.tab = Tab::Run;
                     self.running = Some(Running {
                         id,
                         started: Instant::now(),
@@ -180,6 +196,7 @@ impl App {
                 } => {
                     self.running = None;
                     self.ended = Some((id, converted, message));
+                    self.last_run = None;
                 }
                 Event::NewerRelease { version, page } => {
                     self.newer_release = Some((version, page));
@@ -377,6 +394,19 @@ impl App {
         {
             self.books = Some(BooksSection::new(profile));
         }
+        // Read again for another profile, and after each conversion ends.
+        if self
+            .last_run
+            .as_ref()
+            .is_none_or(|(id, _)| *id != profile.id)
+        {
+            if self.last_run.is_some() {
+                self.last_run_view = LastRunView::default();
+            }
+            let run = self.engine.last_run(&profile.id);
+            self.last_run = Some((profile.id.clone(), run));
+        }
+        let run = self.last_run.as_ref().and_then(|(_, run)| run.clone());
         let converting = self.running.as_ref().map(|r| r.id.as_str());
         let here = converting == Some(profile.id.as_str());
         let n = profile.book_count();
@@ -390,7 +420,8 @@ impl App {
                     let vault = profile.vault.display();
                     ui.label(format!("{rules} · converting {books} into {vault}"));
                 } else {
-                    ui.label(rules);
+                    let last = last_run::subtitle(run.as_ref(), SystemTime::now());
+                    ui.label(format!("{rules} · {books} · {last}"));
                 }
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -413,7 +444,11 @@ impl App {
         if convert {
             self.convert(profile);
         }
-        if let Some((_, converted, message)) = self.ended.as_ref().filter(|e| e.0 == profile.id) {
+        // The Last run tab says how a conversion ended; this line is for what it cannot, a cancel.
+        let ended = self.ended.as_ref().filter(|e| e.0 == profile.id);
+        if let Some((_, converted, message)) =
+            ended.filter(|e| run.as_ref().is_none_or(|r| r.message != e.2))
+        {
             let p = theme::palette(ui);
             let ink = if *converted {
                 p.text2
@@ -422,9 +457,43 @@ impl App {
             };
             ui.colored_label(ink, message);
         }
+        ui.add_space(20.0);
+        // The rule under the tabs goes beneath the chosen tab's accent line.
+        let rule = ui.painter().add(egui::Shape::Noop);
+        let tabs = ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = if ui.ctx().content_rect().width() <= theme::PHONE {
+                20.0
+            } else {
+                24.0
+            };
+            if theme::tab(ui, self.tab == Tab::Setup, "Setup", |_| {}).clicked() {
+                self.tab = Tab::Setup;
+            }
+            let chosen = self.tab == Tab::Run;
+            if theme::tab(ui, chosen, "Last run", |ui| {
+                last_run::pill(ui, run.as_ref(), here);
+            })
+            .clicked()
+            {
+                self.tab = Tab::Run;
+            }
+        });
+        let under = tabs.response.rect.bottom() - 0.5;
+        let edge = egui::Stroke::new(1.0, theme::palette(ui).border);
+        let line = egui::Shape::hline(ui.max_rect().x_range(), under, edge);
+        ui.painter().set(rule, line);
         ui.add_space(24.0);
-        if let Some(running) = self.running.as_ref().filter(|_| here) {
-            converting_view(ui, running);
+        if self.tab == Tab::Run {
+            if let Some(running) = self.running.as_ref().filter(|_| here) {
+                converting_view(ui, running);
+                return;
+            }
+            let action = egui::ScrollArea::vertical()
+                .show(ui, |ui| self.last_run_view.show(ui, run.as_ref()))
+                .inner;
+            if let Some(action) = action {
+                self.last_run_action(action, profile);
+            }
             return;
         }
         egui::ScrollArea::vertical().show(ui, |ui| {
@@ -442,6 +511,37 @@ impl App {
             ui.add_space(24.0);
             self.profile_file(ui, profile);
         });
+    }
+
+    fn last_run_action(&mut self, action: last_run::Action, profile: &Profile) {
+        let opened = match action {
+            last_run::Action::Fix(Fix::DownloadAddress) => {
+                self.tab = Tab::Setup;
+                if let Some(section) = &mut self.game_data {
+                    section.focus_address = true;
+                }
+                Ok(())
+            }
+            last_run::Action::Fix(Fix::Vault) | last_run::Action::ShowFolder => {
+                file_manager::show(&profile.vault)
+            }
+            last_run::Action::OpenInObsidian => {
+                file_manager::open_link(&file_manager::obsidian_link(&profile.vault))
+            }
+            last_run::Action::SaveLog => {
+                let file = rfd::FileDialog::new()
+                    .set_file_name(format!("{} log.txt", profile.name))
+                    .save_file();
+                if let Some(to) = file {
+                    let id = profile.id.clone();
+                    self.engine.send(Command::SaveLog { id, to });
+                }
+                Ok(())
+            }
+        };
+        if let Err(e) = opened {
+            self.error = Some(format!("Could not open it: {e}"));
+        }
     }
 
     /// Converts at once, or first asks to replace the notes an earlier conversion left.
@@ -645,37 +745,10 @@ fn converting_view(ui: &mut egui::Ui, running: &Running) {
                 .stick_to_bottom(true)
                 .show_rows(ui, height, running.log.len(), |ui, rows| {
                     for line in &running.log[rows] {
-                        let text = egui::RichText::new(line).monospace();
-                        ui.label(text.color(match mark(line) {
-                            Mark::Error => ui.visuals().error_fg_color,
-                            Mark::Warning => p.warning,
-                            Mark::None => p.text2,
-                        }));
+                        last_run::log_line(ui, line);
                     }
                 });
         });
-}
-
-/// How the log marks a line.
-#[derive(Debug, PartialEq)]
-enum Mark {
-    Error,
-    Warning,
-    None,
-}
-
-/// Errors and warnings as the converter prints them (`🛑  ERR|`, `🔸 WARN|`), or starting
-/// `Error`/`Warning`.
-fn mark(line: &str) -> Mark {
-    let level = line.split_once('|').map_or("", |(level, _)| level);
-    let lower = line.to_lowercase();
-    if level.ends_with("ERR") || lower.starts_with("error") {
-        Mark::Error
-    } else if level.ends_with("WARN") || lower.starts_with("warn") {
-        Mark::Warning
-    } else {
-        Mark::None
-    }
 }
 
 /// The notes a conversion has written so far, by folder, as one sentence.
@@ -694,7 +767,7 @@ fn notes_written(written: &[(String, usize)]) -> String {
 }
 
 /// 4212 as "4,212".
-fn thousands(n: usize) -> String {
+pub(crate) fn thousands(n: usize) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
@@ -1162,24 +1235,213 @@ mod tests {
         harness.run();
         harness.get_by_label(message);
         assert!(!convert_disabled(&harness));
-        harness.get_by_label("Game rules");
+        // The tab stays on Last run, which shows the earlier run, here none.
+        harness
+            .get_by_label("Not converted yet. Choose your books under Setup, then press Convert.");
     }
 
     #[test]
     fn the_logs_errors_and_warnings_are_marked_as_the_converter_prints_them() {
+        use vault_forge_engine::{LogLevel, log_level};
         for (line, marked) in [
-            ("🛑  ERR| ❌ No tools directory found.", Mark::Error),
-            ("Error: unable to find books.json", Mark::Error),
-            ("🔸 WARN| Unresolved link to Strahd zombie", Mark::Warning),
+            ("🛑  ERR| ❌ No tools directory found.", LogLevel::Error),
+            ("Error: unable to find books.json", LogLevel::Error),
+            (
+                "🔸 WARN| Unresolved link to Strahd zombie",
+                LogLevel::Warning,
+            ),
             (
                 "Warning: no image file for img/bestiary/Vrock.webp",
-                Mark::Warning,
+                LogLevel::Warning,
             ),
-            ("🔷 INFO| ⏳ Reading data", Mark::None),
-            ("Writing compendium/spells", Mark::None),
+            ("🔷 INFO| ⏳ Reading data", LogLevel::Info),
+            ("Writing compendium/spells", LogLevel::Info),
         ] {
-            assert_eq!(mark(line), marked, "{line}");
+            assert_eq!(log_level(line), marked, "{line}");
         }
+    }
+
+    /// Saves `run` as the open profile's last run, as the Engine would, and reports its end so
+    /// the app reads it.
+    fn last_run_saved(
+        dir: &std::path::Path,
+        harness: &mut Harness<'_, App>,
+        events: &Sender<Event>,
+        run: &LastRun,
+    ) {
+        let id = harness.state().engine.profiles()[0].id.clone();
+        let file = dir.join("profiles").join(format!("{id}.last-run.json"));
+        std::fs::write(file, serde_json::to_string(run).unwrap()).unwrap();
+        let (converted, message) = (run.converted, run.message.clone());
+        let ended = Event::ConversionEnded {
+            id,
+            converted,
+            message,
+        };
+        events.send(ended).unwrap();
+        harness.run();
+    }
+
+    fn open_last_run(harness: &mut Harness<'_, App>) {
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Tab, "Last run")
+            .click();
+        harness.run();
+    }
+
+    fn converted_run() -> LastRun {
+        let folders = [
+            ("compendium/bestiary", 1408),
+            ("compendium/items", 1127),
+            ("compendium/spells", 512),
+            ("compendium/backgrounds", 76),
+            ("rules/variant-rules", 40),
+            ("compendium/feats", 33),
+            ("compendium/races", 21),
+            ("rules", 9),
+        ];
+        LastRun {
+            started: SystemTime::now(),
+            seconds: 102,
+            converted: true,
+            exit_code: Some(0),
+            message: "The books were converted into your vault.".into(),
+            fix: None,
+            books: 4,
+            homebrew: 1,
+            folders: folders.map(|(f, n)| (f.to_owned(), n)).to_vec(),
+            warnings: vec![vault_forge_engine::Warning {
+                line: "Warning: no image file for img/bestiary/Vrock.webp".into(),
+                step: "Writing compendium/bestiary".into(),
+            }],
+            log: [
+                "Reading data",
+                "Writing compendium/bestiary",
+                "Warning: no image file for img/bestiary/Vrock.webp",
+                "Done",
+            ]
+            .map(String::from)
+            .to_vec(),
+        }
+    }
+
+    #[test]
+    fn a_profile_never_converted_says_so_on_its_last_run_tab() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        harness.get_by_label("D&D 5e · 0 books · not converted yet");
+        harness.get_by_label("None");
+        open_last_run(&mut harness);
+        harness
+            .get_by_label("Not converted yet. Choose your books under Setup, then press Convert.");
+        assert!(harness.query_by_label("Game rules").is_none());
+    }
+
+    #[test]
+    fn a_converted_run_shows_its_figures_folders_warnings_and_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        last_run_saved(dir.path(), &mut harness, &events, &converted_run());
+        harness.get_by_label_contains("D&D 5e · 0 books · last converted today, ");
+        harness.get_by_label("Converted");
+        open_last_run(&mut harness);
+
+        // The strip: 3,226 notes in all, 4 books + 1 homebrew, 1 warning, 1 m 42 s.
+        harness.get_by_label("3,226");
+        harness.get_by_label("4 + 1 homebrew");
+        harness.get_by_label("1 m 42 s");
+        harness.get_by_label("8 folders");
+        harness.get_by_label("compendium/bestiary");
+        harness.get_by_label("1,408");
+        harness.get_by_label("compendium/feats");
+        assert!(
+            harness.query_by_label("compendium/races").is_none(),
+            "top six"
+        );
+        harness.get_by_label("Show all 8 folders").click();
+        harness.run();
+        harness.get_by_label("compendium/races");
+        harness.get_by_label("rules");
+        harness.get_by_label("Show fewer").click();
+        harness.run();
+        assert!(harness.query_by_label("compendium/races").is_none());
+
+        harness.get_by_label("The notes were still written");
+        let step = "Writing compendium/bestiary";
+        assert_eq!(
+            harness.get_all_by_label(step).count(),
+            2,
+            "the warning's step and the log"
+        );
+        harness.get_by_label("Open vault in Obsidian");
+        harness.get_by_label("Show folder");
+        harness.get_by_label("Save log…");
+        harness.get_by_label("Reading data");
+        harness.get_by_label("Done");
+    }
+
+    #[test]
+    fn the_warnings_filter_shows_only_the_logs_warning_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        last_run_saved(dir.path(), &mut harness, &events, &converted_run());
+        open_last_run(&mut harness);
+        let warning = "Warning: no image file for img/bestiary/Vrock.webp";
+        // In the Warnings card and the log.
+        assert_eq!(harness.get_all_by_label(warning).count(), 2);
+        // Not the strip's or the card's "Warnings", which are labels.
+        let filter = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Warnings");
+        filter.scroll_to_me();
+        harness.run();
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Warnings")
+            .click();
+        harness.run();
+        assert_eq!(harness.get_all_by_label(warning).count(), 2);
+        assert!(harness.query_by_label("Reading data").is_none());
+        assert!(harness.query_by_label("Done").is_none());
+        harness.get_by_label("All lines").click();
+        harness.run();
+        harness.get_by_label("Reading data");
+    }
+
+    #[test]
+    fn a_failed_run_shows_why_with_its_exit_code_and_a_fix() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        let message = "The converter could not read the game data or the profile's settings \
+                       (exit code 2), so your vault was not changed.";
+        let run = LastRun {
+            converted: false,
+            exit_code: Some(2),
+            message: message.into(),
+            fix: Some(Fix::DownloadAddress),
+            folders: Vec::new(),
+            warnings: Vec::new(),
+            log: vec!["Error: unable to find books.json".into()],
+            ..converted_run()
+        };
+        last_run_saved(dir.path(), &mut harness, &events, &run);
+        harness.get_by_label_contains("D&D 5e · 0 books · last attempt failed today, ");
+        harness.get_by_label("Failed");
+        open_last_run(&mut harness);
+
+        harness.get_by_label("The converter stopped before writing anything");
+        harness.get_by_label(message);
+        harness.get_by_label("Error: unable to find books.json");
+        assert!(harness.query_by_label("Save log…").is_none());
+        harness.get_by_label("Check the download address").click();
+        harness.run();
+        harness.get_by_label("Game rules");
+        let address = harness
+            .get_all_by_value("http://127.0.0.1:1/data.zip")
+            .find(|n| n.accesskit_node().role() == egui::accesskit::Role::TextInput)
+            .unwrap();
+        assert!(address.accesskit_node().is_focused());
     }
 
     #[test]
@@ -1609,7 +1871,7 @@ mod tests {
             .get_by_label("Convert only books you own.")
             .rect()
             .center();
-        for _ in 0..20 {
+        for _ in 0..25 {
             harness.hover_at(beside);
             harness.event(egui::Event::MouseWheel {
                 unit: egui::MouseWheelUnit::Point,

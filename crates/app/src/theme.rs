@@ -22,21 +22,22 @@ pub struct Palette {
     pub raised: Color32,
     hover: Color32,
     active: Color32,
-    rule: Color32,
+    pub rule: Color32,
     panel: Color32,
     field: Color32,
     pub text: Color32,
     pub text2: Color32,
-    muted: Color32,
+    pub muted: Color32,
     primary: Color32,
     primary_hover: Color32,
     on_primary: Color32,
-    control: Color32,
+    pub control: Color32,
     toggle_off: Color32,
     pub accent: Color32,
     pub accent_pale: Color32,
-    negative: Color32,
-    negative_edge: Color32,
+    pub negative: Color32,
+    pub negative_edge: Color32,
+    pub negative_wash: Color32,
     pub warning: Color32,
     pub warning_wash: Color32,
     pub warning_edge: Color32,
@@ -68,6 +69,7 @@ pub const LIGHT: Palette = Palette {
     accent_pale: hex(0xe3eff2),
     negative: hex(0xc4242a),
     negative_edge: hex(0xefc4c2),
+    negative_wash: hex(0xfff8f7),
     warning: hex(0x92400e),
     warning_wash: hex(0xfffbeb),
     warning_edge: hex(0xfde68a),
@@ -95,6 +97,7 @@ pub const DARK: Palette = Palette {
     accent_pale: hex(0x163038),
     negative: hex(0xef6b6b),
     negative_edge: hex(0x5a2a2c),
+    negative_wash: hex(0x211517),
     warning: hex(0xe8b45a),
     warning_wash: hex(0x2b2213),
     warning_edge: hex(0x5a4520),
@@ -679,6 +682,74 @@ pub fn track(ui: &mut egui::Ui) {
     painter.rect_filled(bar, 3, p.accent);
     ui.ctx()
         .request_repaint_after(std::time::Duration::from_millis(16));
+}
+
+#[derive(Clone, Copy)]
+pub enum Pill {
+    Ok,
+    Warn,
+    Bad,
+    Neutral,
+}
+
+/// The demo's rounded status label, in its light and dark colours.
+pub fn pill(ui: &mut egui::Ui, kind: Pill, text: &str) {
+    let [bg, fg] = match (kind, ui.visuals().dark_mode) {
+        (Pill::Ok, false) => [0xdcfae5, 0x04250e],
+        (Pill::Ok, true) => [0x172a1d, 0x5fd393],
+        (Pill::Warn, false) => [0xfffbeb, 0x92400e],
+        (Pill::Warn, true) => [0x2b2213, 0xe8b45a],
+        (Pill::Bad, false) => [0xffedea, 0x831c1e],
+        (Pill::Bad, true) => [0x2c1a1c, 0xf08a8a],
+        (Pill::Neutral, false) => [0xebedee, 0x353736],
+        (Pill::Neutral, true) => [0x2a2c2e, 0xd0d2d4],
+    };
+    egui::Frame::new()
+        .fill(hex(bg))
+        .corner_radius(10.0)
+        .inner_margin(egui::vec2(8.0, 2.0))
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(text).size(12.0).strong().color(hex(fg)));
+        });
+}
+
+/// The demo's tab: its label and anything `beside` it, such as a pill, over a 2px accent line
+/// when chosen. Screen readers hear it as a tab named `label`.
+pub fn tab(
+    ui: &mut egui::Ui,
+    chosen: bool,
+    label: &str,
+    beside: impl FnOnce(&mut egui::Ui),
+) -> egui::Response {
+    let p = palette(ui);
+    let text = if chosen {
+        egui::RichText::new(label)
+            .font(FontId::new(14.0, FontFamily::Name("semibold".into())))
+            .color(p.text)
+    } else {
+        egui::RichText::new(label).color(p.muted)
+    };
+    let shown = egui::Frame::new()
+        .inner_margin(Margin::symmetric(0, 10))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.add(egui::Label::new(text).selectable(false));
+                beside(ui);
+            });
+        });
+    let rect = shown.response.rect;
+    let tab = ui.interact(
+        rect,
+        ui.scope_id().with(("tab", label)),
+        egui::Sense::click(),
+    );
+    tab.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, chosen, label));
+    if chosen {
+        let line = egui::Rect::from_x_y_ranges(rect.x_range(), rect.bottom() - 2.0..=rect.bottom());
+        ui.painter().rect_filled(line, 0, p.accent);
+    }
+    tab
 }
 
 /// The engine's appearance choice as egui's theme preference.

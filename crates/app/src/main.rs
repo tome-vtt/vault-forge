@@ -5,6 +5,7 @@ mod app;
 mod books;
 mod file_manager;
 mod game_data;
+mod last_run;
 mod new_profile;
 mod os_theme;
 mod setup;
