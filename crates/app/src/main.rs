@@ -1,11 +1,13 @@
 // No console window behind the app on Windows release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod about;
 mod app;
 mod books;
 mod file_manager;
 mod game_data;
 mod new_profile;
+mod obsidian_setup;
 mod os_theme;
 mod setup;
 mod theme;

@@ -34,6 +34,10 @@ impl Conversion {
         }
     }
 
+    pub(crate) fn converter(&self) -> &Path {
+        &self.converter
+    }
+
     /// The profile whose conversion is running, if one is.
     pub(crate) fn converting(&self) -> Option<String> {
         self.running.lock().unwrap().as_ref().map(|r| r.id.clone())

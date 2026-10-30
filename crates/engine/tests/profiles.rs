@@ -232,3 +232,34 @@ fn switching_game_rules_clears_the_chosen_books() {
     assert_eq!(saved.rules, Rules::Pf2e);
     assert!(saved.config.sources.book.is_empty() && saved.config.sources.adventure.is_empty());
 }
+
+#[test]
+fn the_bestiary_folder_is_inside_the_profiles_compendium_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let mut profile = create(&engine, &events, "Thursday");
+    assert_eq!(
+        profile.config.paths.bestiary_folder(),
+        "compendium/bestiary"
+    );
+
+    profile.config.paths.compendium = "lore/5e/".into();
+    assert_eq!(profile.config.paths.bestiary_folder(), "lore/5e/bestiary");
+}
+
+#[test]
+fn a_bundled_file_is_named_inside_the_converters_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let converter = dir
+        .path()
+        .join("app")
+        .join("converter")
+        .join("ttrpg-convert");
+    let (engine, _) = Engine::start_with_converter(dir.path().join("data"), converter).unwrap();
+
+    assert_eq!(
+        engine.bundled_file(vault_forge_engine::ADMONITIONS_STYLES),
+        dir.path()
+            .join("app/converter/examples/admonitions/admonitions-5e.json")
+    );
+}
