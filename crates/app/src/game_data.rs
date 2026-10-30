@@ -254,14 +254,15 @@ impl GameDataSection {
     }
 }
 
-enum Pill {
+pub(crate) enum Pill {
     Ok,
     Warn,
     Bad,
+    Neutral,
 }
 
 /// The demo's rounded status label, in its light and dark colours.
-fn pill(ui: &mut egui::Ui, kind: Pill, text: &str) {
+pub(crate) fn pill(ui: &mut egui::Ui, kind: Pill, text: &str) {
     let rgb = |c: u32| egui::Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8);
     let [bg, fg] = match (kind, ui.visuals().dark_mode) {
         (Pill::Ok, false) => [0xdcfae5, 0x04250e],
@@ -270,6 +271,8 @@ fn pill(ui: &mut egui::Ui, kind: Pill, text: &str) {
         (Pill::Warn, true) => [0x2b2213, 0xe8b45a],
         (Pill::Bad, false) => [0xffedea, 0x831c1e],
         (Pill::Bad, true) => [0x2c1a1c, 0xf08a8a],
+        (Pill::Neutral, false) => [0xebedee, 0x353736],
+        (Pill::Neutral, true) => [0x2a2c2e, 0xd0d2d4],
     };
     egui::Frame::new()
         .fill(rgb(bg))
@@ -289,11 +292,12 @@ fn size(bytes: u64) -> String {
     }
 }
 
+pub(crate) const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
 /// "26 Oct 2026", in UTC.
 pub(crate) fn date(time: SystemTime) -> String {
-    const MONTHS: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
     let days = time
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

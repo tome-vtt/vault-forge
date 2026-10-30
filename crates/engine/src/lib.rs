@@ -103,6 +103,15 @@ impl Default for Paths {
     }
 }
 
+impl Paths {
+    /// Where the converter writes monsters in the vault, which Fantasy Statblocks reads as its
+    /// Bestiary Folder: `compendium/bestiary`.
+    pub fn bestiary_folder(&self) -> String {
+        let compendium = self.compendium.trim_end_matches('/');
+        format!("{compendium}/bestiary")
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Images {
@@ -343,10 +352,12 @@ pub enum Event {
         address: String,
         state: DataState,
     },
-    /// A newer Vault Forge than [`VERSION`] is out; `page` is its release page.
+    /// A newer Vault Forge than [`VERSION`] is out; `page` is its release page and `released`
+    /// its day, `2026-10-27`, or empty when GitHub does not say.
     NewerRelease {
         version: String,
         page: String,
+        released: String,
     },
     /// The profile's conversion started.
     ConversionStarted(String),
@@ -400,6 +411,12 @@ pub const CONVERTER_SHA256: [(&str, &str); 4] = [
         "3ea6c053c700177ebe451ebf52570ef1408d1639ce8140937798a08fa7687118",
     ),
 ];
+
+/// The bundled files the Obsidian setup screen shows, by their place in the converter's folder;
+/// the bundle step refuses a release whose examples lack them.
+pub const ADMONITIONS_STYLES: &str = "examples/admonitions/admonitions-5e.json";
+/// One of the converter's CSS snippets; the others sit in the same folder.
+pub const CSS_SNIPPET: &str = "examples/css-snippets/dnd5e-compendium.css";
 
 /// Where GitHub says which Vault Forge release is the newest.
 pub const LATEST_RELEASE: &str =
@@ -471,6 +488,12 @@ impl Engine {
     /// The profiles for the sidebar, by name.
     pub fn profiles(&self) -> Vec<Profile> {
         self.profiles.lock().unwrap().list().to_vec()
+    }
+
+    /// A file bundled in the converter's folder, such as [`ADMONITIONS_STYLES`].
+    pub fn bundled_file(&self, name: &str) -> PathBuf {
+        let converter = self.conversion.converter();
+        converter.parent().unwrap_or(Path::new("")).join(name)
     }
 
     /// The profile's converter config file, which the converter can also run from the command line.
