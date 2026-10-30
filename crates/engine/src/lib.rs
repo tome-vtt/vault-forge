@@ -204,9 +204,10 @@ impl Profile {
     /// Whether any of the profile's downloads is running, counting images switched off until
     /// their cancelled download has stopped.
     pub fn is_downloading(&self, data: &HashMap<String, DataState>) -> bool {
-        [&self.address, &self.images_address]
+        self.downloads()
             .iter()
-            .any(|address| data.get(*address).is_some_and(DataState::is_busy))
+            .any(|(address, _)| data.get(*address).is_some_and(DataState::is_busy))
+            || data.get(&self.images_address) == Some(&DataState::Stopping)
     }
 }
 
@@ -222,6 +223,9 @@ pub enum DataState {
         elapsed: Duration,
     },
     Unpacking,
+    /// Cancelled because no profile downloads it any more (images switched off), and not yet
+    /// stopped.
+    Stopping,
     /// `books` lists the copy's books and adventures, by group; it is empty for images, and for
     /// game data whose lists cannot be read, when the books are typed by code instead. `newer`
     /// means the server has newer data than this copy, not yet downloaded.
@@ -244,7 +248,10 @@ impl DataState {
 
     /// Whether this download is running.
     pub fn is_busy(&self) -> bool {
-        matches!(self, DataState::Downloading { .. } | DataState::Unpacking)
+        matches!(
+            self,
+            DataState::Downloading { .. } | DataState::Unpacking | DataState::Stopping
+        )
     }
 }
 
@@ -581,7 +588,7 @@ impl Engine {
         for address in [&old.address, &old.images_address] {
             let downloads = |p: &Profile| p.downloads().iter().any(|(a, _)| a == address);
             if !profiles.list().iter().any(downloads) {
-                self.game_data.cancel(address);
+                self.game_data.stop(address);
             }
             if !address.is_empty() && !profiles.list().iter().any(|p| p.uses(address)) {
                 self.game_data.release(address)?;

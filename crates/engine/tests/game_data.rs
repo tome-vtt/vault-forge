@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use vault_forge_engine::{
     Book, Command, DataState, Engine, Event, Group, Profile, ProfileDraft, Rules,
@@ -329,10 +329,14 @@ fn switching_images_off_mid_download_stops_it_and_leaves_no_partial_folder() {
     let images = format!("{}/endless.zip", server.url);
     let dir = tempfile::tempdir().unwrap();
     let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Thursday", &address);
+    engine.send(Command::DownloadGameData(profile.clone()));
+    let mut data = HashMap::from([(address.clone(), wait(&events, &address, ready))]);
+    let copies = cache_entries(dir.path());
     let profile = Profile {
         images: true,
         images_address: images.clone(),
-        ..create(&engine, &events, "Thursday", &address)
+        ..profile
     };
     engine.send(Command::DownloadImages(profile.clone()));
     wait(
@@ -348,25 +352,53 @@ fn switching_images_off_mid_download_stops_it_and_leaves_no_partial_folder() {
 
     // Until the cancelled download has stopped, Convert stays off.
     let saved = engine.profiles().remove(0);
-    let data = HashMap::from([
-        (
-            address.clone(),
-            DataState::Ready {
-                books: Vec::new(),
-                bytes: 1,
-                downloaded: SystemTime::UNIX_EPOCH,
-                newer: false,
-            },
-        ),
-        (images.clone(), DataState::Unpacking),
-    ]);
+    let stopping = wait(&events, &images, |s| *s == DataState::Stopping);
+    data.insert(images.clone(), stopping);
     assert!(saved.is_downloading(&data));
-    assert!(saved.convert_blocker(&data, None).is_some());
-    let state = wait(&events, &images, |s| {
-        !matches!(s, DataState::Downloading { .. })
+    assert_eq!(
+        saved.convert_blocker(&data, None),
+        Some("Wait for the download to finish.")
+    );
+    // Nothing reports it running again once it is stopping.
+    let stopped = wait(&events, &images, |_| true);
+    assert_eq!(stopped, DataState::Missing { size: None });
+    data.insert(images.clone(), stopped);
+    assert_ne!(
+        saved.convert_blocker(&data, None),
+        Some("Wait for the download to finish.")
+    );
+    assert_eq!(cache_entries(dir.path()), copies);
+}
+
+#[test]
+fn switching_images_off_with_nothing_downloading_reports_nothing_stopping() {
+    let server = Server::start();
+    let address = server.put("/data.zip", game_data(1, 0));
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = Profile {
+        images: true,
+        images_address: format!("{}/images.zip", server.url),
+        ..create(&engine, &events, "Thursday", &address)
+    };
+    engine.send(Command::SaveProfile(profile.clone()));
+
+    engine.send(Command::SaveProfile(Profile {
+        images: false,
+        ..profile
+    }));
+
+    // A stop is reported before the save returns, so it would be waiting here already.
+    let stopping = events.try_iter().any(|e| {
+        matches!(
+            e,
+            Event::GameData {
+                state: DataState::Stopping,
+                ..
+            }
+        )
     });
-    assert_eq!(state, DataState::Missing { size: None });
-    assert!(cache_entries(dir.path()).is_empty());
+    assert!(!stopping);
 }
 
 #[test]
@@ -385,6 +417,9 @@ fn switching_images_off_leaves_another_profiles_images_download_running() {
             engine.send(Command::SaveProfile(profile.clone()));
             profile
         });
+    engine.send(Command::DownloadGameData(sunday.clone()));
+    let ready = wait(&events, &sunday.address, ready);
+    let mut data = HashMap::from([(sunday.address.clone(), ready)]);
     engine.send(Command::DownloadImages(thursday.clone()));
     let bytes = |s: &DataState| match s {
         DataState::Downloading { bytes, .. } => *bytes,
@@ -394,11 +429,26 @@ fn switching_images_off_leaves_another_profiles_images_download_running() {
 
     engine.send(Command::SaveProfile(Profile {
         images: false,
-        ..sunday
+        ..sunday.clone()
     }));
 
     // Far past the few reports already on their way when a cancel lands.
-    wait(&events, &images, |s| bytes(s) > before + 8 * 1024 * 1024);
+    let running = wait(&events, &images, |s| {
+        assert_ne!(*s, DataState::Stopping);
+        bytes(s) > before + 8 * 1024 * 1024
+    });
+    // Another profile's images download holds back neither Convert nor the address.
+    data.insert(images.clone(), running);
+    let sunday = engine
+        .profiles()
+        .into_iter()
+        .find(|p| p.id == sunday.id)
+        .unwrap();
+    assert!(!sunday.is_downloading(&data));
+    assert_ne!(
+        sunday.convert_blocker(&data, None),
+        Some("Wait for the download to finish.")
+    );
     engine.send(Command::CancelDownload(thursday.id));
     wait(&events, &images, |s| bytes(s) == 0);
 }
