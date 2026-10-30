@@ -8,10 +8,11 @@ use eframe::egui::{
 };
 use vault_forge_engine::Appearance;
 
-/// Below this window width the sidebar folds into a menu.
+/// At or below this window width the sidebar folds into a menu.
 pub const NARROW: f32 = 900.0;
-/// At or below this width the sheet's padding tightens.
-const PHONE: f32 = 600.0;
+/// At or below this width the sheet's padding tightens, the top bar shows only the name and its
+/// new-version notice keeps only its dot and link.
+pub const PHONE: f32 = 600.0;
 
 /// The demo's colour tokens.
 pub struct Palette {
@@ -25,7 +26,7 @@ pub struct Palette {
     panel: Color32,
     field: Color32,
     pub text: Color32,
-    text2: Color32,
+    pub text2: Color32,
     muted: Color32,
     primary: Color32,
     primary_hover: Color32,
@@ -237,6 +238,39 @@ pub fn dialog(ctx: &egui::Context) -> egui::Frame {
         .inner_margin(24)
 }
 
+/// The dialog's content width for this window: the demo's `min(480px, 100vw - 32px)` less its
+/// padding.
+pub fn dialog_width(ctx: &egui::Context) -> f32 {
+    (ctx.content_rect().width() - 32.0).min(480.0) - 48.0
+}
+
+/// The dialog's heading: 18px SemiBold with 8px below.
+pub fn dialog_title(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let title = ui.label(
+        egui::RichText::new(text).font(FontId::new(18.0, FontFamily::Name("semibold".into()))),
+    );
+    ui.add_space(8.0 - ui.spacing().item_spacing.y);
+    title
+}
+
+/// The dialog's buttons: at the right, 8px apart, 20px below the content. `add` adds them in
+/// reading order, the main action last, so Tab moves left to right.
+pub fn dialog_actions(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    ui.add_space(20.0 - ui.spacing().item_spacing.y);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        // Pushed right by the buttons' width from the frame before; a modal's first frame is an
+        // unseen sizing pass, so it never shows them unaligned.
+        let id = ui.scope_id().with("actions_width");
+        let width = ui.data(|d| d.get_temp::<f32>(id)).unwrap_or(0.0);
+        ui.add_space((ui.available_width() - width).max(0.0));
+        let start = ui.cursor().min.x;
+        add(ui);
+        let width = ui.cursor().min.x - start - ui.spacing().item_spacing.x;
+        ui.data_mut(|d| d.insert_temp(id, width));
+    });
+}
+
 /// The near-black main action; grey and muted while it cannot be pressed.
 pub fn primary_button(ui: &mut egui::Ui, enabled: bool, text: &str) -> egui::Response {
     let p = palette(ui);
@@ -297,8 +331,13 @@ pub fn input(ui: &mut egui::Ui, edit: egui::TextEdit<'_>) -> egui::Response {
 }
 
 /// The demo's path line: a field joined to the button that fills it, as one 40-tall control.
-/// Returns the button's response.
-pub fn pathline(ui: &mut egui::Ui, edit: egui::TextEdit<'_>, button: &str) -> egui::Response {
+/// Returns the field's response and the button's.
+pub fn pathline(
+    ui: &mut egui::Ui,
+    edit: egui::TextEdit<'_>,
+    button: &str,
+    enabled: bool,
+) -> (egui::Response, egui::Response) {
     let p = palette(ui);
     let layout = egui::Layout::right_to_left(egui::Align::Center);
     ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 40.0), layout, |ui| {
@@ -309,7 +348,8 @@ pub fn pathline(ui: &mut egui::Ui, edit: egui::TextEdit<'_>, button: &str) -> eg
             se: 10,
             ..CornerRadius::ZERO
         };
-        let button = ui.add(
+        let button = ui.add_enabled(
+            enabled,
             egui::Button::new(button)
                 .corner_radius(right)
                 .min_size(egui::vec2(0.0, 40.0)),
@@ -320,7 +360,7 @@ pub fn pathline(ui: &mut egui::Ui, edit: egui::TextEdit<'_>, button: &str) -> eg
             sw: 10,
             ..CornerRadius::ZERO
         };
-        field(ui, edit, left);
+        let field = field(ui, edit, left);
         // The button has no left edge of its own: the shared edge is the field's.
         let edge = button.rect.left() + 0.5;
         ui.painter().vline(
@@ -328,7 +368,7 @@ pub fn pathline(ui: &mut egui::Ui, edit: egui::TextEdit<'_>, button: &str) -> eg
             button.rect.y_range().shrink(1.0),
             Stroke::new(1.0, p.border),
         );
-        button
+        (field, button)
     })
     .inner
 }
@@ -412,6 +452,7 @@ pub fn add_row(ui: &mut egui::Ui, selected: bool, text: &str) -> egui::Response 
 fn row(ui: &mut egui::Ui, selected: bool, text: egui::RichText, tag: &str) -> egui::Response {
     let p = palette(ui);
     ui.scope(|ui| {
+        ui.spacing_mut().button_padding.x = 10.0;
         let hovered = &mut ui.visuals_mut().widgets.hovered;
         hovered.weak_bg_fill = p.hover;
         hovered.bg_fill = p.hover;
@@ -433,14 +474,26 @@ fn row(ui: &mut egui::Ui, selected: bool, text: egui::RichText, tag: &str) -> eg
 /// A Setup screen section, as the demo lays it out: title and description on the left, the
 /// controls in a panel on the right.
 pub fn section(ui: &mut egui::Ui, title: &str, about: &str, add: impl FnOnce(&mut egui::Ui)) {
-    ui.horizontal_top(|ui| {
+    // A narrow window stacks the description above the panel.
+    let narrow = ui.ctx().content_rect().width() <= NARROW;
+    let layout = if narrow {
+        egui::Layout::top_down(egui::Align::Min)
+    } else {
+        egui::Layout::left_to_right(egui::Align::Min)
+    };
+    ui.with_layout(layout, |ui| {
+        let width = if narrow { ui.available_width() } else { 340.0 };
         let column = egui::Layout::top_down(egui::Align::Min);
-        ui.allocate_ui_with_layout(egui::vec2(340.0, 0.0), column, |ui| {
-            ui.set_width(340.0);
-            ui.label(egui::RichText::new(title).size(16.0).strong());
+        ui.allocate_ui_with_layout(egui::vec2(width, 0.0), column, |ui| {
+            ui.set_width(width);
+            ui.label(medium(title).size(16.0));
             ui.weak(about);
         });
-        ui.add_space(24.0);
+        if narrow {
+            ui.add_space(12.0 - ui.spacing().item_spacing.y);
+        } else {
+            ui.add_space(24.0);
+        }
         egui::Frame::new()
             .fill(ui.visuals().faint_bg_color)
             .corner_radius(16.0)
@@ -457,7 +510,7 @@ pub fn section(ui: &mut egui::Ui, title: &str, about: &str, add: impl FnOnce(&mu
 pub fn switch(ui: &mut egui::Ui, on: &mut bool, label: &str) -> egui::Response {
     let p = palette(ui);
     let track = egui::vec2(32.0, 18.0);
-    let galley = egui::WidgetText::from(egui::RichText::new(label).strong()).into_galley(
+    let galley = egui::WidgetText::from(medium(label)).into_galley(
         ui,
         Some(egui::TextWrapMode::Wrap),
         ui.available_width() - track.x - 16.0,
@@ -472,7 +525,8 @@ pub fn switch(ui: &mut egui::Ui, on: &mut bool, label: &str) -> egui::Response {
     let enabled = ui.is_enabled();
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, enabled, *on, label));
     if ui.is_rect_visible(rect) {
-        let knob = ui.ctx().animate_bool_responsive(response.id, *on);
+        // The demo's knob slides over 120 ms.
+        let knob = ui.ctx().animate_bool_with_time(response.id, *on, 0.12);
         let top_right = egui::pos2(rect.right() - track.x, rect.top() + 1.0);
         let bar = egui::Rect::from_min_size(top_right, track);
         let painter = ui.painter();

@@ -204,7 +204,7 @@ fn a_good_archive_becomes_ready_with_its_book_count() {
     let (engine, events) = start(dir.path());
     let profile = create(&engine, &events, "Thursday", &address);
 
-    engine.send(Command::DownloadGameData(profile.id));
+    engine.send(Command::DownloadGameData(profile));
 
     let state = wait(&events, &address, ready);
     assert!(state.can_convert());
@@ -222,14 +222,14 @@ fn an_archive_with_no_books_list_is_refused_and_the_previous_copy_kept() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, events) = start(dir.path());
     let profile = create(&engine, &events, "Thursday", &address);
-    engine.send(Command::DownloadGameData(profile.id.clone()));
+    engine.send(Command::DownloadGameData(profile.clone()));
     wait(&events, &address, ready);
 
     server.put(
         "/data.zip",
         zip(&[("notes/session-1.md", "# Notes".into())]),
     );
-    engine.send(Command::DownloadGameData(profile.id.clone()));
+    engine.send(Command::DownloadGameData(profile.clone()));
 
     let state = wait(&events, &address, |s| {
         !matches!(s, DataState::Downloading { .. } | DataState::Unpacking)
@@ -249,7 +249,7 @@ fn a_download_that_is_not_an_archive_at_all_is_refused() {
     let (engine, events) = start(dir.path());
     let profile = create(&engine, &events, "Thursday", &address);
 
-    engine.send(Command::DownloadGameData(profile.id));
+    engine.send(Command::DownloadGameData(profile));
 
     let state = wait(&events, &address, |s| {
         !matches!(s, DataState::Downloading { .. } | DataState::Unpacking)
@@ -266,7 +266,7 @@ fn cancel_leaves_no_partial_folder() {
     let (engine, events) = start(dir.path());
     let profile = create(&engine, &events, "Thursday", &address);
 
-    engine.send(Command::DownloadGameData(profile.id.clone()));
+    engine.send(Command::DownloadGameData(profile.clone()));
     wait(
         &events,
         &address,
@@ -294,7 +294,7 @@ fn two_profiles_on_one_address_share_one_cached_folder() {
     let thursday = create(&engine, &events, "Thursday", &address);
     let friday = create(&engine, &events, "Friday", &address);
 
-    engine.send(Command::DownloadGameData(thursday.id));
+    engine.send(Command::DownloadGameData(thursday));
     wait(&events, &address, ready);
     engine.send(Command::CheckGameData(friday.id));
 
@@ -311,7 +311,7 @@ fn deleting_the_last_profile_on_an_address_removes_its_folder() {
     let (engine, events) = start(dir.path());
     let thursday = create(&engine, &events, "Thursday", &address);
     let friday = create(&engine, &events, "Friday", &address);
-    engine.send(Command::DownloadGameData(thursday.id.clone()));
+    engine.send(Command::DownloadGameData(thursday.clone()));
     wait(&events, &address, ready);
 
     engine.send(Command::DeleteProfile(thursday.id));
@@ -329,7 +329,7 @@ fn changing_a_profiles_address_removes_the_copy_no_profile_uses_any_more() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, events) = start(dir.path());
     let profile = create(&engine, &events, "Thursday", &old);
-    engine.send(Command::DownloadGameData(profile.id.clone()));
+    engine.send(Command::DownloadGameData(profile.clone()));
     wait(&events, &old, ready);
 
     engine.send(Command::SaveProfile(Profile {
@@ -348,7 +348,7 @@ fn a_changed_archive_is_reported_as_newer_but_downloaded_only_on_update() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, events) = start(dir.path());
     let profile = create(&engine, &events, "Thursday", &address);
-    engine.send(Command::DownloadGameData(profile.id.clone()));
+    engine.send(Command::DownloadGameData(profile.clone()));
     wait(&events, &address, ready);
     engine.send(Command::CheckGameData(profile.id.clone()));
     let unchanged = wait(&events, &address, |_| true);
@@ -363,7 +363,7 @@ fn a_changed_archive_is_reported_as_newer_but_downloaded_only_on_update() {
     assert_eq!(books(newer), 5, "still the old copy");
     assert_eq!(server.gets(), 1, "nothing downloaded");
 
-    engine.send(Command::DownloadGameData(profile.id));
+    engine.send(Command::DownloadGameData(profile));
     // Earlier checks may still report the old copy, so wait for the new one.
     let updated = wait(&events, &address, |s| {
         matches!(s, DataState::Ready { books: 6, .. })
@@ -387,7 +387,7 @@ fn images_are_a_second_download_only_when_switched_on_with_their_size_shown_firs
         images_address: images.clone(),
         ..profile.clone()
     }));
-    engine.send(Command::DownloadGameData(profile.id.clone()));
+    engine.send(Command::DownloadGameData(engine.profiles().remove(0)));
     wait(&events, &address, ready);
     assert_eq!(server.gets(), 1, "images switched off");
 
@@ -402,7 +402,7 @@ fn images_are_a_second_download_only_when_switched_on_with_their_size_shown_firs
     });
     assert_eq!(before, DataState::Missing { size: Some(size) });
 
-    engine.send(Command::DownloadImages(profile.id));
+    engine.send(Command::DownloadImages(engine.profiles().remove(0)));
     wait(&events, &images, ready);
     assert_eq!(server.gets(), 2);
     let cache = dir.path().join("data-cache");
@@ -423,19 +423,20 @@ fn update_fetches_only_the_game_data_and_leaves_ready_images_alone() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, events) = start(dir.path());
     let profile = create(&engine, &events, "Thursday", &address);
-    engine.send(Command::SaveProfile(Profile {
+    let profile = Profile {
         images: true,
         images_address: images.clone(),
-        ..profile.clone()
-    }));
-    engine.send(Command::DownloadGameData(profile.id.clone()));
+        ..profile
+    };
+    engine.send(Command::SaveProfile(profile.clone()));
+    engine.send(Command::DownloadGameData(profile.clone()));
     wait(&events, &address, ready);
-    engine.send(Command::DownloadImages(profile.id.clone()));
+    engine.send(Command::DownloadImages(profile.clone()));
     wait(&events, &images, ready);
     assert_eq!(server.gets(), 2);
 
     server.put("/data.zip", game_data(4, 2));
-    engine.send(Command::DownloadGameData(profile.id));
+    engine.send(Command::DownloadGameData(profile));
 
     wait(&events, &address, |s| {
         matches!(s, DataState::Ready { books: 6, .. })
@@ -450,7 +451,7 @@ fn an_update_check_answered_after_a_download_does_not_overwrite_its_state() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, events) = start(dir.path());
     let profile = create(&engine, &events, "Thursday", &address);
-    engine.send(Command::DownloadGameData(profile.id.clone()));
+    engine.send(Command::DownloadGameData(profile.clone()));
     wait(&events, &address, ready);
 
     server.put("/data.zip", game_data(4, 2));
@@ -461,7 +462,7 @@ fn an_update_check_answered_after_a_download_does_not_overwrite_its_state() {
         5,
         "the copy, at once"
     );
-    engine.send(Command::DownloadGameData(profile.id));
+    engine.send(Command::DownloadGameData(profile));
     wait(&events, &address, |s| {
         matches!(s, DataState::Ready { books: 6, .. })
     });
@@ -505,4 +506,46 @@ fn an_address_is_refused_for_book_images_when_it_is_game_data_and_the_other_way_
     }));
     assert!(events.try_iter().any(|e| matches!(e, Event::Failed(_))));
     assert_eq!(engine.profiles().len(), 1);
+}
+
+#[test]
+fn a_download_whose_address_change_is_refused_downloads_nothing() {
+    let server = Server::start();
+    let address = server.put("/data.zip", game_data(3, 2));
+    let images = server.put("/img.zip", zip(&[("img/a.webp", "x".into())]));
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let thursday = create(&engine, &events, "Thursday", &address);
+    engine.send(Command::SaveProfile(Profile {
+        images: true,
+        images_address: images.clone(),
+        ..thursday
+    }));
+    let friday = create(&engine, &events, "Friday", &address);
+
+    // Thursday's images address pasted as Friday's game data, then Download pressed.
+    engine.send(Command::DownloadGameData(Profile {
+        address: images.clone(),
+        ..friday.clone()
+    }));
+    engine.send(Command::DownloadImages(Profile {
+        images: true,
+        images_address: address.clone(),
+        ..friday
+    }));
+
+    let mut failed = 0;
+    while let Ok(event) = events.recv_timeout(Duration::from_secs(2)) {
+        match event {
+            Event::Failed(_) => failed += 1,
+            Event::GameData { address: a, state }
+                if !matches!(state, DataState::Missing { .. }) =>
+            {
+                panic!("{a} started: {state:?}")
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(failed, 2, "each refused save says so once");
+    assert_eq!(server.gets(), 0, "nothing downloaded");
 }

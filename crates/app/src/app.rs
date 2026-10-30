@@ -4,7 +4,8 @@ use std::sync::mpsc::Receiver;
 
 use eframe::egui;
 use vault_forge_engine::{
-    Appearance, Command, DataState, Engine, Event, Profile, Rules, is_valid_name,
+    Appearance, CONVERTER_VERSION, Command, DataState, Engine, Event, Profile, Rules, VERSION,
+    is_valid_name,
 };
 
 use crate::file_manager;
@@ -38,6 +39,8 @@ pub struct App {
     saved: Option<String>,
     /// The narrow window's folded sidebar is showing.
     menu_open: bool,
+    /// The newer release's version and page, once the release check has found one.
+    newer_release: Option<(String, String)>,
     /// The OS theme where the window cannot report it (Linux).
     os_theme: Receiver<egui::Theme>,
 }
@@ -86,6 +89,7 @@ impl App {
             setup: None,
             saved: None,
             menu_open: false,
+            newer_release: None,
             os_theme,
         }
     }
@@ -122,6 +126,9 @@ impl App {
                     self.saved = None;
                     self.error = Some(message);
                 }
+                Event::NewerRelease { version, page } => {
+                    self.newer_release = Some((version, page));
+                }
             }
         }
     }
@@ -138,6 +145,7 @@ impl App {
         }
         let width = ui.ctx().content_rect().width();
         let narrow = width <= theme::NARROW;
+        let phone = width <= theme::PHONE;
         let ground = egui::Frame::new().fill(theme::palette(ui).ground);
         if narrow && self.menu_open {
             egui::CentralPanel::default()
@@ -179,7 +187,17 @@ impl App {
         egui::Panel::top("top_bar")
             .exact_size(48.0)
             .show_separator_line(false)
-            .frame(ground.inner_margin(egui::Margin::symmetric(if narrow { 16 } else { 24 }, 0)))
+            .frame(ground.inner_margin(if narrow {
+                // The menu button's own 44px hit area overhangs the 16px margin by 10px.
+                egui::Margin {
+                    left: 6,
+                    right: 16,
+                    top: 0,
+                    bottom: 0,
+                }
+            } else {
+                egui::Margin::symmetric(24, 0)
+            }))
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
                     if narrow {
@@ -200,13 +218,18 @@ impl App {
                     }
                     match open {
                         Some(profile) => {
-                            ui.weak("Profiles /");
+                            if width > theme::PHONE {
+                                ui.weak("Profiles /");
+                            }
                             ui.label(theme::medium(&profile.name));
                         }
                         None => {
                             ui.label(theme::medium("New profile"));
                         }
                     }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        self.versions_and_notice(ui, narrow, phone);
+                    });
                 });
             });
         let sheet = egui::CentralPanel::default()
@@ -232,7 +255,12 @@ impl App {
     /// The profile list, then the Appearance switch at the foot.
     fn sidebar(&mut self, ui: &mut egui::Ui, profiles: &[Profile]) {
         ui.add_space(28.0);
-        ui.label(egui::RichText::new("Profiles").small().weak());
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(10, 0))
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new("Profiles").small().weak())
+            });
+        ui.add_space(8.0 - ui.spacing().item_spacing.y);
         for p in profiles {
             let open = matches!(&self.screen, Screen::Profile(id) if *id == p.id);
             if theme::nav_row(ui, open, &p.name, rules_tag(p.rules)).clicked() {
@@ -349,6 +377,32 @@ impl App {
         });
     }
 
+    /// The top bar's right side, right to left: the versions, then the new-version notice when one
+    /// arrived. Narrow drops the versions; phone-sized keeps only the notice's dot and link.
+    fn versions_and_notice(&self, ui: &mut egui::Ui, narrow: bool, phone: bool) {
+        if !narrow {
+            ui.label(
+                egui::RichText::new(format!(
+                    "Vault Forge {VERSION} · converter {CONVERTER_VERSION}"
+                ))
+                .small()
+                .weak(),
+            );
+            ui.add_space(8.0);
+        }
+        let Some((version, page)) = &self.newer_release else {
+            return;
+        };
+        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.hyperlink_to("See what's new", page);
+        if !phone {
+            ui.label(format!("Vault Forge {version} is out"));
+        }
+        let (dot, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+        ui.painter()
+            .circle_filled(dot.center(), 3.0, theme::palette(ui).accent);
+    }
+
     fn dialog(&mut self, ctx: &egui::Context) {
         let Some(dialog) = &mut self.dialog else {
             return;
@@ -356,34 +410,41 @@ impl App {
         let mut cancel = false;
         let mut command = None;
         let modal = egui::Modal::new(egui::Id::unique("profile_dialog")).frame(theme::dialog(ctx));
-        modal.show(ctx, |ui| match dialog {
-            Dialog::Rename { id, name } => {
-                ui.heading("Rename profile");
-                let edit = theme::input(ui, egui::TextEdit::singleline(name));
-                let ok = is_valid_name(name);
-                let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                ui.horizontal(|ui| {
-                    cancel = ui.button("Cancel").clicked();
-                    if theme::primary_button(ui, ok, "Rename").clicked() || (enter && ok) {
-                        command = Some(Command::RenameProfile {
-                            id: id.clone(),
-                            name: name.clone(),
-                        });
-                    }
-                });
-            }
-            Dialog::Delete { id, name } => {
-                ui.heading(format!("Delete \"{name}\"?"));
-                ui.label(
-                    "This removes the profile and its file. \
-                     Your vault and the notes in it stay as they are.",
-                );
-                ui.horizontal(|ui| {
-                    cancel = ui.button("Cancel").clicked();
-                    if theme::danger_button(ui, "Delete profile").clicked() {
-                        command = Some(Command::DeleteProfile(id.clone()));
-                    }
-                });
+        modal.show(ctx, |ui| {
+            ui.set_width(theme::dialog_width(ctx));
+            match dialog {
+                Dialog::Rename { id, name } => {
+                    let title = theme::dialog_title(ui, "Rename profile");
+                    let edit =
+                        theme::input(ui, egui::TextEdit::singleline(name)).labelled_by(title.id);
+                    let ok = is_valid_name(name);
+                    let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    theme::dialog_actions(ui, |ui| {
+                        cancel = ui.button("Cancel").clicked();
+                        if theme::primary_button(ui, ok, "Rename").clicked() || (enter && ok) {
+                            command = Some(Command::RenameProfile {
+                                id: id.clone(),
+                                name: name.clone(),
+                            });
+                        }
+                    });
+                }
+                Dialog::Delete { id, name } => {
+                    theme::dialog_title(ui, &format!("Delete \"{name}\"?"));
+                    ui.label(
+                        egui::RichText::new(
+                            "This removes the profile and its file. \
+                             Your vault and the notes in it stay as they are.",
+                        )
+                        .color(theme::palette(ui).text2),
+                    );
+                    theme::dialog_actions(ui, |ui| {
+                        cancel = ui.button("Cancel").clicked();
+                        if theme::danger_button(ui, "Delete profile").clicked() {
+                            command = Some(Command::DeleteProfile(id.clone()));
+                        }
+                    });
+                }
             }
         });
         if let Some(command) = command {
@@ -600,7 +661,10 @@ mod tests {
     }
 
     /// The app on one profile, with the test sending the events the Engine would.
-    fn harness_on_profile(dir: &std::path::Path) -> (Harness<'static, App>, Sender<Event>) {
+    fn harness_on_profile(
+        dir: &std::path::Path,
+        width: f32,
+    ) -> (Harness<'static, App>, Sender<Event>) {
         let (engine, _) = Engine::start(dir.to_path_buf()).unwrap();
         engine.send(Command::CreateProfile(ProfileDraft {
             name: "Thursday".into(),
@@ -611,6 +675,7 @@ mod tests {
         }));
         let (events, received) = std::sync::mpsc::channel();
         let harness = Harness::builder()
+            .with_size([width, 820.0])
             .with_context_setup(theme::install)
             .build_ui_state(
                 |ui, app: &mut App| app.ui(ui),
@@ -632,9 +697,40 @@ mod tests {
     }
 
     #[test]
+    fn the_game_data_panel_stacks_its_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        let bounds = |label| {
+            harness
+                .get_by_label(label)
+                .accesskit_node()
+                .raw_bounds()
+                .unwrap()
+        };
+        let (rules, address) = (bounds("Game rules"), bounds("Download address"));
+        assert_eq!(rules.x0, address.x0);
+        assert!(address.y0 > rules.y1);
+    }
+
+    #[test]
+    fn download_sends_the_address_as_typed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        let typed = "http://127.0.0.1:1/other.zip";
+        harness.state_mut().game_data.as_mut().unwrap().address = typed.into();
+        harness.run();
+        harness.get_by_label("Download").click();
+        harness.run();
+        assert_eq!(harness.state().error, None);
+        assert_eq!(harness.state().engine.profiles()[0].address, typed);
+    }
+
+    #[test]
     fn the_setup_screen_shows_each_game_data_state_from_engine_events() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut harness, events) = harness_on_profile(dir.path());
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
         // 26 Oct 2026, mid-afternoon UTC.
         let downloaded = UNIX_EPOCH + Duration::from_secs(20_752 * 86_400 + 15 * 3600);
 
@@ -681,7 +777,7 @@ mod tests {
     #[test]
     fn book_images_have_their_own_download_and_hold_convert_with_a_cancel_while_running() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut harness, events) = harness_on_profile(dir.path());
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
         let profile = harness.state().engine.profiles().remove(0);
         let images_address = "http://127.0.0.1:1/img.zip".to_string();
         harness.state().engine.send(Command::SaveProfile(Profile {
@@ -736,6 +832,74 @@ mod tests {
         assert!(!convert_disabled(&harness));
         assert!(harness.query_by_label("Download images").is_none());
         assert!(harness.query_by_label("Update images").is_none());
+    }
+
+    #[test]
+    fn a_narrow_window_stacks_the_game_data_description_above_its_panel() {
+        let dir = tempfile::tempdir().unwrap();
+        let rect = |harness: &Harness<'_, App>, label| harness.get_by_label(label).rect();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 900.0);
+        harness.run();
+        let (title, panel) = (rect(&harness, "Game data"), rect(&harness, "Game rules"));
+        assert!(panel.top() >= title.bottom(), "panel below the description");
+        assert!(panel.left() <= title.right(), "not beside it");
+        drop(harness);
+
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 901.0);
+        harness.run();
+        let (title, panel) = (rect(&harness, "Game data"), rect(&harness, "Game rules"));
+        assert!(
+            panel.left() >= title.left() + 340.0,
+            "panel beside the description"
+        );
+    }
+
+    #[test]
+    fn at_phone_width_the_top_bar_names_only_the_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 600.0);
+        harness.run();
+        assert!(harness.query_by_label("Profiles /").is_none());
+        drop(harness);
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 601.0);
+        harness.run();
+        harness.get_by_label("Profiles /");
+    }
+
+    #[test]
+    fn a_dialog_is_at_most_480_wide_with_its_buttons_at_the_right() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        harness.get_by_label("Rename profile").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Rename profile").click();
+        harness.run();
+        // The field takes the title as its name, and fills the dialog's width.
+        let field = harness
+            .get_all_by_label("Rename profile")
+            .find(|n| n.accesskit_node().role() == egui::accesskit::Role::TextInput)
+            .unwrap()
+            .rect();
+        let cancel = harness.get_by_label("Cancel").rect();
+        let rename = harness.get_by_label("Rename").rect();
+        // 480 less the dialog's 24px padding on each side.
+        assert!(field.width() <= 432.5, "field is {} wide", field.width());
+        assert!(cancel.left() > field.center().x, "buttons sit at the right");
+        assert!(
+            cancel.right() < rename.left(),
+            "Cancel before the main action"
+        );
+        assert!((rename.right() - field.right()).abs() < 1.0);
+        // Screen readers and Tab meet them in reading order too.
+        let buttons: Vec<_> = harness
+            .get_all_by_role(egui::accesskit::Role::Button)
+            .filter_map(|n| n.accesskit_node().label())
+            .collect();
+        let at = |name| buttons.iter().position(|b| b == name).unwrap();
+        assert!(at("Cancel") < at("Rename"), "{buttons:?}");
     }
 
     /// The app with the Engine's own events, opened on a new profile.
@@ -836,5 +1000,77 @@ mod tests {
         // The top bar's breadcrumb and the screen's title.
         assert_eq!(harness.get_all_by_label("New profile").count(), 2);
         assert!(harness.state().engine.profiles().is_empty());
+    }
+
+    #[test]
+    fn the_top_bar_shows_the_versions_and_the_new_version_notice_only_once_it_arrives() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, _) = Engine::start(dir.path().to_path_buf()).unwrap();
+        let (events, received) = std::sync::mpsc::channel();
+        let mut harness = Harness::builder()
+            .with_size([1280.0, 820.0])
+            .with_context_setup(theme::install)
+            .build_ui_state(
+                |ui, app: &mut App| app.ui(ui),
+                App::new(engine, received, mpsc::channel().1),
+            );
+        harness.run();
+        harness.get_by_label(&format!(
+            "Vault Forge {} · converter {}",
+            vault_forge_engine::VERSION,
+            vault_forge_engine::CONVERTER_VERSION
+        ));
+        assert!(harness.query_by_label("See what's new").is_none());
+
+        events
+            .send(Event::NewerRelease {
+                version: "1.1.0".into(),
+                page: "https://github.com/tome-vtt/vault-forge/releases/tag/v1.1.0".into(),
+            })
+            .unwrap();
+        harness.run();
+        harness.get_by_label("Vault Forge 1.1.0 is out");
+        harness.get_by_label("See what's new");
+    }
+
+    /// The top bar at `width` after the release check found 1.1.0.
+    fn top_bar_with_notice(dir: &std::path::Path, width: f32) -> Harness<'static, App> {
+        let (engine, _) = Engine::start(dir.to_path_buf()).unwrap();
+        let (events, received) = std::sync::mpsc::channel();
+        events
+            .send(Event::NewerRelease {
+                version: "1.1.0".into(),
+                page: "https://github.com/tome-vtt/vault-forge/releases/tag/v1.1.0".into(),
+            })
+            .unwrap();
+        let mut harness = Harness::builder()
+            .with_size([width, 820.0])
+            .with_context_setup(theme::install)
+            .build_ui_state(
+                |ui, app: &mut App| app.ui(ui),
+                App::new(engine, received, mpsc::channel().1),
+            );
+        harness.run();
+        harness
+    }
+
+    #[test]
+    fn a_narrow_top_bar_drops_the_versions_and_a_phone_one_keeps_only_the_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let versions = format!(
+            "Vault Forge {} · converter {}",
+            vault_forge_engine::VERSION,
+            vault_forge_engine::CONVERTER_VERSION
+        );
+
+        let narrow = top_bar_with_notice(dir.path(), 800.0);
+        assert!(narrow.query_by_label(&versions).is_none());
+        narrow.get_by_label("Vault Forge 1.1.0 is out");
+        narrow.get_by_label("See what's new");
+
+        let phone = top_bar_with_notice(dir.path(), 500.0);
+        assert!(phone.query_by_label(&versions).is_none());
+        assert!(phone.query_by_label("Vault Forge 1.1.0 is out").is_none());
+        phone.get_by_label("See what's new");
     }
 }
