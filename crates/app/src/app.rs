@@ -166,12 +166,11 @@ impl App {
                 ui.label(rules_name(profile.rules));
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let ready = self
-                    .data
-                    .get(&profile.address)
-                    .is_some_and(DataState::can_convert);
                 // ponytail: Convert does nothing yet; the conversion ticket wires it.
-                ui.add_enabled(ready, egui::Button::new("Convert"));
+                ui.add_enabled(
+                    profile.can_convert(&self.data),
+                    egui::Button::new("Convert"),
+                );
             });
         });
         ui.add_space(12.0);
@@ -381,6 +380,46 @@ mod tests {
         harness.get_by_label_contains("so it isn't 5eTools data.");
         harness.get_by_label("Download");
         assert!(convert_disabled(&harness));
+    }
+
+    #[test]
+    fn convert_stays_disabled_while_the_book_images_download() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path());
+        harness.run();
+        let profile = harness.state().engine.profiles().remove(0);
+        let images_address = "http://127.0.0.1:1/img.zip".to_string();
+        harness.state().engine.send(Command::SaveProfile(Profile {
+            images: true,
+            images_address: images_address.clone(),
+            ..profile
+        }));
+        let ready = DataState::Ready {
+            books: 5,
+            bytes: 412_000_000,
+            downloaded: UNIX_EPOCH,
+            newer: false,
+        };
+        game_data(&events, ready.clone());
+        let images = |state| Event::GameData {
+            address: images_address.clone(),
+            state,
+        };
+        events
+            .send(images(DataState::Downloading {
+                bytes: 1_000_000,
+                elapsed: Duration::from_secs(1),
+            }))
+            .unwrap();
+        harness.run();
+        assert!(
+            convert_disabled(&harness),
+            "no Convert while images download"
+        );
+
+        events.send(images(ready)).unwrap();
+        harness.run();
+        assert!(!convert_disabled(&harness));
     }
 
     #[test]

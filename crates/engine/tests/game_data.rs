@@ -367,7 +367,7 @@ fn images_are_a_second_download_only_when_switched_on_with_their_size_shown_firs
         images_address: images.clone(),
         ..profile.clone()
     }));
-    engine.send(Command::CheckGameData(profile.id.clone()));
+    // Switching images on checks them, so their size shows before anything downloads.
     let before = wait(&events, &images, |s| {
         matches!(s, DataState::Missing { size: Some(_) })
     });

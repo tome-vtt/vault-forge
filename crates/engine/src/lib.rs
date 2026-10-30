@@ -9,6 +9,7 @@ mod game_data;
 mod profile_files;
 mod profiles;
 
+use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -57,6 +58,18 @@ impl Profile {
     fn uses(&self, address: &str) -> bool {
         self.address == address || self.images_address == address
     }
+
+    /// Convert needs the game data downloaded and none of the profile's downloads running.
+    pub fn can_convert(&self, data: &HashMap<String, DataState>) -> bool {
+        let busy = |address| {
+            matches!(
+                data.get(address),
+                Some(DataState::Downloading { .. } | DataState::Unpacking)
+            )
+        };
+        data.get(&self.address).is_some_and(DataState::can_convert)
+            && !self.downloads().iter().any(|(address, _)| busy(*address))
+    }
 }
 
 /// The state of the download at one address, as the Setup screen shows it.
@@ -79,12 +92,13 @@ pub enum DataState {
         downloaded: SystemTime,
         newer: bool,
     },
-    /// The last download had no books list, so it was refused; any earlier copy is kept.
+    /// The last download was not a zip archive, or (for game data) had no books list, so it was
+    /// refused; any earlier copy is kept.
     NotGameData,
 }
 
 impl DataState {
-    /// Convert needs the game data downloaded and nothing downloading.
+    /// Whether this download, on its own, lets a profile convert: see [`Profile::can_convert`].
     pub fn can_convert(&self) -> bool {
         matches!(self, DataState::Ready { .. })
     }
@@ -185,7 +199,16 @@ impl Engine {
                 })
             }
             Command::SaveProfile(profile) => profiles.get(&profile.id).cloned().and_then(|old| {
+                let id = profile.id.clone();
                 profiles.save(profile)?;
+                let new = profiles.get(&id)?;
+                // A changed address or images switch is checked at once, so its state and the
+                // images' size show before anything downloads.
+                if new.downloads() != old.downloads() {
+                    for (address, _) in new.downloads() {
+                        self.game_data.check(address);
+                    }
+                }
                 self.release_unused(&profiles, &old)
             }),
             Command::CheckGameData(id) => profiles.get(&id).map(|p| {

@@ -180,7 +180,6 @@ impl GameDataSection {
                 images: on,
                 ..profile.clone()
             }));
-            engine.send(Command::CheckGameData(profile.id.clone()));
         }
         let state = data.get(&profile.images_address).filter(|_| profile.images);
         let about = match state {
@@ -206,8 +205,6 @@ impl GameDataSection {
                 images_address: self.images_address.clone(),
                 ..profile.clone()
             }));
-            // Checked at once, so its size shows before anything downloads.
-            engine.send(Command::CheckGameData(profile.id.clone()));
         }
         ui.horizontal_wrapped(|ui| match state {
             Some(DataState::Downloading { bytes, .. }) => {
@@ -219,6 +216,10 @@ impl GameDataSection {
             Some(DataState::Ready { downloaded, .. }) => {
                 pill(ui, Pill::Ok, "Ready");
                 ui.weak(format!("Images downloaded {}", date(*downloaded)));
+            }
+            Some(DataState::NotGameData) => {
+                pill(ui, Pill::Bad, "Not an archive");
+                ui.weak("That download isn't a zip archive. Check the address and download again.");
             }
             _ => {}
         });

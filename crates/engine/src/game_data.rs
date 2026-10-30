@@ -27,8 +27,10 @@ pub(crate) struct GameData {
     cache: Arc<DataCache>,
     events: Sender<Event>,
     /// The addresses downloading now, each with its cancel switch.
-    running: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    running: Arc<Running>,
 }
+
+type Running = Mutex<HashMap<String, Arc<AtomicBool>>>;
 
 impl GameData {
     pub(crate) fn open(app_data: &Path, events: Sender<Event>) -> std::io::Result<Self> {
@@ -47,11 +49,18 @@ impl GameData {
         }
         let cached = self.cache.read(address);
         send(&self.events, address, state_of(cached.as_ref(), false));
-        let (events, address) = (self.events.clone(), address.to_owned());
+        let (events, running, address) = (
+            self.events.clone(),
+            self.running.clone(),
+            address.to_owned(),
+        );
         std::thread::spawn(move || {
             let Ok(head) = downloader::head(&address) else {
                 return; // Offline: the copy already reported stands.
             };
+            if running.lock().unwrap().contains_key(&address) {
+                return; // A download started meanwhile and reports its own state.
+            }
             let state = match &cached {
                 Some(c) => state_of(Some(c), is_newer(c, &head)),
                 None => DataState::Missing { size: head.size },
@@ -77,20 +86,22 @@ impl GameData {
         );
         let address = address.to_owned();
         std::thread::spawn(move || {
-            let outcome = fetch(&cache, &events, &address, kind, &cancel);
+            let outcome = fetch(&cache, &events, &running, &address, kind, &cancel);
             // What a download leaves behind goes whatever happened, so no partial folder stays.
             let _ = cache.discard(&address);
             running.lock().unwrap().remove(&address);
+            if let Err(Stop::Failed(message)) = &outcome {
+                let what = match kind {
+                    Kind::GameData => "game data",
+                    Kind::Images => "book images",
+                };
+                let _ = events.send(Event::Failed(format!(
+                    "Could not download the {what}: {message}"
+                )));
+            }
             let state = match outcome {
-                Ok(()) => state_of(cache.read(&address).as_ref(), false),
                 Err(Stop::NotGameData) => DataState::NotGameData,
-                Err(Stop::Cancelled) => state_of(cache.read(&address).as_ref(), false),
-                Err(Stop::Failed(message)) => {
-                    let _ = events.send(Event::Failed(format!(
-                        "Could not download the game data: {message}"
-                    )));
-                    state_of(cache.read(&address).as_ref(), false)
-                }
+                _ => state_of(cache.read(&address).as_ref(), false),
             };
             send(&events, &address, state);
         });
@@ -105,7 +116,11 @@ impl GameData {
 
     /// Removes the address's copy, once no profile uses the address any more.
     pub(crate) fn release(&self, address: &str) -> Result<(), String> {
-        self.cancel(address);
+        // Held while removing, so a running download cannot put its copy back afterwards.
+        let running = self.running.lock().unwrap();
+        if let Some(cancel) = running.get(address) {
+            cancel.store(true, Ordering::Relaxed);
+        }
         self.cache
             .remove(address)
             .map_err(|e| format!("Could not remove the unused game data: {e}"))
@@ -121,19 +136,28 @@ enum Stop {
 fn fetch(
     cache: &DataCache,
     events: &Sender<Event>,
+    running: &Running,
     address: &str,
     kind: Kind,
     cancel: &AtomicBool,
 ) -> Result<(), Stop> {
     let failed = |e: std::io::Error| Stop::Failed(e.to_string());
     let started = Instant::now();
-    send(events, address, downloading(0, started.elapsed()));
+    send(
+        events,
+        address,
+        DataState::Downloading {
+            bytes: 0,
+            elapsed: Duration::ZERO,
+        },
+    );
     let mut archive = BufWriter::new(cache.archive(address).map_err(failed)?);
     let mut next_report = PROGRESS_STEP;
     let head = downloader::get(address, &mut archive, |bytes| {
         if bytes >= next_report {
             next_report = bytes + PROGRESS_STEP;
-            send(events, address, downloading(bytes, started.elapsed()));
+            let elapsed = started.elapsed();
+            send(events, address, DataState::Downloading { bytes, elapsed });
         }
         !cancel.load(Ordering::Relaxed)
     })
@@ -145,7 +169,10 @@ fn fetch(
     let bytes = file.metadata().map_err(failed)?.len();
     drop(file);
     send(events, address, DataState::Unpacking);
-    let unpacked = cache.unpack(address).map_err(|_| Stop::NotGameData)?;
+    let unpacked = cache.unpack(address).map_err(|e| match e.kind() {
+        std::io::ErrorKind::InvalidData => Stop::NotGameData,
+        _ => failed(e),
+    })?;
     let books = match kind {
         Kind::GameData => count_books(&unpacked).ok_or(Stop::NotGameData)?,
         Kind::Images => 0,
@@ -154,6 +181,12 @@ fn fetch(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
+    // Checked under the lock `release` holds, so a copy no profile uses is never put back, and
+    // a Cancel pressed while unpacking still keeps the copy there was.
+    let _running = running.lock().unwrap();
+    if cancel.load(Ordering::Relaxed) {
+        return Err(Stop::Cancelled);
+    }
     cache
         .replace(&Cached {
             address: address.to_owned(),
@@ -171,10 +204,6 @@ fn send(events: &Sender<Event>, address: &str, state: DataState) {
         address: address.to_owned(),
         state,
     });
-}
-
-fn downloading(bytes: u64, elapsed: Duration) -> DataState {
-    DataState::Downloading { bytes, elapsed }
 }
 
 fn state_of(cached: Option<&Cached>, newer: bool) -> DataState {
