@@ -14,3 +14,7 @@ vault-forge-engine = { version = "0.1.0", path = "../engine" }
 [dev-dependencies]
 egui_kittest = "0.37.0"
 tempfile = "3.27.0"
+
+# The OS colour scheme on Linux, where the window layer does not report it.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5.19.0", default-features = false, features = ["async-io", "blocking-api"] }

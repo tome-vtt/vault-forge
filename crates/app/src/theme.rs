@@ -10,8 +10,8 @@ use vault_forge_engine::Appearance;
 
 /// Below this window width the sidebar folds into a menu.
 pub const NARROW: f32 = 900.0;
-
-/// At or below this window width the top bar's new-version notice keeps only its dot and link.
+/// At or below this width the sheet's padding tightens and the top bar's new-version notice
+/// keeps only its dot and link.
 pub const PHONE: f32 = 600.0;
 
 /// The demo's colour tokens.
@@ -20,17 +20,19 @@ pub struct Palette {
     pub surface: Color32,
     pub border: Color32,
     raised: Color32,
+    hover: Color32,
     active: Color32,
     rule: Color32,
     panel: Color32,
     field: Color32,
-    text: Color32,
+    pub text: Color32,
     text2: Color32,
     muted: Color32,
     primary: Color32,
     primary_hover: Color32,
     on_primary: Color32,
     control: Color32,
+    toggle_off: Color32,
     pub accent: Color32,
     negative: Color32,
     negative_edge: Color32,
@@ -46,6 +48,7 @@ pub const LIGHT: Palette = Palette {
     surface: hex(0xffffff),
     border: hex(0xe8eaec),
     raised: hex(0xf4f6f8),
+    hover: hex(0xeceef0),
     active: hex(0xe6e9eb),
     rule: hex(0xf0f1f2),
     panel: hex(0xfafafa),
@@ -57,6 +60,7 @@ pub const LIGHT: Palette = Palette {
     primary_hover: hex(0x3a3d3f),
     on_primary: hex(0xffffff),
     control: hex(0xcdced1),
+    toggle_off: hex(0xb9bcbf),
     accent: hex(0x1b6c80),
     negative: hex(0xc4242a),
     negative_edge: hex(0xefc4c2),
@@ -68,6 +72,7 @@ pub const DARK: Palette = Palette {
     surface: hex(0x17181a),
     border: hex(0x2a2c2e),
     raised: hex(0x202123),
+    hover: hex(0x1c1d1f),
     active: hex(0x2a2c2e),
     rule: hex(0x222325),
     panel: hex(0x1d1e20),
@@ -79,6 +84,7 @@ pub const DARK: Palette = Palette {
     primary_hover: hex(0xd0d2d4),
     on_primary: hex(0x111213),
     control: hex(0x45474a),
+    toggle_off: hex(0x55585b),
     accent: hex(0x5fb8cc),
     negative: hex(0xef6b6b),
     negative_edge: hex(0x5a2a2c),
@@ -102,6 +108,10 @@ pub fn install(ctx: &egui::Context) {
             &include_bytes!("../fonts/IBMPlexSans-Regular.ttf")[..],
         ),
         (
+            "plex-sans-medium",
+            &include_bytes!("../fonts/IBMPlexSans-Medium.ttf")[..],
+        ),
+        (
             "plex-sans-semibold",
             &include_bytes!("../fonts/IBMPlexSans-SemiBold.ttf")[..],
         ),
@@ -116,11 +126,13 @@ pub fn install(ctx: &egui::Context) {
     }
     // egui's own fonts stay behind Plex as fallbacks for glyphs Plex lacks.
     let sans = fonts.families[&FontFamily::Proportional].clone();
-    let mut semibold = vec!["plex-sans-semibold".to_owned()];
-    semibold.extend(sans);
-    fonts
-        .families
-        .insert(FontFamily::Name("semibold".into()), semibold);
+    for weight in ["medium", "semibold"] {
+        let mut family = vec![format!("plex-sans-{weight}")];
+        family.extend(sans.iter().cloned());
+        fonts
+            .families
+            .insert(FontFamily::Name(weight.into()), family);
+    }
     for (family, font) in [
         (FontFamily::Proportional, "plex-sans"),
         (FontFamily::Monospace, "plex-mono"),
@@ -170,7 +182,7 @@ fn visuals(p: &Palette, base: Visuals) -> Visuals {
     v.warn_fg_color = p.warning;
     v.error_fg_color = p.negative;
     v.weak_text_color = Some(p.muted);
-    // Teal is for data only, so a selected row or focused field is marked in grey and ink.
+    // A selected row is marked in grey and ink; keyboard focus is `focus_ring`'s.
     v.selection.bg_fill = p.active;
     v.selection.stroke = Stroke::new(1.0, p.text);
     v.text_cursor.stroke = Stroke::new(2.0, p.text);
@@ -196,13 +208,15 @@ fn visuals(p: &Palette, base: Visuals) -> Visuals {
     v
 }
 
-/// The sheet the work sits on. When the window is narrow it is square and edge to edge, and the
-/// caller draws its one edge, along the top.
-pub fn sheet(ui: &egui::Ui, narrow: bool) -> egui::Frame {
+/// The sheet the work sits on, for a window this wide. When the window is narrow it is square and
+/// edge to edge, and the caller draws its one edge, along the top.
+pub fn sheet(ui: &egui::Ui, width: f32) -> egui::Frame {
     let p = palette(ui);
     let frame = egui::Frame::new().fill(p.surface);
-    if narrow {
+    if width <= PHONE {
         frame.inner_margin(Margin::symmetric(16, 20))
+    } else if width <= NARROW {
+        frame.inner_margin(24)
     } else {
         frame
             .stroke(Stroke::new(1.0, p.border))
@@ -215,6 +229,13 @@ pub fn sheet(ui: &egui::Ui, narrow: bool) -> egui::Frame {
             })
             .inner_margin(24)
     }
+}
+
+/// The demo's dialog: no edge, 12px corners, 24 padding and a soft shadow.
+pub fn dialog(ctx: &egui::Context) -> egui::Frame {
+    egui::Frame::window(&ctx.global_style())
+        .stroke(Stroke::NONE)
+        .inner_margin(24)
 }
 
 /// The near-black main action; grey and muted while it cannot be pressed.
@@ -240,7 +261,7 @@ pub fn primary_button(ui: &mut egui::Ui, enabled: bool, text: &str) -> egui::Res
             state.bg_stroke = Stroke::new(1.0, fill);
             state.fg_stroke = Stroke::new(1.0, ink);
         }
-        ui.add_enabled(enabled, egui::Button::new(text))
+        ui.add_enabled(enabled, egui::Button::new(medium(text)))
     })
     .inner
 }
@@ -265,25 +286,149 @@ pub fn brand(ui: &mut egui::Ui) {
     );
 }
 
-/// A text field as tall as the demo's, filling the width it is given.
-pub fn input(edit: egui::TextEdit<'_>) -> egui::TextEdit<'_> {
-    edit.desired_width(f32::INFINITY)
-        .margin(egui::vec2(12.0, 10.0))
+/// Text in IBM Plex Sans Medium, the demo's weight 500 for labels and emphasis.
+pub fn medium(text: impl Into<String>) -> egui::RichText {
+    egui::RichText::new(text).family(FontFamily::Name("medium".into()))
+}
+
+/// The demo's text field: 40 tall, filling the width it is given, with a 1px edge and 10px
+/// corners.
+pub fn input(ui: &mut egui::Ui, edit: egui::TextEdit<'_>) -> egui::Response {
+    field(ui, edit, CornerRadius::same(10))
+}
+
+/// The demo's path line: a field joined to the button that fills it, as one 40-tall control.
+/// Returns the button's response.
+pub fn pathline(ui: &mut egui::Ui, edit: egui::TextEdit<'_>, button: &str) -> egui::Response {
+    let p = palette(ui);
+    let layout = egui::Layout::right_to_left(egui::Align::Center);
+    ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 40.0), layout, |ui| {
+        // The two overlap by a pixel, so they share one edge between them.
+        ui.spacing_mut().item_spacing.x = -1.0;
+        let right = CornerRadius {
+            ne: 10,
+            se: 10,
+            ..CornerRadius::ZERO
+        };
+        let button = ui.add(
+            egui::Button::new(button)
+                .corner_radius(right)
+                .min_size(egui::vec2(0.0, 40.0)),
+        );
+        ring_corners(&button, right);
+        let left = CornerRadius {
+            nw: 10,
+            sw: 10,
+            ..CornerRadius::ZERO
+        };
+        field(ui, edit, left);
+        // The button has no left edge of its own: the shared edge is the field's.
+        let edge = button.rect.left() + 0.5;
+        ui.painter().vline(
+            edge,
+            button.rect.y_range().shrink(1.0),
+            Stroke::new(1.0, p.border),
+        );
+        button
+    })
+    .inner
+}
+
+fn field(ui: &mut egui::Ui, edit: egui::TextEdit<'_>, corners: CornerRadius) -> egui::Response {
+    let p = palette(ui);
+    ui.scope(|ui| {
+        let v = ui.visuals_mut();
+        // The edge stays as it is while focused; `focus_ring` marks the focus.
+        v.selection.stroke = Stroke::new(1.0, p.border);
+        for state in [
+            &mut v.widgets.inactive,
+            &mut v.widgets.hovered,
+            &mut v.widgets.active,
+        ] {
+            state.bg_stroke = Stroke::new(1.0, p.border);
+            state.corner_radius = corners;
+        }
+        let field = ui.add(
+            edit.desired_width(f32::INFINITY)
+                .margin(egui::vec2(12.0, 10.0))
+                .min_size(egui::vec2(0.0, 40.0))
+                .align(egui::Align2::LEFT_CENTER),
+        );
+        ring_corners(&field, corners);
+        field
+    })
+    .inner
+}
+
+/// The demo's keyboard focus mark: a 2px accent outline, 2px outside the focused control. Call
+/// once a frame, after everything else is drawn.
+pub fn focus_ring(ctx: &egui::Context) {
+    let Some(focused) = ctx
+        .memory(|m| m.focused())
+        .and_then(|id| ctx.read_response(id))
+    else {
+        return;
+    };
+    // The outline follows the control's corners out; a square corner stays square.
+    let corners = ctx
+        .data(|d| d.get_temp::<CornerRadius>(focused.id))
+        .unwrap_or(CornerRadius::same(6));
+    let out = |r: u8| if r == 0 { 0 } else { r + 2 };
+    let corners = CornerRadius {
+        nw: out(corners.nw),
+        ne: out(corners.ne),
+        sw: out(corners.sw),
+        se: out(corners.se),
+    };
+    let accent = ctx.global_style().visuals.hyperlink_color;
+    let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("focus_ring"));
+    ctx.layer_painter(layer).rect_stroke(
+        focused.rect.expand(2.0),
+        corners,
+        Stroke::new(2.0, accent),
+        egui::StrokeKind::Outside,
+    );
+}
+
+/// Tells `focus_ring` the corners of a control not drawn with the usual 6px ones.
+fn ring_corners(response: &egui::Response, corners: CornerRadius) {
+    response
+        .ctx
+        .data_mut(|d| d.insert_temp(response.id, corners));
 }
 
 /// A sidebar row: full width, with an optional tag such as the profile's rules on the right.
 pub fn nav_row(ui: &mut egui::Ui, selected: bool, text: &str, tag: &str) -> egui::Response {
     let p = palette(ui);
     let ink = if selected { p.text } else { p.text2 };
-    let button = egui::Button::selectable(selected, egui::RichText::new(text).color(ink))
-        .stroke(Stroke::NONE)
-        .corner_radius(8)
-        .min_size(egui::vec2(ui.available_width(), 32.0));
-    // The tag is part of the row's name for screen readers, so an empty one is left out.
-    ui.add(match tag {
-        "" => button.right_text(egui::Atom::grow()),
-        tag => button.right_text(egui::RichText::new(tag).small().color(p.muted)),
+    row(ui, selected, egui::RichText::new(text).color(ink), tag)
+}
+
+/// The sidebar's quieter row that adds something, such as "+ New profile".
+pub fn add_row(ui: &mut egui::Ui, selected: bool, text: &str) -> egui::Response {
+    let p = palette(ui);
+    row(ui, selected, egui::RichText::new(text).color(p.muted), "")
+}
+
+fn row(ui: &mut egui::Ui, selected: bool, text: egui::RichText, tag: &str) -> egui::Response {
+    let p = palette(ui);
+    ui.scope(|ui| {
+        let hovered = &mut ui.visuals_mut().widgets.hovered;
+        hovered.weak_bg_fill = p.hover;
+        hovered.bg_fill = p.hover;
+        let button = egui::Button::selectable(selected, text)
+            .stroke(Stroke::NONE)
+            .corner_radius(8)
+            .min_size(egui::vec2(ui.available_width(), 32.0));
+        // The tag is part of the row's name for screen readers, so an empty one is left out.
+        let row = ui.add(match tag {
+            "" => button.right_text(egui::Atom::grow()),
+            tag => button.right_text(egui::RichText::new(tag).small().color(p.muted)),
+        });
+        ring_corners(&row, CornerRadius::same(8));
+        row
     })
+    .inner
 }
 
 /// A button for an action that removes something.
@@ -320,8 +465,11 @@ pub fn segmented<T: PartialEq + Copy>(
             ui.horizontal(|ui| {
                 for (choice, label) in choices {
                     let chosen = *value == *choice;
-                    let mut text =
-                        egui::RichText::new(*label).color(if chosen { p.text } else { p.muted });
+                    let mut text = if chosen {
+                        medium(*label).color(p.text)
+                    } else {
+                        egui::RichText::new(*label).color(p.muted)
+                    };
                     if fill {
                         text = text.small();
                     }
@@ -338,6 +486,58 @@ pub fn segmented<T: PartialEq + Copy>(
                 }
             });
         });
+}
+
+/// The demo's on/off switch row: the label on the left, the switch at the right edge.
+pub fn toggle(ui: &mut egui::Ui, on: &mut bool, label: &str) -> egui::Response {
+    let p = palette(ui);
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(label).color(p.text));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let (rect, mut response) =
+                ui.allocate_exact_size(egui::vec2(32.0, 18.0), egui::Sense::click());
+            if response.clicked() {
+                *on = !*on;
+                response.mark_changed();
+            }
+            let enabled = ui.is_enabled();
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(egui::Role::Switch, enabled, *on, label)
+            });
+            let painter = ui.painter();
+            painter.rect_filled(rect, 9, if *on { p.primary } else { p.toggle_off });
+            let x = if *on {
+                rect.right() - 9.0
+            } else {
+                rect.left() + 9.0
+            };
+            painter.circle_filled(egui::pos2(x, rect.center().y), 7.0, p.surface);
+            response
+        })
+        .inner
+    })
+    .inner
+}
+
+/// The demo's progress track: an accent bar sliding along a thin grey track, for work whose
+/// length is not known.
+pub fn track(ui: &mut egui::Ui) {
+    let p = palette(ui);
+    let size = egui::vec2(ui.available_width(), 6.0);
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 3, p.active);
+    // The demo's slide: 28% wide, from -100% to 360% of its width, ease-in-out over 1.4 s.
+    let width = rect.width() * 0.28;
+    let t = (ui.input(|i| i.time) / 1.4).fract() as f32;
+    let eased = t * t * (3.0 - 2.0 * t);
+    let bar = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + width * (4.6 * eased - 1.0), rect.top()),
+        size * egui::vec2(0.28, 1.0),
+    );
+    painter.rect_filled(bar, 3, p.accent);
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(16));
 }
 
 /// The engine's appearance choice as egui's theme preference.

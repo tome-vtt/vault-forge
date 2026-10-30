@@ -65,14 +65,14 @@ impl Profile {
 
     /// Convert needs the game data downloaded and none of the profile's downloads running.
     pub fn can_convert(&self, data: &HashMap<String, DataState>) -> bool {
-        let busy = |address| {
-            matches!(
-                data.get(address),
-                Some(DataState::Downloading { .. } | DataState::Unpacking)
-            )
-        };
-        data.get(&self.address).is_some_and(DataState::can_convert)
-            && !self.downloads().iter().any(|(address, _)| busy(*address))
+        data.get(&self.address).is_some_and(DataState::can_convert) && !self.is_downloading(data)
+    }
+
+    /// Whether any of the profile's downloads is running.
+    pub fn is_downloading(&self, data: &HashMap<String, DataState>) -> bool {
+        self.downloads()
+            .iter()
+            .any(|(address, _)| data.get(*address).is_some_and(DataState::is_busy))
     }
 }
 
@@ -105,6 +105,11 @@ impl DataState {
     /// Whether this download, on its own, lets a profile convert: see [`Profile::can_convert`].
     pub fn can_convert(&self) -> bool {
         matches!(self, DataState::Ready { .. })
+    }
+
+    /// Whether this download is running.
+    pub fn is_busy(&self) -> bool {
+        matches!(self, DataState::Downloading { .. } | DataState::Unpacking)
     }
 }
 
@@ -153,8 +158,11 @@ pub enum Command {
     SaveProfile(Profile),
     /// Reports the profile's game data and asks the server whether it has newer data.
     CheckGameData(String),
-    /// Downloads, or updates, the profile's game data and its images when switched on.
+    /// Downloads, or updates, the profile's game data.
     DownloadGameData(String),
+    /// Downloads, or updates, the profile's book images, when switched on.
+    DownloadImages(String),
+    /// Stops every download the profile has running.
     CancelDownload(String),
     SetAppearance(Appearance),
     /// Asks the latest-release address (GitHub's API; the app sends [`LATEST_RELEASE`]) whether a
@@ -256,9 +264,14 @@ impl Engine {
                     self.game_data.check(address);
                 }
             }),
-            Command::DownloadGameData(id) => profiles.get(&id).map(|p| {
+            Command::DownloadGameData(id) => profiles
+                .get(&id)
+                .map(|p| self.game_data.download(&p.address, Kind::GameData)),
+            Command::DownloadImages(id) => profiles.get(&id).map(|p| {
                 for (address, kind) in p.downloads() {
-                    self.game_data.download(address, kind);
+                    if kind == Kind::Images {
+                        self.game_data.download(address, kind);
+                    }
                 }
             }),
             Command::CancelDownload(id) => profiles.get(&id).map(|p| {
