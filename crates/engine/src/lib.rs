@@ -503,7 +503,9 @@ impl Engine {
     /// A file bundled in the converter's folder, such as [`ADMONITIONS_STYLES`].
     pub fn bundled_file(&self, name: &str) -> PathBuf {
         let converter = self.conversion.converter();
-        converter.parent().unwrap_or(Path::new("")).join(name)
+        // Part by part, so Windows gets '\' throughout: Explorer's /select ignores a '/' path.
+        let dir = converter.parent().unwrap_or(Path::new("")).to_path_buf();
+        name.split('/').fold(dir, |path, part| path.join(part))
     }
 
     /// The profile's converter config file, which the converter can also run from the command line.
