@@ -11,6 +11,9 @@ use vault_forge_engine::Appearance;
 /// Below this window width the sidebar folds into a menu.
 pub const NARROW: f32 = 900.0;
 
+/// At or below this window width the top bar's new-version notice keeps only its dot and link.
+pub const PHONE: f32 = 600.0;
+
 /// The demo's colour tokens.
 pub struct Palette {
     pub ground: Color32,

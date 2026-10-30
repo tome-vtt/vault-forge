@@ -121,6 +121,7 @@ impl App {
         ui.ctx()
             .set_theme(theme::preference(self.engine.appearance()));
         let narrow = ui.max_rect().width() <= theme::NARROW;
+        let phone = ui.max_rect().width() <= theme::PHONE;
         let ground = egui::Frame::new().fill(theme::palette(ui).ground);
         if narrow && self.menu_open {
             egui::CentralPanel::default()
@@ -186,7 +187,7 @@ impl App {
                         }
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        self.versions_and_notice(ui, narrow);
+                        self.versions_and_notice(ui, narrow, phone);
                     });
                 });
             });
@@ -283,8 +284,8 @@ impl App {
     }
 
     /// The top bar's right side, right to left: the versions, then the new-version notice when one
-    /// arrived. Narrow, only the notice's dot and link stay.
-    fn versions_and_notice(&self, ui: &mut egui::Ui, narrow: bool) {
+    /// arrived. Narrow drops the versions; phone-sized keeps only the notice's dot and link.
+    fn versions_and_notice(&self, ui: &mut egui::Ui, narrow: bool, phone: bool) {
         if !narrow {
             ui.label(
                 egui::RichText::new(format!(
@@ -300,7 +301,7 @@ impl App {
         };
         ui.spacing_mut().item_spacing.x = 8.0;
         ui.hyperlink_to("See what's new", page);
-        if !narrow {
+        if !phone {
             ui.label(format!("Vault Forge {version} is out"));
         }
         let (dot, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
@@ -676,5 +677,43 @@ mod tests {
         harness.run();
         harness.get_by_label("Vault Forge 1.1.0 is out");
         harness.get_by_label("See what's new");
+    }
+
+    /// The top bar at `width` after the release check found 1.1.0.
+    fn top_bar_with_notice(dir: &std::path::Path, width: f32) -> Harness<'static, App> {
+        let (engine, _) = Engine::start(dir.to_path_buf()).unwrap();
+        let (events, received) = std::sync::mpsc::channel();
+        events
+            .send(Event::NewerRelease {
+                version: "1.1.0".into(),
+                page: "https://github.com/tome-vtt/vault-forge/releases/tag/v1.1.0".into(),
+            })
+            .unwrap();
+        let mut harness = Harness::builder()
+            .with_size([width, 820.0])
+            .with_context_setup(theme::install)
+            .build_ui_state(|ui, app: &mut App| app.ui(ui), App::new(engine, received));
+        harness.run();
+        harness
+    }
+
+    #[test]
+    fn a_narrow_top_bar_drops_the_versions_and_a_phone_one_keeps_only_the_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let versions = format!(
+            "Vault Forge {} · converter {}",
+            vault_forge_engine::VERSION,
+            vault_forge_engine::CONVERTER_VERSION
+        );
+
+        let narrow = top_bar_with_notice(dir.path(), 800.0);
+        assert!(narrow.query_by_label(&versions).is_none());
+        narrow.get_by_label("Vault Forge 1.1.0 is out");
+        narrow.get_by_label("See what's new");
+
+        let phone = top_bar_with_notice(dir.path(), 500.0);
+        assert!(phone.query_by_label(&versions).is_none());
+        assert!(phone.query_by_label("Vault Forge 1.1.0 is out").is_none());
+        phone.get_by_label("See what's new");
     }
 }

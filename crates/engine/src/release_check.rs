@@ -6,6 +6,8 @@ use serde::Deserialize;
 
 use crate::{Event, VERSION, downloader};
 
+const RELEASES_PAGE: &str = "https://github.com/tome-vtt/vault-forge/releases/";
+
 /// The parts of GitHub's latest-release answer the check reads.
 #[derive(Deserialize)]
 struct Release {
@@ -19,7 +21,9 @@ pub(crate) fn check(url: String, events: Sender<Event>) {
             return;
         };
         let version = release.tag_name.trim_start_matches('v');
-        if is_newer(version, VERSION) {
+        // The page opens in the browser, so only a Vault Forge release page is passed on.
+        let ours = release.html_url.starts_with(RELEASES_PAGE);
+        if ours && is_newer(version, VERSION) {
             let _ = events.send(Event::NewerRelease {
                 version: version.to_owned(),
                 page: release.html_url,
@@ -37,10 +41,7 @@ fn latest(url: &str) -> Option<Release> {
 /// Compares dotted version numbers part by part; anything unreadable is never newer.
 fn is_newer(version: &str, than: &str) -> bool {
     let parts = |v: &str| -> Option<Vec<u64>> { v.split('.').map(|p| p.parse().ok()).collect() };
-    match (parts(version), parts(than)) {
-        (Some(a), Some(b)) => a > b,
-        _ => false,
-    }
+    parts(version).zip(parts(than)).is_some_and(|(a, b)| a > b)
 }
 
 #[cfg(test)]
