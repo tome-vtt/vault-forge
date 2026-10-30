@@ -34,6 +34,11 @@ impl Profiles {
         &self.list
     }
 
+    pub(crate) fn get(&self, id: &str) -> Result<&Profile, String> {
+        let found = self.list.iter().find(|p| p.id == id);
+        found.ok_or_else(|| "That profile no longer exists.".into())
+    }
+
     /// Saves a new profile and returns its id.
     pub(crate) fn create(&mut self, draft: ProfileDraft) -> Result<String, String> {
         if !draft.is_complete() {
@@ -46,6 +51,7 @@ impl Profiles {
             address: draft.address.trim().into(),
             vault: PathBuf::from(draft.vault.trim()),
             images: false,
+            images_address: String::new(),
         };
         let id = profile.id.clone();
         self.save(profile)?;
@@ -69,6 +75,14 @@ impl Profiles {
     pub(crate) fn save(&mut self, profile: Profile) -> Result<(), String> {
         if !is_valid_name(&profile.name) {
             return Err("A profile needs a name.".into());
+        }
+        let profile = Profile {
+            address: profile.address.trim().into(),
+            images_address: profile.images_address.trim().into(),
+            ..profile
+        };
+        if profile.address.is_empty() {
+            return Err("A profile needs a game data address.".into());
         }
         self.files
             .save(&profile, CONVERTER_CONFIG)

@@ -3,6 +3,9 @@
 //!
 //! The front door: [`Engine::start`] opens the app data folder and returns the Engine and an
 //! event receiver; screens call [`Engine::send`] and drain the receiver every frame.
+mod data_cache;
+mod downloader;
+mod game_data;
 mod profile_files;
 mod profiles;
 
@@ -10,9 +13,11 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
+use game_data::{GameData, Kind};
 use profiles::Profiles;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +39,55 @@ pub struct Profile {
     pub address: String,
     pub vault: PathBuf,
     pub images: bool,
+    /// Where the book images download from, when `images` is on. The user pastes it.
+    #[serde(default)]
+    pub images_address: String,
+}
+
+impl Profile {
+    /// What the profile downloads: its game data, and its images when switched on.
+    fn downloads(&self) -> Vec<(&str, Kind)> {
+        let mut downloads = vec![(self.address.as_str(), Kind::GameData)];
+        if self.images && !self.images_address.is_empty() {
+            downloads.push((self.images_address.as_str(), Kind::Images));
+        }
+        downloads
+    }
+
+    fn uses(&self, address: &str) -> bool {
+        self.address == address || self.images_address == address
+    }
+}
+
+/// The state of the download at one address, as the Setup screen shows it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DataState {
+    /// Nothing downloaded yet; `size` once the server has said how big the download is.
+    Missing {
+        size: Option<u64>,
+    },
+    Downloading {
+        bytes: u64,
+        elapsed: Duration,
+    },
+    Unpacking,
+    /// `books` counts books and adventures (none for images); `newer` means the server has newer
+    /// data than this copy, not yet downloaded.
+    Ready {
+        books: usize,
+        bytes: u64,
+        downloaded: SystemTime,
+        newer: bool,
+    },
+    /// The last download had no books list, so it was refused; any earlier copy is kept.
+    NotGameData,
+}
+
+impl DataState {
+    /// Convert needs the game data downloaded and nothing downloading.
+    pub fn can_convert(&self) -> bool {
+        matches!(self, DataState::Ready { .. })
+    }
 }
 
 /// What the user fills in to create a profile.
@@ -62,20 +116,36 @@ pub fn is_valid_name(name: &str) -> bool {
 #[derive(Debug)]
 pub enum Command {
     CreateProfile(ProfileDraft),
-    RenameProfile { id: String, name: String },
+    RenameProfile {
+        id: String,
+        name: String,
+    },
     DeleteProfile(String),
+    /// Saves the profile's changed rules, addresses or images switch.
+    SaveProfile(Profile),
+    /// Reports the profile's game data and asks the server whether it has newer data.
+    CheckGameData(String),
+    /// Downloads, or updates, the profile's game data and its images when switched on.
+    DownloadGameData(String),
+    CancelDownload(String),
 }
 
 #[derive(Debug)]
 pub enum Event {
     ProfileCreated(String),
     ProfileDeleted(String),
+    /// The download at an address changed state; every profile using the address shares it.
+    GameData {
+        address: String,
+        state: DataState,
+    },
     /// A command could not be carried out; the message is for the user.
     Failed(String),
 }
 
 pub struct Engine {
     profiles: Mutex<Profiles>,
+    game_data: GameData,
     events: Sender<Event>,
 }
 
@@ -83,7 +153,13 @@ impl Engine {
     pub fn start(app_data: PathBuf) -> io::Result<(Engine, Receiver<Event>)> {
         let profiles = Mutex::new(Profiles::open(&app_data)?);
         let (events, receiver) = channel();
-        Ok((Engine { profiles, events }, receiver))
+        let game_data = GameData::open(&app_data, events.clone())?;
+        let engine = Engine {
+            profiles,
+            game_data,
+            events,
+        };
+        Ok((engine, receiver))
     }
 
     /// The profiles for the sidebar, by name.
@@ -92,7 +168,7 @@ impl Engine {
     }
 
     // ponytail: profile commands are small file writes, so they run on the caller's thread;
-    // conversion and downloads will use worker threads.
+    // downloads, update checks and conversion use worker threads.
     /// Hands the command to the part that owns it.
     pub fn send(&self, command: Command) {
         let mut profiles = self.profiles.lock().unwrap();
@@ -101,12 +177,45 @@ impl Engine {
                 let _ = self.events.send(Event::ProfileCreated(id));
             }),
             Command::RenameProfile { id, name } => profiles.rename(&id, &name),
-            Command::DeleteProfile(id) => profiles.delete(&id).map(|()| {
-                let _ = self.events.send(Event::ProfileDeleted(id));
+            Command::DeleteProfile(id) => {
+                let old = profiles.get(&id).ok().cloned();
+                profiles.delete(&id).and_then(|()| {
+                    let _ = self.events.send(Event::ProfileDeleted(id));
+                    old.map_or(Ok(()), |old| self.release_unused(&profiles, &old))
+                })
+            }
+            Command::SaveProfile(profile) => profiles.get(&profile.id).cloned().and_then(|old| {
+                profiles.save(profile)?;
+                self.release_unused(&profiles, &old)
+            }),
+            Command::CheckGameData(id) => profiles.get(&id).map(|p| {
+                for (address, _) in p.downloads() {
+                    self.game_data.check(address);
+                }
+            }),
+            Command::DownloadGameData(id) => profiles.get(&id).map(|p| {
+                for (address, kind) in p.downloads() {
+                    self.game_data.download(address, kind);
+                }
+            }),
+            Command::CancelDownload(id) => profiles.get(&id).map(|p| {
+                for (address, _) in p.downloads() {
+                    self.game_data.cancel(address);
+                }
             }),
         };
         if let Err(message) = outcome {
             let _ = self.events.send(Event::Failed(message));
         }
+    }
+
+    /// Removes the cached copy of each of `old`'s addresses that no profile uses any more.
+    fn release_unused(&self, profiles: &Profiles, old: &Profile) -> Result<(), String> {
+        for address in [&old.address, &old.images_address] {
+            if !address.is_empty() && !profiles.list().iter().any(|p| p.uses(address)) {
+                self.game_data.release(address)?;
+            }
+        }
+        Ok(())
     }
 }
