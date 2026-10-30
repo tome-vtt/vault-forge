@@ -4,7 +4,31 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use crate::Profile;
+
+/// The parts of the converter config file Vault Forge writes.
+#[derive(Serialize, Deserialize)]
+struct Config {
+    paths: Paths,
+    #[serde(default)]
+    sources: Sources,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Paths {
+    compendium: String,
+    rules: String,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct Sources {
+    #[serde(default)]
+    book: Vec<String>,
+    #[serde(default)]
+    adventure: Vec<String>,
+}
 
 pub(crate) struct ProfileFiles {
     dir: PathBuf,
@@ -43,8 +67,16 @@ impl ProfileFiles {
                 .ok()
                 .and_then(|text| serde_yaml_ng::from_str::<Profile>(&text).ok());
             if let Some(profile) = parsed {
+                // A missing or unreadable config file leaves no books chosen.
+                let sources = std::fs::read_to_string(self.config_path(id))
+                    .ok()
+                    .and_then(|text| serde_yaml_ng::from_str::<Config>(&text).ok())
+                    .map(|config| config.sources)
+                    .unwrap_or_default();
                 profiles.push(Profile {
                     id: id.to_owned(),
+                    books: sources.book,
+                    adventures: sources.adventure,
                     ..profile
                 });
             }
@@ -52,10 +84,22 @@ impl ProfileFiles {
         Ok(profiles)
     }
 
-    /// Writes the converter config it is given beside the profile's own fields.
-    pub(crate) fn save(&self, p: &Profile, config: &str) -> io::Result<()> {
+    /// Writes the converter config, with the profile's chosen books, beside the profile's own
+    /// fields.
+    pub(crate) fn save(&self, p: &Profile) -> io::Result<()> {
+        let config = Config {
+            paths: Paths {
+                compendium: "compendium/".into(),
+                rules: "rules/".into(),
+            },
+            sources: Sources {
+                book: p.books.clone(),
+                adventure: p.adventures.clone(),
+            },
+        };
+        let config = serde_yaml_ng::to_string(&config).map_err(io::Error::other)?;
         let beside = serde_yaml_ng::to_string(p).map_err(io::Error::other)?;
-        write_atomic(&self.config_path(&p.id), config)?;
+        write_atomic(&self.config_path(&p.id), &config)?;
         write_atomic(&self.beside_path(&p.id), &beside)
     }
 

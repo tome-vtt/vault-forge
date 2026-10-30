@@ -8,7 +8,9 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use vault_forge_engine::{Command, DataState, Engine, Event, Profile, ProfileDraft, Rules};
+use vault_forge_engine::{
+    Book, Command, DataState, Engine, Event, Group, Profile, ProfileDraft, Rules,
+};
 
 /// Each path's version (its ETag) and body.
 type Files = HashMap<String, (u32, Vec<u8>)>;
@@ -128,14 +130,36 @@ fn zip(files: &[(&str, String)]) -> Vec<u8> {
     zip.finish().unwrap().into_inner()
 }
 
+/// A books or adventures list as 5eTools and Pf2eTools write it, from `(id, name, group,
+/// published)`.
+fn list(key: &str, entries: &[(&str, &str, &str, &str)]) -> String {
+    let entries: Vec<String> = entries
+        .iter()
+        .map(|(id, name, group, published)| {
+            format!(
+                r#"{{"name": "{name}", "id": "{id}", "source": "{id}", "group": "{group}",
+                    "published": "{published}", "contents": []}}"#
+            )
+        })
+        .collect();
+    format!(r#"{{"{key}": [{}]}}"#, entries.join(","))
+}
+
 /// 5eTools-shaped game data, inside a top folder as a repository archive has it.
 fn game_data(books: usize, adventures: usize) -> Vec<u8> {
-    let list = |key: &str, n: usize| format!(r#"{{"{key}": [{}]}}"#, vec!["{}"; n].join(","));
+    let numbered = |key: &str, prefix: &str, n: usize| {
+        let ids: Vec<String> = (1..=n).map(|i| format!("{prefix}{i}")).collect();
+        let entries: Vec<_> = ids
+            .iter()
+            .map(|id| (id.as_str(), id.as_str(), "supplement", "2020-01-01"))
+            .collect();
+        list(key, &entries)
+    };
     zip(&[
-        ("5etools-src/data/books.json", list("book", books)),
+        ("5etools-src/data/books.json", numbered("book", "B", books)),
         (
             "5etools-src/data/adventures.json",
-            list("adventure", adventures),
+            numbered("adventure", "A", adventures),
         ),
         ("5etools-src/data/bestiary/bestiary-mm.json", "{}".into()),
     ])
@@ -181,9 +205,22 @@ fn ready(state: &DataState) -> bool {
 }
 
 fn books(state: DataState) -> usize {
+    book_list(state).len()
+}
+
+fn book_list(state: DataState) -> Vec<Book> {
     match state {
         DataState::Ready { books, .. } => books,
         other => panic!("not ready: {other:?}"),
+    }
+}
+
+fn book(code: &str, name: &str, year: &str, group: Group) -> Book {
+    Book {
+        code: code.into(),
+        name: name.into(),
+        year: year.into(),
+        group,
     }
 }
 
@@ -365,9 +402,11 @@ fn a_changed_archive_is_reported_as_newer_but_downloaded_only_on_update() {
 
     engine.send(Command::DownloadGameData(profile));
     // Earlier checks may still report the old copy, so wait for the new one.
-    let updated = wait(&events, &address, |s| {
-        matches!(s, DataState::Ready { books: 6, .. })
-    });
+    let updated = wait(
+        &events,
+        &address,
+        |s| matches!(s, DataState::Ready { books, .. } if books.len() == 6),
+    );
     assert!(matches!(updated, DataState::Ready { newer: false, .. }));
 }
 
@@ -438,9 +477,11 @@ fn update_fetches_only_the_game_data_and_leaves_ready_images_alone() {
     server.put("/data.zip", game_data(4, 2));
     engine.send(Command::DownloadGameData(profile));
 
-    wait(&events, &address, |s| {
-        matches!(s, DataState::Ready { books: 6, .. })
-    });
+    wait(
+        &events,
+        &address,
+        |s| matches!(s, DataState::Ready { books, .. } if books.len() == 6),
+    );
     assert_eq!(server.gets(), 3, "the images were not downloaded again");
 }
 
@@ -463,9 +504,11 @@ fn an_update_check_answered_after_a_download_does_not_overwrite_its_state() {
         "the copy, at once"
     );
     engine.send(Command::DownloadGameData(profile));
-    wait(&events, &address, |s| {
-        matches!(s, DataState::Ready { books: 6, .. })
-    });
+    wait(
+        &events,
+        &address,
+        |s| matches!(s, DataState::Ready { books, .. } if books.len() == 6),
+    );
     go.send(()).unwrap();
     answered.recv().unwrap();
 
@@ -548,4 +591,126 @@ fn a_download_whose_address_change_is_refused_downloads_nothing() {
     }
     assert_eq!(failed, 2, "each refused save says so once");
     assert_eq!(server.gets(), 0, "nothing downloaded");
+}
+
+#[test]
+fn five_e_books_are_named_and_grouped_into_core_rules_supplements_and_adventures() {
+    let server = Server::start();
+    let books = list(
+        "book",
+        &[
+            ("PHB", "Player's Handbook (2014)", "core", "2014-08-19"),
+            (
+                "XGE",
+                "Xanathar's Guide to Everything",
+                "supplement",
+                "2017-11-21",
+            ),
+            ("XPHB", "Player's Handbook (2024)", "core", "2024-09-17"),
+            ("PS-Z", "Plane Shift: Zendikar", "setting-alt", "2016-04-27"),
+        ],
+    );
+    let adventures = list(
+        "adventure",
+        &[("CoS", "Curse of Strahd", "supplement", "2016-03-15")],
+    );
+    let address = server.put(
+        "/5e.zip",
+        zip(&[
+            ("5etools-src/data/books.json", books),
+            ("5etools-src/data/adventures.json", adventures),
+        ]),
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Thursday", &address);
+
+    engine.send(Command::DownloadGameData(profile));
+
+    assert_eq!(
+        book_list(wait(&events, &address, ready)),
+        [
+            book("PHB", "Player's Handbook (2014)", "2014", Group::CoreRules),
+            book("XPHB", "Player's Handbook (2024)", "2024", Group::CoreRules),
+            book(
+                "XGE",
+                "Xanathar's Guide to Everything",
+                "2017",
+                Group::Supplements
+            ),
+            book("PS-Z", "Plane Shift: Zendikar", "2016", Group::Supplements),
+            book("CoS", "Curse of Strahd", "2016", Group::Adventures),
+        ]
+    );
+}
+
+#[test]
+fn pathfinder_books_are_named_and_grouped_into_core_rules_supplements_and_adventures() {
+    let server = Server::start();
+    let books = list(
+        "book",
+        &[
+            ("CRB", "Core Rulebook", "core", "2019-08-01"),
+            (
+                "LOWG",
+                "Lost Omens: World Guide",
+                "lost-omens",
+                "2019-09-10",
+            ),
+            ("GMG", "Gamemastery Guide", "core", "2020-02-26"),
+        ],
+    );
+    let adventures = list(
+        "adventure",
+        &[("AV", "Abomination Vaults", "supplement", "2021-02-24")],
+    );
+    let address = server.put(
+        "/pf2e.zip",
+        zip(&[
+            ("Pf2eTools-dev/data/books.json", books),
+            ("Pf2eTools-dev/data/adventures.json", adventures),
+        ]),
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Vaults", &address);
+
+    engine.send(Command::DownloadGameData(profile));
+
+    assert_eq!(
+        book_list(wait(&events, &address, ready)),
+        [
+            book("CRB", "Core Rulebook", "2019", Group::CoreRules),
+            book("GMG", "Gamemastery Guide", "2020", Group::CoreRules),
+            book(
+                "LOWG",
+                "Lost Omens: World Guide",
+                "2019",
+                Group::Supplements
+            ),
+            book("AV", "Abomination Vaults", "2021", Group::Adventures),
+        ]
+    );
+}
+
+#[test]
+fn a_data_folder_with_no_books_list_leaves_the_books_to_be_typed() {
+    let server = Server::start();
+    let address = server.put("/data.zip", game_data(3, 2));
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Thursday", &address);
+    engine.send(Command::DownloadGameData(profile.clone()));
+    wait(&events, &address, ready);
+    let folder = dir
+        .path()
+        .join("data-cache")
+        .join(&cache_entries(dir.path())[0]);
+    std::fs::remove_file(folder.join("5etools-src/data/books.json")).unwrap();
+
+    engine.send(Command::CheckGameData(profile.id));
+
+    let state = wait(&events, &address, |_| true);
+    assert!(state.can_convert(), "the copy is still there");
+    assert_eq!(book_list(state), [], "nothing to tick, so codes are typed");
 }

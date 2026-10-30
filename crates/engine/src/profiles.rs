@@ -5,9 +5,6 @@ use std::path::{Path, PathBuf};
 use crate::profile_files::ProfileFiles;
 use crate::{Profile, ProfileDraft, is_valid_name};
 
-/// What the converter reads from every profile's config file.
-const CONVERTER_CONFIG: &str = "paths:\n  compendium: compendium/\n  rules: rules/\n";
-
 /// File names Windows treats as devices, whatever the extension.
 const WINDOWS_DEVICES: [&str; 30] = [
     "con", "prn", "aux", "nul", "com0", "com1", "com2", "com3", "com4", "com5", "com6", "com7",
@@ -52,6 +49,8 @@ impl Profiles {
             vault: PathBuf::from(draft.vault.trim()),
             images: false,
             images_address: String::new(),
+            books: Vec::new(),
+            adventures: Vec::new(),
         };
         let id = profile.id.clone();
         self.save(profile)?;
@@ -76,11 +75,19 @@ impl Profiles {
         if !is_valid_name(&profile.name) {
             return Err("A profile needs a name.".into());
         }
-        let profile = Profile {
+        let mut profile = Profile {
             address: profile.address.trim().into(),
             images_address: profile.images_address.trim().into(),
             ..profile
         };
+        // Each game's books have their own codes, so a switch of game rules starts over.
+        if self
+            .get(&profile.id)
+            .is_ok_and(|old| old.rules != profile.rules)
+        {
+            profile.books.clear();
+            profile.adventures.clear();
+        }
         if profile.address.is_empty() {
             return Err("A profile needs a game data address.".into());
         }
@@ -95,7 +102,7 @@ impl Profiles {
             return Err("That address is used for game data, so it can't be book images.".into());
         }
         self.files
-            .save(&profile, CONVERTER_CONFIG)
+            .save(&profile)
             .map_err(|e| format!("Could not save the profile: {e}"))?;
         match self.list.iter_mut().find(|p| p.id == profile.id) {
             Some(old) => *old = profile,

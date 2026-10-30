@@ -47,6 +47,31 @@ pub struct Profile {
     /// Where the book images download from, when `images` is on. The user pastes it.
     #[serde(default)]
     pub images_address: String,
+    /// The chosen books' codes, saved in the converter config's `sources: book` key, not here.
+    #[serde(skip)]
+    pub books: Vec<String>,
+    /// The chosen adventures' codes, saved in the converter config's `sources: adventure` key.
+    #[serde(skip)]
+    pub adventures: Vec<String>,
+}
+
+/// Where the Books checklist lists a book, in its order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Group {
+    CoreRules,
+    Supplements,
+    Adventures,
+}
+
+/// One book or adventure in the game data's lists.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Book {
+    /// The source code the converter config names it by, such as XPHB.
+    pub code: String,
+    pub name: String,
+    /// The year it was published; empty when the list does not say.
+    pub year: String,
+    pub group: Group,
 }
 
 impl Profile {
@@ -66,6 +91,28 @@ impl Profile {
     /// Convert needs the game data downloaded and none of the profile's downloads running.
     pub fn can_convert(&self, data: &HashMap<String, DataState>) -> bool {
         data.get(&self.address).is_some_and(DataState::can_convert) && !self.is_downloading(data)
+    }
+
+    /// Whether the book is chosen.
+    pub fn has(&self, book: &Book) -> bool {
+        let codes = match book.group {
+            Group::Adventures => &self.adventures,
+            _ => &self.books,
+        };
+        codes.contains(&book.code)
+    }
+
+    /// Ticks or unticks a book: an adventure goes in the config's `adventure` key, any other
+    /// book in `book`.
+    pub fn choose(&mut self, book: &Book, on: bool) {
+        let codes = match book.group {
+            Group::Adventures => &mut self.adventures,
+            _ => &mut self.books,
+        };
+        codes.retain(|code| *code != book.code);
+        if on {
+            codes.push(book.code.clone());
+        }
     }
 
     /// Whether any of the profile's downloads is running.
@@ -88,10 +135,11 @@ pub enum DataState {
         elapsed: Duration,
     },
     Unpacking,
-    /// `books` counts books and adventures (none for images); `newer` means the server has newer
-    /// data than this copy, not yet downloaded.
+    /// `books` lists the copy's books and adventures, by group; it is empty for images, and for
+    /// game data whose lists cannot be read, when the books are typed by code instead. `newer`
+    /// means the server has newer data than this copy, not yet downloaded.
     Ready {
-        books: usize,
+        books: Vec<Book>,
         bytes: u64,
         downloaded: SystemTime,
         newer: bool,
@@ -141,6 +189,18 @@ impl ProfileDraft {
     }
 }
 
+/// The book codes typed where the game data has no books list to tick: separated by commas or
+/// spaces, each once.
+pub fn typed_codes(text: &str) -> Vec<String> {
+    let mut codes: Vec<String> = Vec::new();
+    for code in text.split(|c: char| c == ',' || c.is_whitespace()) {
+        if !code.is_empty() && !codes.iter().any(|c| c == code) {
+            codes.push(code.to_owned());
+        }
+    }
+    codes
+}
+
 /// A profile's name must have something in it.
 pub fn is_valid_name(name: &str) -> bool {
     !name.trim().is_empty()
@@ -154,7 +214,8 @@ pub enum Command {
         name: String,
     },
     DeleteProfile(String),
-    /// Saves the profile's changed rules, addresses or images switch.
+    /// Saves the profile's changed rules, addresses, images switch or chosen books. Changing the
+    /// rules clears the chosen books.
     SaveProfile(Profile),
     /// Reports the profile's game data and asks the server whether it has newer data.
     CheckGameData(String),

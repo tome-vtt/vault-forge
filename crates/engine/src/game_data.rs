@@ -11,7 +11,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::data_cache::{Cached, DataCache};
-use crate::{DataState, Event, downloader};
+use serde::Deserialize;
+
+use crate::{Book, DataState, Event, Group, downloader};
 
 /// What an archive is for: game data must hold a books list; images need not.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -59,7 +61,7 @@ impl GameData {
             }
             running.ended.get(address).copied()
         };
-        let cached = self.cache.read(address);
+        let cached = read(&self.cache, address);
         send(&self.events, address, state_of(cached.as_ref(), false));
         let (events, running, address) = (
             self.events.clone(),
@@ -119,7 +121,7 @@ impl GameData {
             }
             let state = match outcome {
                 Err(Stop::NotGameData) => DataState::NotGameData,
-                _ => state_of(cache.read(&address).as_ref(), false),
+                _ => state_of(read(&cache, &address).as_ref(), false),
             };
             send(&events, &address, state);
         });
@@ -191,10 +193,9 @@ fn fetch(
         std::io::ErrorKind::InvalidData => Stop::NotGameData,
         _ => failed(e),
     })?;
-    let books = match kind {
-        Kind::GameData => count_books(&unpacked).ok_or(Stop::NotGameData)?,
-        Kind::Images => 0,
-    };
+    if kind == Kind::GameData && read_books(&unpacked).is_none() {
+        return Err(Stop::NotGameData);
+    }
     let downloaded = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -211,8 +212,8 @@ fn fetch(
             etag: head.etag,
             last_modified: head.last_modified,
             bytes,
-            books,
             downloaded,
+            books: Vec::new(),
         })
         .map_err(failed)
 }
@@ -224,10 +225,19 @@ fn send(events: &Sender<Event>, address: &str, state: DataState) {
     });
 }
 
+/// The address's copy, with the books its lists hold.
+fn read(cache: &DataCache, address: &str) -> Option<Cached> {
+    let cached = cache.read(address)?;
+    // ponytail: the lists are read again on every check, a few MB at most; keep them in
+    // `forge.yaml` if opening a profile ever feels slow.
+    let books = read_books(&cache.folder(address)).unwrap_or_default();
+    Some(Cached { books, ..cached })
+}
+
 fn state_of(cached: Option<&Cached>, newer: bool) -> DataState {
     match cached {
         Some(c) => DataState::Ready {
-            books: c.books,
+            books: c.books.clone(),
             bytes: c.bytes,
             downloaded: UNIX_EPOCH + Duration::from_secs(c.downloaded),
             newer,
@@ -247,17 +257,54 @@ fn is_newer(cached: &Cached, head: &downloader::Head) -> bool {
     }
 }
 
-/// The number of books and adventures, or None when the archive has no books list
-/// (`data/books.json`, in 5eTools and Pf2eTools alike).
-fn count_books(unpacked: &Path) -> Option<usize> {
+/// One entry of a books or adventures list: the fields 5eTools and Pf2eTools lists share.
+#[derive(Deserialize)]
+struct Entry {
+    id: String,
+    name: String,
+    #[serde(default)]
+    group: String,
+    #[serde(default)]
+    published: String,
+}
+
+#[derive(Deserialize)]
+struct BooksList {
+    book: Vec<Entry>,
+}
+
+#[derive(Deserialize)]
+struct AdventuresList {
+    adventure: Vec<Entry>,
+}
+
+/// The books and adventures, core rules first, then supplements, then adventures, each in the
+/// lists' own order; or None when the archive has no readable books list (`data/books.json`).
+fn read_books(unpacked: &Path) -> Option<Vec<Book>> {
     let data = find_data(unpacked, 2)?;
-    let count = |file: &str, key: &str| -> Option<usize> {
-        let text = fs::read_to_string(data.join(file)).ok()?;
-        let json: serde_json::Value = serde_json::from_str(&text).ok()?;
-        Some(json[key].as_array()?.len())
+    let text = fs::read_to_string(data.join("books.json")).ok()?;
+    let books: BooksList = serde_json::from_str(&text).ok()?;
+    let adventures = fs::read_to_string(data.join("adventures.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<AdventuresList>(&text).ok())
+        .map_or_else(Vec::new, |list| list.adventure);
+    let group = |e: &Entry| match e.group.as_str() {
+        "core" => Group::CoreRules,
+        _ => Group::Supplements,
     };
-    let books = count("books.json", "book")?;
-    Some(books + count("adventures.json", "adventure").unwrap_or(0))
+    let books = books.book.into_iter().map(|e| (group(&e), e));
+    let adventures = adventures.into_iter().map(|e| (Group::Adventures, e));
+    let mut all: Vec<Book> = books
+        .chain(adventures)
+        .map(|(group, e)| Book {
+            code: e.id,
+            name: e.name,
+            year: e.published.chars().take(4).collect(),
+            group,
+        })
+        .collect();
+    all.sort_by_key(|b| b.group);
+    Some(all)
 }
 
 /// The `data` folder holding `books.json`, at the top or inside a folder or two (an archive of a
