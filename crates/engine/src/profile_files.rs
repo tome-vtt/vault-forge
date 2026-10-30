@@ -8,13 +8,23 @@ use crate::Profile;
 
 pub(crate) struct ProfileFiles {
     dir: PathBuf,
+    templates: PathBuf,
 }
 
 impl ProfileFiles {
     pub(crate) fn open(app_data: &Path) -> io::Result<Self> {
         let dir = app_data.join("profiles");
+        let templates = app_data.join("templates");
         std::fs::create_dir_all(&dir)?;
-        Ok(Self { dir })
+        std::fs::create_dir_all(&templates)?;
+        Ok(Self { dir, templates })
+    }
+
+    /// Writes a template the app ships, for the converter to read, and returns its full path.
+    pub(crate) fn write_template(&self, name: &str, text: &str) -> io::Result<PathBuf> {
+        let path = std::path::absolute(self.templates.join(name))?;
+        write_atomic(&path, text)?;
+        Ok(path)
     }
 
     pub(crate) fn config_path(&self, id: &str) -> PathBuf {
@@ -77,6 +87,19 @@ impl ProfileFiles {
         }
         Ok(())
     }
+}
+
+/// The name and path of each file in a folder.
+pub(crate) fn files_in(folder: &Path) -> io::Result<Vec<(String, PathBuf)>> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(folder)? {
+        let entry = entry?;
+        files.push((
+            entry.file_name().to_string_lossy().into_owned(),
+            entry.path(),
+        ));
+    }
+    Ok(files)
 }
 
 // Write beside, then rename, so a crash never leaves a half-written file.

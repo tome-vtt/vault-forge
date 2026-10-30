@@ -7,6 +7,7 @@ use vault_forge_engine::{
     Appearance, Command, DataState, Engine, Event, Profile, Rules, is_valid_name,
 };
 
+use crate::file_manager;
 use crate::game_data::GameDataSection;
 use crate::new_profile::NewProfile;
 use crate::setup::SetupSections;
@@ -103,7 +104,11 @@ impl App {
                 Event::GameData { address, state } => {
                     self.data.insert(address, state);
                 }
-                Event::Failed(message) => self.error = Some(message),
+                Event::Failed(message) => {
+                    // The quiet "Saved" note must not sit over a change that was refused.
+                    self.saved = None;
+                    self.error = Some(message);
+                }
             }
         }
     }
@@ -283,11 +288,13 @@ impl App {
             let row = egui::vec2(ui.available_width(), 40.0);
             let layout = egui::Layout::right_to_left(egui::Align::Center);
             ui.allocate_ui_with_layout(row, layout, |ui| {
-                if ui.button("Show in folder").clicked() {
-                    self.engine
-                        .send(Command::ShowProfileFile(profile.id.clone()));
+                let path = self.engine.profile_file(&profile.id);
+                if ui.button("Show in folder").clicked()
+                    && let Err(e) = file_manager::show(&path)
+                {
+                    self.error = Some(format!("Could not open the file manager: {e}"));
                 }
-                let mut file = self.engine.profile_file(&profile.id).display().to_string();
+                let mut file = path.display().to_string();
                 let field = ui.add(theme::input(
                     egui::TextEdit::singleline(&mut file).interactive(false),
                 ));
@@ -660,7 +667,7 @@ mod tests {
         harness.run();
 
         harness.get_by_label("Saved just now.");
-        let file = dir.path().join("profiles/thursday.yaml");
+        let file = dir.path().join("profiles").join("thursday.yaml");
         let shown = harness
             .get_by_role_and_label(egui::accesskit::Role::TextInput, "Profile file")
             .value();
@@ -668,6 +675,13 @@ mod tests {
         let config = std::fs::read_to_string(file).unwrap();
         assert!(config.contains("yamlStatblocks: true"), "{config}");
         assert!(harness.state().engine.profiles()[0].config.yaml_statblocks);
+
+        let mut refused = harness.state().engine.profiles().remove(0);
+        refused.config.paths.rules = "../outside".into();
+        harness.state().engine.send(Command::SaveProfile(refused));
+        harness.run();
+        assert!(harness.query_by_label("Saved just now.").is_none());
+        harness.get_by_label("The rules folder must be a folder inside the vault.");
     }
 
     #[test]
@@ -704,16 +718,7 @@ mod tests {
     #[test]
     fn deleting_asks_first_says_the_vault_is_kept_and_returns_to_new_profile() {
         let dir = tempfile::tempdir().unwrap();
-        let mut harness = harness(dir.path());
-        harness.state_mut().new_profile.draft = ProfileDraft {
-            name: "Thursday".into(),
-            rules: Rules::Dnd5e,
-            address: "https://example.test/data.zip".into(),
-            vault: "/vault".into(),
-        };
-        harness.run();
-        harness.get_by_label("Create profile").click();
-        harness.run();
+        let mut harness = harness_created(dir.path());
         harness.get_by_label("Delete profile").scroll_to_me();
         harness.run();
         harness.get_by_label("Delete profile").click();

@@ -1,4 +1,4 @@
-//! File manager adapter: opens the OS file manager on a file. Holds no rules.
+//! Opens the OS file manager on a file the Engine names, as the screens open OS file dialogs.
 use std::io;
 use std::path::Path;
 use std::process::Command;

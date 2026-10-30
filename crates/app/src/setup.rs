@@ -68,10 +68,10 @@ impl SetupSections {
         let row = egui::vec2(ui.available_width(), 40.0);
         let layout = egui::Layout::right_to_left(egui::Align::Center);
         ui.allocate_ui_with_layout(row, layout, |ui| {
-            let picked = match ui.button("Browse…").clicked() {
-                true => rfd::FileDialog::new().pick_folder(),
-                false => None,
-            };
+            let browse = ui.button("Browse…").clicked();
+            let picked = browse
+                .then(|| rfd::FileDialog::new().pick_folder())
+                .flatten();
             if let Some(folder) = &picked {
                 self.vault = folder.to_string_lossy().into_owned();
             }
@@ -82,7 +82,7 @@ impl SetupSections {
                 .labelled_by(label);
             let vault = PathBuf::from(self.vault.trim());
             let done = picked.is_some() || field.lost_focus();
-            if done && !self.vault.trim().is_empty() && vault != profile.vault {
+            if done && vault != profile.vault {
                 save(Profile {
                     vault,
                     ..profile.clone()
@@ -146,8 +146,7 @@ fn homebrew(ui: &mut egui::Ui, profile: &Profile, save: &impl Fn(Profile)) {
             .pick_files()
     {
         let mut changed = profile.clone();
-        let homebrew = &mut changed.config.sources.homebrew;
-        homebrew.extend(picked.into_iter().filter(|f| !files.contains(f)));
+        changed.config.sources.homebrew.extend(picked);
         save(changed);
     }
 }
@@ -180,7 +179,7 @@ fn notes(ui: &mut egui::Ui, profile: &Profile, save: &impl Fn(Profile)) {
             ui.separator();
         }
         let mut changed = profile.clone();
-        if ui.checkbox(switch(&mut changed.config), label).changed() {
+        if theme::switch(ui, switch(&mut changed.config), label).changed() {
             save(changed);
         }
         ui.weak(about);

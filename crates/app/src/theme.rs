@@ -28,6 +28,7 @@ pub struct Palette {
     primary_hover: Color32,
     on_primary: Color32,
     control: Color32,
+    toggle_off: Color32,
     pub accent: Color32,
     negative: Color32,
     negative_edge: Color32,
@@ -54,6 +55,7 @@ pub const LIGHT: Palette = Palette {
     primary_hover: hex(0x3a3d3f),
     on_primary: hex(0xffffff),
     control: hex(0xcdced1),
+    toggle_off: hex(0xb9bcbf),
     accent: hex(0x1b6c80),
     negative: hex(0xc4242a),
     negative_edge: hex(0xefc4c2),
@@ -76,6 +78,7 @@ pub const DARK: Palette = Palette {
     primary_hover: hex(0xd0d2d4),
     on_primary: hex(0x111213),
     control: hex(0x45474a),
+    toggle_off: hex(0x55585b),
     accent: hex(0x5fb8cc),
     negative: hex(0xef6b6b),
     negative_edge: hex(0x5a2a2c),
@@ -303,6 +306,42 @@ pub fn section(ui: &mut egui::Ui, title: &str, about: &str, add: impl FnOnce(&mu
                 ui.vertical(add);
             });
     });
+}
+
+/// The demo's on/off switch: its label on the left and the track on the right, the whole row
+/// clickable. Screen readers hear it as a switch, as the demo marks it.
+pub fn switch(ui: &mut egui::Ui, on: &mut bool, label: &str) -> egui::Response {
+    let p = palette(ui);
+    let track = egui::vec2(32.0, 18.0);
+    let galley = egui::WidgetText::from(egui::RichText::new(label).strong()).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Wrap),
+        ui.available_width() - track.x - 16.0,
+        TextStyle::Body,
+    );
+    let size = egui::vec2(ui.available_width(), galley.size().y.max(track.y));
+    let (rect, mut response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    let enabled = ui.is_enabled();
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, enabled, *on, label));
+    if ui.is_rect_visible(rect) {
+        let knob = ui.ctx().animate_bool_responsive(response.id, *on);
+        let top_right = egui::pos2(rect.right() - track.x, rect.top() + 1.0);
+        let bar = egui::Rect::from_min_size(top_right, track);
+        let painter = ui.painter();
+        painter.rect_filled(bar, 9.0, if *on { p.primary } else { p.toggle_off });
+        let x = egui::lerp(bar.left() + 9.0..=bar.right() - 9.0, knob);
+        painter.circle_filled(egui::pos2(x, bar.center().y), 7.0, p.surface);
+        if response.has_focus() {
+            let ring = ui.visuals().selection.stroke;
+            painter.rect_stroke(bar.expand(2.0), 11.0, ring, egui::StrokeKind::Outside);
+        }
+        painter.galley(rect.left_top(), galley, p.text);
+    }
+    response
 }
 
 /// A button for an action that removes something.

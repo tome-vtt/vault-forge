@@ -169,7 +169,7 @@ impl GameDataSection {
         data: &HashMap<String, DataState>,
     ) {
         let mut on = profile.images;
-        if ui.checkbox(&mut on, "Also download book images").changed() {
+        if theme::switch(ui, &mut on, "Also download book images").changed() {
             engine.send(Command::SaveProfile(Profile {
                 images: on,
                 ..profile.clone()

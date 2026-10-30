@@ -178,6 +178,7 @@ fn a_custom_template_folder_overrides_the_built_in_templates_type_by_type() {
         "monster2md.txt",
         "spell2md.txt",
         "index.txt",
+        "images-monster2md.txt",
         "notes.md",
         "README.txt",
     ] {
@@ -191,11 +192,11 @@ fn a_custom_template_folder_overrides_the_built_in_templates_type_by_type() {
 
     let config = config(&engine, &profile.id);
     let template = config["template"].as_mapping().unwrap();
-    let path = |name: &str| Value::from(templates.path().join(name).to_str().unwrap());
+    let path = |key: &str| PathBuf::from(template[key].as_str().unwrap());
     // The folder's own monster template wins over the statblock one.
-    assert_eq!(template["monster"], path("monster2md.txt"));
-    assert_eq!(template["spell"], path("spell2md.txt"));
-    assert_eq!(template["index"], path("index.txt"));
+    assert_eq!(path("monster"), templates.path().join("monster2md.txt"));
+    assert_eq!(path("spell"), templates.path().join("spell2md.txt"));
+    assert_eq!(path("index"), templates.path().join("index.txt"));
     assert_eq!(
         template.len(),
         3,
@@ -208,6 +209,78 @@ fn a_custom_template_folder_overrides_the_built_in_templates_type_by_type() {
         engine.profiles()[0].templates.as_deref(),
         Some(templates.path())
     );
+}
+
+#[test]
+fn a_homebrew_file_added_twice_is_listed_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let mut profile = create(&engine, &events, Rules::Dnd5e);
+    let brew = PathBuf::from("/brew/feats.json");
+    profile.config.sources.homebrew = vec![brew.clone(), brew.clone()];
+    save(&engine, &events, profile.clone());
+    assert_eq!(engine.profiles()[0].config.sources.homebrew, [brew]);
+}
+
+#[test]
+fn a_profile_without_a_vault_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, Rules::Dnd5e);
+    engine.send(Command::SaveProfile(Profile {
+        vault: PathBuf::new(),
+        ..profile
+    }));
+    assert!(
+        events
+            .try_iter()
+            .any(|e| matches!(e, Event::Failed(m) if m == "A profile needs a vault folder."))
+    );
+    assert_eq!(
+        engine.profiles()[0].vault,
+        PathBuf::from("/vaults/thursday")
+    );
+}
+
+#[test]
+fn pathfinder_has_no_statblock_template_and_takes_only_its_own_template_types() {
+    let dir = tempfile::tempdir().unwrap();
+    let templates = tempfile::tempdir().unwrap();
+    for name in ["monster2md.txt", "creature2md.txt"] {
+        std::fs::write(templates.path().join(name), "{name}").unwrap();
+    }
+    let (engine, events) = start(dir.path());
+    let mut profile = create(&engine, &events, Rules::Pf2e);
+    profile.config.yaml_statblocks = true;
+    save(&engine, &events, profile.clone());
+    assert!(config(&engine, &profile.id).get("template").is_none());
+
+    profile.templates = Some(templates.path().to_path_buf());
+    save(&engine, &events, profile.clone());
+    let config = config(&engine, &profile.id);
+    let template = config["template"].as_mapping().unwrap();
+    assert_eq!(template.len(), 1, "monster is not a Pathfinder type");
+    assert_eq!(
+        PathBuf::from(template["creature"].as_str().unwrap()),
+        templates.path().join("creature2md.txt")
+    );
+}
+
+#[test]
+fn file_paths_are_written_with_forward_slashes_as_the_converter_asks() {
+    let dir = tempfile::tempdir().unwrap();
+    let templates = tempfile::tempdir().unwrap();
+    std::fs::write(templates.path().join("spell2md.txt"), "{name}").unwrap();
+    let (engine, events) = start(dir.path());
+    let mut profile = create(&engine, &events, Rules::Dnd5e);
+    profile.config.yaml_statblocks = true;
+    profile.config.sources.homebrew = vec![templates.path().join("brew.json")];
+    profile.templates = Some(templates.path().to_path_buf());
+    save(&engine, &events, profile.clone());
+
+    let text = std::fs::read_to_string(engine.profile_file(&profile.id)).unwrap();
+    assert!(text.contains("brew.json") && text.contains("spell2md.txt"));
+    assert!(!text.contains('\\'), "{text}");
 }
 
 #[test]
