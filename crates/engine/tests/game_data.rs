@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, Cursor, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -13,12 +13,16 @@ use vault_forge_engine::{Command, DataState, Engine, Event, Profile, ProfileDraf
 /// Each path's version (its ETag) and body.
 type Files = HashMap<String, (u32, Vec<u8>)>;
 
+/// A held HEAD answers once `go` is sent, then sends on `answered`.
+type Held = Arc<Mutex<Option<(Receiver<()>, Sender<()>)>>>;
+
 /// Serves files from memory with an ETag that changes on every `put`, and counts the GETs.
 /// `/endless.zip` never finishes, for Cancel.
 struct Server {
     url: String,
     files: Arc<Mutex<Files>>,
     gets: Arc<AtomicUsize>,
+    held: Held,
 }
 
 impl Server {
@@ -27,14 +31,28 @@ impl Server {
         let url = format!("http://{}", listener.local_addr().unwrap());
         let files: Arc<Mutex<Files>> = Arc::default();
         let gets = Arc::new(AtomicUsize::new(0));
-        let (f, g) = (files.clone(), gets.clone());
+        let held: Held = Arc::default();
+        let (f, g, h) = (files.clone(), gets.clone(), held.clone());
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
-                let (f, g) = (f.clone(), g.clone());
-                std::thread::spawn(move || serve(stream, &f, &g));
+                let (f, g, h) = (f.clone(), g.clone(), h.clone());
+                std::thread::spawn(move || serve(stream, &f, &g, &h));
             }
         });
-        Server { url, files, gets }
+        Server {
+            url,
+            files,
+            gets,
+            held,
+        }
+    }
+
+    /// Holds the next HEAD until the first sender is used; the receiver hears once it answered.
+    fn hold_next_head(&self) -> (Sender<()>, Receiver<()>) {
+        let (go, wait) = channel();
+        let (done, answered) = channel();
+        *self.held.lock().unwrap() = Some((wait, done));
+        (go, answered)
     }
 
     fn put(&self, path: &str, body: Vec<u8>) -> String {
@@ -49,7 +67,7 @@ impl Server {
     }
 }
 
-fn serve(stream: TcpStream, files: &Mutex<Files>, gets: &AtomicUsize) {
+fn serve(stream: TcpStream, files: &Mutex<Files>, gets: &AtomicUsize, held: &Held) {
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut request = String::new();
     reader.read_line(&mut request).unwrap();
@@ -62,6 +80,13 @@ fn serve(stream: TcpStream, files: &Mutex<Files>, gets: &AtomicUsize) {
     let mut out = stream;
     if method == "GET" {
         gets.fetch_add(1, Ordering::SeqCst);
+    }
+    let hold = match method {
+        "HEAD" => held.lock().unwrap().take(),
+        _ => None,
+    };
+    if let Some((go, _)) = &hold {
+        go.recv().unwrap();
     }
     if path == "/endless.zip" {
         let _ = write!(
@@ -85,6 +110,10 @@ fn serve(stream: TcpStream, files: &Mutex<Files>, gets: &AtomicUsize) {
     );
     if method == "GET" {
         let _ = out.write_all(&body);
+    }
+    drop(out);
+    if let Some((_, answered)) = hold {
+        answered.send(()).unwrap();
     }
 }
 
@@ -373,8 +402,9 @@ fn images_are_a_second_download_only_when_switched_on_with_their_size_shown_firs
     });
     assert_eq!(before, DataState::Missing { size: Some(size) });
 
-    engine.send(Command::DownloadGameData(profile.id));
+    engine.send(Command::DownloadImages(profile.id));
     wait(&events, &images, ready);
+    assert_eq!(server.gets(), 2);
     let cache = dir.path().join("data-cache");
     let entries = cache_entries(dir.path());
     assert!(
@@ -383,4 +413,96 @@ fn images_are_a_second_download_only_when_switched_on_with_their_size_shown_firs
             .any(|e| cache.join(e).join("img/covers/PHB.webp").is_file()),
         "{entries:?}"
     );
+}
+
+#[test]
+fn update_fetches_only_the_game_data_and_leaves_ready_images_alone() {
+    let server = Server::start();
+    let address = server.put("/data.zip", game_data(3, 2));
+    let images = server.put("/img.zip", zip(&[("img/a.webp", "x".into())]));
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Thursday", &address);
+    engine.send(Command::SaveProfile(Profile {
+        images: true,
+        images_address: images.clone(),
+        ..profile.clone()
+    }));
+    engine.send(Command::DownloadGameData(profile.id.clone()));
+    wait(&events, &address, ready);
+    engine.send(Command::DownloadImages(profile.id.clone()));
+    wait(&events, &images, ready);
+    assert_eq!(server.gets(), 2);
+
+    server.put("/data.zip", game_data(4, 2));
+    engine.send(Command::DownloadGameData(profile.id));
+
+    wait(&events, &address, |s| {
+        matches!(s, DataState::Ready { books: 6, .. })
+    });
+    assert_eq!(server.gets(), 3, "the images were not downloaded again");
+}
+
+#[test]
+fn an_update_check_answered_after_a_download_does_not_overwrite_its_state() {
+    let server = Server::start();
+    let address = server.put("/data.zip", game_data(3, 2));
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Thursday", &address);
+    engine.send(Command::DownloadGameData(profile.id.clone()));
+    wait(&events, &address, ready);
+
+    server.put("/data.zip", game_data(4, 2));
+    let (go, answered) = server.hold_next_head();
+    engine.send(Command::CheckGameData(profile.id.clone()));
+    assert_eq!(
+        books(wait(&events, &address, |_| true)),
+        5,
+        "the copy, at once"
+    );
+    engine.send(Command::DownloadGameData(profile.id));
+    wait(&events, &address, |s| {
+        matches!(s, DataState::Ready { books: 6, .. })
+    });
+    go.send(()).unwrap();
+    answered.recv().unwrap();
+
+    // The late answer is about the copy the download replaced, so nothing more is reported.
+    match events.recv_timeout(Duration::from_secs(2)) {
+        Ok(Event::GameData { state, .. }) => panic!("stale state reported: {state:?}"),
+        Ok(other) => panic!("{other:?}"),
+        Err(_) => {}
+    }
+}
+
+#[test]
+fn an_address_is_refused_for_book_images_when_it_is_game_data_and_the_other_way_round() {
+    let server = Server::start();
+    let address = server.put("/data.zip", game_data(3, 2));
+    let images = server.put("/img.zip", zip(&[("img/a.webp", "x".into())]));
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let thursday = create(&engine, &events, "Thursday", &address);
+
+    engine.send(Command::SaveProfile(Profile {
+        images: true,
+        images_address: address.clone(),
+        ..thursday.clone()
+    }));
+    assert!(events.try_iter().any(|e| matches!(e, Event::Failed(_))));
+    assert_eq!(engine.profiles()[0].images_address, "");
+
+    engine.send(Command::SaveProfile(Profile {
+        images_address: images.clone(),
+        ..thursday
+    }));
+    engine.send(Command::CreateProfile(ProfileDraft {
+        name: "Friday".into(),
+        rules: Rules::Dnd5e,
+        address: images,
+        vault: "/vaults/friday".into(),
+    }));
+    assert!(events.try_iter().any(|e| matches!(e, Event::Failed(_))));
+    assert_eq!(engine.profiles().len(), 1);
 }

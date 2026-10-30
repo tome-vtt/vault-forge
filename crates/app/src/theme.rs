@@ -31,6 +31,7 @@ pub struct Palette {
     primary_hover: Color32,
     on_primary: Color32,
     control: Color32,
+    toggle_off: Color32,
     pub accent: Color32,
     negative: Color32,
     negative_edge: Color32,
@@ -58,6 +59,7 @@ pub const LIGHT: Palette = Palette {
     primary_hover: hex(0x3a3d3f),
     on_primary: hex(0xffffff),
     control: hex(0xcdced1),
+    toggle_off: hex(0xb9bcbf),
     accent: hex(0x1b6c80),
     negative: hex(0xc4242a),
     negative_edge: hex(0xefc4c2),
@@ -81,6 +83,7 @@ pub const DARK: Palette = Palette {
     primary_hover: hex(0xd0d2d4),
     on_primary: hex(0x111213),
     control: hex(0x45474a),
+    toggle_off: hex(0x55585b),
     accent: hex(0x5fb8cc),
     negative: hex(0xef6b6b),
     negative_edge: hex(0x5a2a2c),
@@ -482,6 +485,58 @@ pub fn segmented<T: PartialEq + Copy>(
                 }
             });
         });
+}
+
+/// The demo's on/off switch row: the label on the left, the switch at the right edge.
+pub fn toggle(ui: &mut egui::Ui, on: &mut bool, label: &str) -> egui::Response {
+    let p = palette(ui);
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(label).color(p.text));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let (rect, mut response) =
+                ui.allocate_exact_size(egui::vec2(32.0, 18.0), egui::Sense::click());
+            if response.clicked() {
+                *on = !*on;
+                response.mark_changed();
+            }
+            let enabled = ui.is_enabled();
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(egui::Role::Switch, enabled, *on, label)
+            });
+            let painter = ui.painter();
+            painter.rect_filled(rect, 9, if *on { p.primary } else { p.toggle_off });
+            let x = if *on {
+                rect.right() - 9.0
+            } else {
+                rect.left() + 9.0
+            };
+            painter.circle_filled(egui::pos2(x, rect.center().y), 7.0, p.surface);
+            response
+        })
+        .inner
+    })
+    .inner
+}
+
+/// The demo's progress track: an accent bar sliding along a thin grey track, for work whose
+/// length is not known.
+pub fn track(ui: &mut egui::Ui) {
+    let p = palette(ui);
+    let size = egui::vec2(ui.available_width(), 6.0);
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 3, p.active);
+    // The demo's slide: 28% wide, from -100% to 360% of its width, ease-in-out over 1.4 s.
+    let width = rect.width() * 0.28;
+    let t = (ui.input(|i| i.time) / 1.4).fract() as f32;
+    let eased = t * t * (3.0 - 2.0 * t);
+    let bar = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + width * (4.6 * eased - 1.0), rect.top()),
+        size * egui::vec2(0.28, 1.0),
+    );
+    painter.rect_filled(bar, 3, p.accent);
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(16));
 }
 
 /// The engine's appearance choice as egui's theme preference.

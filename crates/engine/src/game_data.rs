@@ -26,11 +26,19 @@ const PROGRESS_STEP: u64 = 1024 * 1024;
 pub(crate) struct GameData {
     cache: Arc<DataCache>,
     events: Sender<Event>,
-    /// The addresses downloading now, each with its cancel switch.
     running: Arc<Running>,
 }
 
-type Running = Mutex<HashMap<String, Arc<AtomicBool>>>;
+type Running = Mutex<Downloads>;
+
+#[derive(Default)]
+struct Downloads {
+    /// Each running download's cancel switch.
+    cancels: HashMap<String, Arc<AtomicBool>>,
+    /// How many downloads of each address have ended, so an update check can tell its answer
+    /// is older than the state a download reported.
+    ended: HashMap<String, u64>,
+}
 
 impl GameData {
     pub(crate) fn open(app_data: &Path, events: Sender<Event>) -> std::io::Result<Self> {
@@ -44,9 +52,13 @@ impl GameData {
     /// Reports the address's copy at once, then asks the server, without downloading, whether
     /// there is newer data (or, with no copy yet, how big the download is).
     pub(crate) fn check(&self, address: &str) {
-        if self.running.lock().unwrap().contains_key(address) {
-            return;
-        }
+        let ended = {
+            let running = self.running.lock().unwrap();
+            if running.cancels.contains_key(address) {
+                return;
+            }
+            running.ended.get(address).copied()
+        };
         let cached = self.cache.read(address);
         send(&self.events, address, state_of(cached.as_ref(), false));
         let (events, running, address) = (
@@ -58,8 +70,12 @@ impl GameData {
             let Ok(head) = downloader::head(&address) else {
                 return; // Offline: the copy already reported stands.
             };
-            if running.lock().unwrap().contains_key(&address) {
-                return; // A download started meanwhile and reports its own state.
+            // Held while sending, so a download starting now reports after this.
+            let running = running.lock().unwrap();
+            if running.cancels.contains_key(&address)
+                || running.ended.get(&address) != ended.as_ref()
+            {
+                return; // A download ran meanwhile and reports its own state.
             }
             let state = match &cached {
                 Some(c) => state_of(Some(c), is_newer(c, &head)),
@@ -74,10 +90,10 @@ impl GameData {
         let cancel = Arc::new(AtomicBool::new(false));
         {
             let mut running = self.running.lock().unwrap();
-            if running.contains_key(address) {
+            if running.cancels.contains_key(address) {
                 return;
             }
-            running.insert(address.to_owned(), cancel.clone());
+            running.cancels.insert(address.to_owned(), cancel.clone());
         }
         let (cache, events, running) = (
             self.cache.clone(),
@@ -89,7 +105,9 @@ impl GameData {
             let outcome = fetch(&cache, &events, &running, &address, kind, &cancel);
             // What a download leaves behind goes whatever happened, so no partial folder stays.
             let _ = cache.discard(&address);
-            running.lock().unwrap().remove(&address);
+            let mut running = running.lock().unwrap();
+            running.cancels.remove(&address);
+            *running.ended.entry(address.clone()).or_default() += 1;
             if let Err(Stop::Failed(message)) = &outcome {
                 let what = match kind {
                     Kind::GameData => "game data",
@@ -109,7 +127,7 @@ impl GameData {
 
     /// Stops the address's download; the copy it would have replaced stays.
     pub(crate) fn cancel(&self, address: &str) {
-        if let Some(cancel) = self.running.lock().unwrap().get(address) {
+        if let Some(cancel) = self.running.lock().unwrap().cancels.get(address) {
             cancel.store(true, Ordering::Relaxed);
         }
     }
@@ -118,7 +136,7 @@ impl GameData {
     pub(crate) fn release(&self, address: &str) -> Result<(), String> {
         // Held while removing, so a running download cannot put its copy back afterwards.
         let running = self.running.lock().unwrap();
-        if let Some(cancel) = running.get(address) {
+        if let Some(cancel) = running.cancels.get(address) {
             cancel.store(true, Ordering::Relaxed);
         }
         self.cache
