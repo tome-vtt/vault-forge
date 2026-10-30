@@ -21,8 +21,7 @@ desktop = true
 
 # Azure Artifact Signing, on the packed uninstaller and then the installer, with the identity
 # TomeVTT's release-desktop.yml uses. The workflow logs in to Azure and installs the
-# TrustedSigning module first. An unset repository variable arrives as an empty string, hence the
-# ternary rather than ??.
+# TrustedSigning module first, and gives the endpoint its default.
 [sign]
 command = "pwsh"
-args = ["-NoProfile", "-NonInteractive", "-Command", '''Invoke-TrustedSigning -Endpoint ($env:AZURE_CODESIGNING_ENDPOINT ? $env:AZURE_CODESIGNING_ENDPOINT : 'https://eus.codesigning.azure.net') -CodeSigningAccountName $env:AZURE_CODESIGNING_ACCOUNT -CertificateProfileName $env:AZURE_CODESIGNING_PROFILE -Files '{file}' -FileDigest SHA256 -TimestampRfc3161 http://timestamp.acs.microsoft.com -TimestampDigest SHA256''']
+args = ["-NoProfile", "-NonInteractive", "-Command", '''Invoke-TrustedSigning -Endpoint $env:AZURE_CODESIGNING_ENDPOINT -CodeSigningAccountName $env:AZURE_CODESIGNING_ACCOUNT -CertificateProfileName $env:AZURE_CODESIGNING_PROFILE -Files '{file}' -FileDigest SHA256 -TimestampRfc3161 http://timestamp.acs.microsoft.com -TimestampDigest SHA256''']
