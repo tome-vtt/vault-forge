@@ -1,0 +1,28 @@
+# The Windows installer, built with Silk Setup v0.2.1 by .github/workflows/release.yml.
+# No theme: Silk's default look. Relative paths resolve from this file's folder.
+product = "Vault Forge"
+# The release stamps the real version with --version.
+version = "0.0.0"
+publisher = "Tome Gaming"
+# Per-user: no administrator rights, no UAC prompt.
+scope = "user"
+target = '{localappdata}\Programs\{product}'
+main_exe = "vault-forge.exe"
+# The release workflow puts vault-forge.exe, its licences and the bundled converter here.
+payload = "../target/payload"
+close_running = true
+launch_at_finish = true
+# Silk's own window is a web view; this installs WebView2 where Windows lacks it.
+webview2_bootstrapper = true
+
+[shortcuts]
+start_menu = true
+desktop = true
+
+# Azure Artifact Signing, on the packed uninstaller and then the installer, with the identity
+# TomeVTT's release-desktop.yml uses. The workflow logs in to Azure and installs the
+# TrustedSigning module first. An unset repository variable arrives as an empty string, hence the
+# ternary rather than ??.
+[sign]
+command = "pwsh"
+args = ["-NoProfile", "-NonInteractive", "-Command", '''Invoke-TrustedSigning -Endpoint ($env:AZURE_CODESIGNING_ENDPOINT ? $env:AZURE_CODESIGNING_ENDPOINT : 'https://eus.codesigning.azure.net') -CodeSigningAccountName $env:AZURE_CODESIGNING_ACCOUNT -CertificateProfileName $env:AZURE_CODESIGNING_PROFILE -Files '{file}' -FileDigest SHA256 -TimestampRfc3161 http://timestamp.acs.microsoft.com -TimestampDigest SHA256''']
