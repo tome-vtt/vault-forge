@@ -75,11 +75,11 @@ impl SetupSections {
             if let Some(folder) = &picked {
                 self.vault = folder.to_string_lossy().into_owned();
             }
-            let field = ui
-                .add(theme::input(
-                    egui::TextEdit::singleline(&mut self.vault).font(egui::TextStyle::Monospace),
-                ))
-                .labelled_by(label);
+            let field = theme::input(
+                ui,
+                egui::TextEdit::singleline(&mut self.vault).font(egui::TextStyle::Monospace),
+            )
+            .labelled_by(label);
             let vault = PathBuf::from(self.vault.trim());
             let done = picked.is_some() || field.lost_focus();
             if done && vault != profile.vault {
@@ -102,11 +102,11 @@ impl SetupSections {
             ];
             for (ui, label, text, folder) in folders {
                 let label = ui.label(label).id;
-                let field = ui
-                    .add(theme::input(
-                        egui::TextEdit::singleline(text).font(egui::TextStyle::Monospace),
-                    ))
-                    .labelled_by(label);
+                let field = theme::input(
+                    ui,
+                    egui::TextEdit::singleline(text).font(egui::TextStyle::Monospace),
+                )
+                .labelled_by(label);
                 let mut changed = profile.clone();
                 let saved = folder(&mut changed.config.paths);
                 if field.lost_focus() && text.trim() != folder_name(saved) {
