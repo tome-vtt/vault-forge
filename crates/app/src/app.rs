@@ -2,9 +2,10 @@
 use std::sync::mpsc::Receiver;
 
 use eframe::egui;
-use vault_forge_engine::{Command, Engine, Event, Profile, Rules, is_valid_name};
+use vault_forge_engine::{Appearance, Command, Engine, Event, Profile, Rules, is_valid_name};
 
 use crate::new_profile::NewProfile;
+use crate::theme;
 
 enum Screen {
     NewProfile,
@@ -23,13 +24,15 @@ pub struct App {
     new_profile: NewProfile,
     dialog: Option<Dialog>,
     error: Option<String>,
+    /// The narrow window's folded sidebar is showing.
+    menu_open: bool,
 }
 
-/// The demo's centred reading column for forms and text pages.
+/// The demo's reading column for forms and text pages: left-aligned, at most 760 wide.
 pub fn narrow_column(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
-    ui.vertical_centered(|ui| {
+    ui.vertical(|ui| {
         ui.set_max_width(ui.available_width().min(760.0));
-        ui.with_layout(egui::Layout::top_down(egui::Align::Min), add);
+        add(ui);
     });
 }
 
@@ -64,6 +67,7 @@ impl App {
             new_profile: NewProfile::default(),
             dialog: None,
             error: None,
+            menu_open: false,
         }
     }
 
@@ -95,53 +99,127 @@ impl App {
         if open.is_none() {
             self.screen = Screen::NewProfile;
         }
-        egui::Panel::left("sidebar")
-            .exact_size(228.0)
-            .show(ui, |ui| self.sidebar(ui, &profiles));
-        egui::Panel::top("top_bar").exact_size(48.0).show(ui, |ui| {
-            ui.horizontal_centered(|ui| match open {
-                Some(profile) => {
-                    ui.weak("Profiles /");
-                    ui.strong(&profile.name);
+        ui.ctx()
+            .set_theme(theme::preference(self.engine.appearance()));
+        let narrow = ui.max_rect().width() <= theme::NARROW;
+        let ground = egui::Frame::new().fill(theme::palette(ui).ground);
+        if narrow && self.menu_open {
+            egui::CentralPanel::default()
+                .frame(ground.inner_margin(16))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        theme::brand(ui);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let close =
+                                egui::RichText::new("Close").color(theme::palette(ui).accent);
+                            let close = ui.add(egui::Button::new(close).frame(false));
+                            close.widget_info(|| {
+                                egui::WidgetInfo::labeled(egui::Role::Button, true, "Close menu")
+                            });
+                            if close.clicked() {
+                                self.menu_open = false;
+                            }
+                        });
+                    });
+                    self.sidebar(ui, &profiles);
+                });
+            return;
+        }
+        if !narrow {
+            egui::Panel::left("sidebar")
+                .exact_size(228.0)
+                .show_separator_line(false)
+                .frame(ground.inner_margin(egui::Margin::symmetric(12, 16)))
+                .show(ui, |ui| {
+                    ui.horizontal(theme::brand);
+                    self.sidebar(ui, &profiles);
+                });
+        }
+        egui::Panel::top("top_bar")
+            .exact_size(48.0)
+            .show_separator_line(false)
+            .frame(ground.inner_margin(egui::Margin::symmetric(if narrow { 16 } else { 24 }, 0)))
+            .show(ui, |ui| {
+                ui.horizontal_centered(|ui| {
+                    if narrow {
+                        let menu =
+                            ui.allocate_response(egui::vec2(44.0, 44.0), egui::Sense::click());
+                        let ink = egui::Stroke::new(1.6, ui.visuals().text_color());
+                        for dy in [-4.0, 0.0, 4.0] {
+                            let y = menu.rect.center().y + dy;
+                            let x = menu.rect.center().x;
+                            ui.painter().hline(x - 6.0..=x + 6.0, y, ink);
+                        }
+                        menu.widget_info(|| {
+                            egui::WidgetInfo::labeled(egui::Role::Button, true, "Open menu")
+                        });
+                        if menu.clicked() {
+                            self.menu_open = true;
+                        }
+                    }
+                    match open {
+                        Some(profile) => {
+                            ui.weak("Profiles /");
+                            ui.strong(&profile.name);
+                        }
+                        None => {
+                            ui.strong("New profile");
+                        }
+                    }
+                });
+            });
+        let sheet = egui::CentralPanel::default()
+            .frame(theme::sheet(ui, narrow))
+            .show(ui, |ui| {
+                if let Some(message) = &self.error {
+                    ui.colored_label(ui.visuals().error_fg_color, message);
                 }
-                None => {
-                    ui.strong("New profile");
+                match open {
+                    Some(profile) => self.profile_view(ui, profile),
+                    None => self.new_profile.show(ui, &self.engine, profiles.is_empty()),
                 }
             });
-        });
-        egui::CentralPanel::default().show(ui, |ui| {
-            if let Some(message) = &self.error {
-                ui.colored_label(ui.visuals().error_fg_color, message);
-            }
-            match open {
-                Some(profile) => self.profile_view(ui, profile),
-                None => self.new_profile.show(ui, &self.engine, profiles.is_empty()),
-            }
-        });
+        if narrow {
+            let edge = sheet.response.rect;
+            let stroke = egui::Stroke::new(1.0, theme::palette(ui).border);
+            ui.painter().hline(edge.x_range(), edge.top(), stroke);
+        }
         self.dialog(ui.ctx());
     }
 
+    /// The profile list, then the Appearance switch at the foot.
     fn sidebar(&mut self, ui: &mut egui::Ui, profiles: &[Profile]) {
-        ui.heading("Vault Forge");
-        ui.add_space(8.0);
+        ui.add_space(28.0);
         ui.label(egui::RichText::new("Profiles").small().weak());
         for p in profiles {
             let open = matches!(&self.screen, Screen::Profile(id) if *id == p.id);
-            ui.horizontal(|ui| {
-                if ui.selectable_label(open, &p.name).clicked() {
-                    self.screen = Screen::Profile(p.id.clone());
-                    self.error = None;
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(egui::RichText::new(rules_tag(p.rules)).small().weak());
-                });
-            });
+            if theme::nav_row(ui, open, &p.name, rules_tag(p.rules)).clicked() {
+                self.go(Screen::Profile(p.id.clone()));
+            }
         }
         let on_new = matches!(self.screen, Screen::NewProfile);
-        if ui.selectable_label(on_new, "+ New profile").clicked() {
-            self.screen = Screen::NewProfile;
-            self.error = None;
+        if theme::nav_row(ui, on_new, "+ New profile", "").clicked() {
+            self.go(Screen::NewProfile);
         }
+        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+            let mut appearance = self.engine.appearance();
+            let choices = [
+                (Appearance::System, "System"),
+                (Appearance::Light, "Light"),
+                (Appearance::Dark, "Dark"),
+            ];
+            theme::segmented(ui, &mut appearance, &choices, true);
+            if appearance != self.engine.appearance() {
+                self.engine.send(Command::SetAppearance(appearance));
+            }
+            ui.label(egui::RichText::new("Appearance").small().weak());
+        });
+    }
+
+    fn go(&mut self, screen: Screen) {
+        self.screen = screen;
+        self.error = None;
+        self.menu_open = false;
     }
 
     fn profile_view(&mut self, ui: &mut egui::Ui, profile: &Profile) {
@@ -156,7 +234,7 @@ impl App {
                     name: name.clone(),
                 });
             }
-            if ui.button("Delete profile").clicked() {
+            if theme::danger_button(ui, "Delete profile").clicked() {
                 self.dialog = Some(Dialog::Delete { id, name });
             }
         });
@@ -176,7 +254,7 @@ impl App {
                 let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 ui.horizontal(|ui| {
                     cancel = ui.button("Cancel").clicked();
-                    if ui.add_enabled(ok, egui::Button::new("Rename")).clicked() || (enter && ok) {
+                    if theme::primary_button(ui, ok, "Rename").clicked() || (enter && ok) {
                         command = Some(Command::RenameProfile {
                             id: id.clone(),
                             name: name.clone(),
@@ -192,7 +270,7 @@ impl App {
                 );
                 ui.horizontal(|ui| {
                     cancel = ui.button("Cancel").clicked();
-                    if ui.button("Delete profile").clicked() {
+                    if theme::danger_button(ui, "Delete profile").clicked() {
                         command = Some(Command::DeleteProfile(id.clone()));
                     }
                 });
@@ -211,13 +289,97 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eframe::egui::Theme;
     use egui_kittest::Harness;
     use egui_kittest::kittest::{NodeT, Queryable};
-    use vault_forge_engine::ProfileDraft;
+    use vault_forge_engine::{Appearance, ProfileDraft};
+
+    use crate::theme;
+
+    fn harness_sized(dir: &std::path::Path, width: f32) -> Harness<'static, App> {
+        let (engine, events) = Engine::start(dir.to_path_buf()).unwrap();
+        let mut harness = Harness::builder()
+            .with_size([width, 820.0])
+            .with_context_setup(theme::install)
+            .build_ui_state(|ui, app: &mut App| app.ui(ui), App::new(engine, events));
+        harness.input_mut().system_theme = Some(Theme::Light);
+        harness.run();
+        harness
+    }
 
     fn harness(dir: &std::path::Path) -> Harness<'static, App> {
-        let (engine, events) = Engine::start(dir.to_path_buf()).unwrap();
-        Harness::new_ui_state(|ui, app: &mut App| app.ui(ui), App::new(engine, events))
+        harness_sized(dir, 1280.0)
+    }
+
+    fn assert_looks(harness: &Harness<'_, App>, theme: Theme) {
+        assert_eq!(harness.ctx.theme(), theme);
+        let ground = match theme {
+            Theme::Light => theme::LIGHT.ground,
+            Theme::Dark => theme::DARK.ground,
+        };
+        assert_eq!(harness.ctx.global_style().visuals.panel_fill, ground);
+    }
+
+    #[test]
+    fn each_appearance_choice_renders_in_its_palette() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut harness = harness(dir.path());
+        // The OS is light here, so System renders light.
+        assert_looks(&harness, Theme::Light);
+        for (choice, theme) in [
+            ("Dark", Theme::Dark),
+            ("Light", Theme::Light),
+            ("System", Theme::Light),
+        ] {
+            harness.get_by_label(choice).click();
+            harness.run();
+            assert_looks(&harness, theme);
+        }
+        assert_eq!(harness.state().engine.appearance(), Appearance::System);
+    }
+
+    #[test]
+    fn under_system_the_app_follows_the_os_theme_as_it_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut harness = harness(dir.path());
+        harness.input_mut().system_theme = Some(Theme::Dark);
+        harness.run();
+        assert_looks(&harness, Theme::Dark);
+        harness.input_mut().system_theme = Some(Theme::Light);
+        harness.run();
+        assert_looks(&harness, Theme::Light);
+    }
+
+    #[test]
+    fn a_chosen_appearance_overrides_the_os_and_survives_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut harness = harness(dir.path());
+        harness.get_by_label("Dark").click();
+        harness.run();
+        harness.input_mut().system_theme = Some(Theme::Light);
+        harness.run();
+        assert_looks(&harness, Theme::Dark);
+        drop(harness);
+        // A restart reads the choice back from the settings file.
+        let harness = self::harness(dir.path());
+        assert_looks(&harness, Theme::Dark);
+    }
+
+    #[test]
+    fn a_narrow_window_shows_a_menu_button_instead_of_the_sidebar() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut harness = harness_sized(dir.path(), 600.0);
+        assert!(harness.query_by_label("Appearance").is_none());
+        harness.get_by_label("Open menu").click();
+        harness.run();
+        harness.get_by_label("Appearance");
+        harness.get_by_label("Close menu").click();
+        harness.run();
+        assert!(harness.query_by_label("Appearance").is_none());
+
+        let harness = self::harness(dir.path());
+        assert!(harness.query_by_label("Open menu").is_none());
+        harness.get_by_label("Appearance");
     }
 
     #[test]
@@ -269,10 +431,10 @@ mod tests {
         harness.run();
         harness.get_by_label("Create profile").click();
         harness.run();
-        // The sidebar row, the top bar's breadcrumb and the view title.
-        assert_eq!(harness.get_all_by_label("Thursday campaign").count(), 3);
+        // The top bar's breadcrumb and the view title; the sidebar row also names its rules.
+        assert_eq!(harness.get_all_by_label("Thursday campaign").count(), 2);
         harness.get_by_label("Profiles /");
-        harness.get_by_label("PF2e");
+        harness.get_by_label("Thursday campaign PF2e");
     }
 
     #[test]

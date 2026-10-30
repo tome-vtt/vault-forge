@@ -3,6 +3,7 @@
 
 mod app;
 mod new_profile;
+mod theme;
 
 use eframe::egui;
 use vault_forge_engine::Engine;
@@ -22,7 +23,10 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Vault Forge",
         options,
-        Box::new(|_cc| Ok(Box::new(Shell(app::App::new(engine, events))))),
+        Box::new(|cc| {
+            theme::install(&cc.egui_ctx);
+            Ok(Box::new(Shell(app::App::new(engine, events))))
+        }),
     )
 }
 

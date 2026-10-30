@@ -3,8 +3,10 @@
 //!
 //! The front door: [`Engine::start`] opens the app data folder and returns the Engine and an
 //! event receiver; screens call [`Engine::send`] and drain the receiver every frame.
+mod app_settings;
 mod profile_files;
 mod profiles;
+mod settings_file;
 
 use std::io;
 use std::path::PathBuf;
@@ -13,6 +15,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 
 use serde::{Deserialize, Serialize};
 
+use app_settings::AppSettings;
 use profiles::Profiles;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +37,16 @@ pub struct Profile {
     pub address: String,
     pub vault: PathBuf,
     pub images: bool,
+}
+
+/// How the app looks. System follows the OS theme, even when it changes while the app is open.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    #[default]
+    System,
+    Light,
+    Dark,
 }
 
 /// What the user fills in to create a profile.
@@ -64,6 +77,7 @@ pub enum Command {
     CreateProfile(ProfileDraft),
     RenameProfile { id: String, name: String },
     DeleteProfile(String),
+    SetAppearance(Appearance),
 }
 
 #[derive(Debug)]
@@ -76,19 +90,30 @@ pub enum Event {
 
 pub struct Engine {
     profiles: Mutex<Profiles>,
+    settings: Mutex<AppSettings>,
     events: Sender<Event>,
 }
 
 impl Engine {
     pub fn start(app_data: PathBuf) -> io::Result<(Engine, Receiver<Event>)> {
         let profiles = Mutex::new(Profiles::open(&app_data)?);
+        let settings = Mutex::new(AppSettings::open(&app_data));
         let (events, receiver) = channel();
-        Ok((Engine { profiles, events }, receiver))
+        let engine = Engine {
+            profiles,
+            settings,
+            events,
+        };
+        Ok((engine, receiver))
     }
 
     /// The profiles for the sidebar, by name.
     pub fn profiles(&self) -> Vec<Profile> {
         self.profiles.lock().unwrap().list().to_vec()
+    }
+
+    pub fn appearance(&self) -> Appearance {
+        self.settings.lock().unwrap().appearance()
     }
 
     // ponytail: profile commands are small file writes, so they run on the caller's thread;
@@ -104,6 +129,9 @@ impl Engine {
             Command::DeleteProfile(id) => profiles.delete(&id).map(|()| {
                 let _ = self.events.send(Event::ProfileDeleted(id));
             }),
+            Command::SetAppearance(appearance) => {
+                self.settings.lock().unwrap().set_appearance(appearance)
+            }
         };
         if let Err(message) = outcome {
             let _ = self.events.send(Event::Failed(message));
