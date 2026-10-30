@@ -8,10 +8,10 @@ use eframe::egui::{
 };
 use vault_forge_engine::Appearance;
 
-/// Below this window width the sidebar folds into a menu.
+/// At or below this window width the sidebar folds into a menu.
 pub const NARROW: f32 = 900.0;
-/// At or below this width the sheet's padding tightens.
-const PHONE: f32 = 600.0;
+/// At or below this width the sheet's padding tightens and the top bar shows only the name.
+pub const PHONE: f32 = 600.0;
 
 /// The demo's colour tokens.
 pub struct Palette {
@@ -25,7 +25,7 @@ pub struct Palette {
     panel: Color32,
     field: Color32,
     pub text: Color32,
-    text2: Color32,
+    pub text2: Color32,
     muted: Color32,
     primary: Color32,
     primary_hover: Color32,
@@ -237,6 +237,32 @@ pub fn dialog(ctx: &egui::Context) -> egui::Frame {
         .inner_margin(24)
 }
 
+/// The dialog's content width for this window: the demo's `min(480px, 100vw - 32px)` less its
+/// padding.
+pub fn dialog_width(ctx: &egui::Context) -> f32 {
+    (ctx.content_rect().width() - 32.0).min(480.0) - 48.0
+}
+
+/// The dialog's heading: 18px SemiBold with 8px below.
+pub fn dialog_title(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let title = ui.label(
+        egui::RichText::new(text).font(FontId::new(18.0, FontFamily::Name("semibold".into()))),
+    );
+    ui.add_space(8.0 - ui.spacing().item_spacing.y);
+    title
+}
+
+/// The dialog's buttons: at the right, 8px apart, 20px below the content. `add` adds them from
+/// the right, the main action first.
+pub fn dialog_actions(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    ui.add_space(20.0 - ui.spacing().item_spacing.y);
+    let layout = egui::Layout::right_to_left(egui::Align::Center);
+    ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 0.0), layout, |ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        add(ui);
+    });
+}
+
 /// The near-black main action; grey and muted while it cannot be pressed.
 pub fn primary_button(ui: &mut egui::Ui, enabled: bool, text: &str) -> egui::Response {
     let p = palette(ui);
@@ -412,6 +438,7 @@ pub fn add_row(ui: &mut egui::Ui, selected: bool, text: &str) -> egui::Response 
 fn row(ui: &mut egui::Ui, selected: bool, text: egui::RichText, tag: &str) -> egui::Response {
     let p = palette(ui);
     ui.scope(|ui| {
+        ui.spacing_mut().button_padding.x = 10.0;
         let hovered = &mut ui.visuals_mut().widgets.hovered;
         hovered.weak_bg_fill = p.hover;
         hovered.bg_fill = p.hover;
