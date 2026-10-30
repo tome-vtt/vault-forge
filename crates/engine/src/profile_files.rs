@@ -94,11 +94,12 @@ impl ProfileFiles {
 
     /// Removes its files; one already missing is fine.
     pub(crate) fn delete(&self, id: &str) -> io::Result<()> {
-        // Sidecar first: without it the profile no longer loads, so a half delete never half shows.
+        // The record first, so one left behind never attaches to a new profile taking the id.
+        // Then the sidecar: without it the profile no longer loads, so a half delete never shows.
         let paths = [
+            self.last_run_path(id),
             self.beside_path(id),
             self.config_path(id),
-            self.last_run_path(id),
         ];
         for path in paths {
             match std::fs::remove_file(path) {

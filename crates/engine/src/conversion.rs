@@ -10,13 +10,13 @@ use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
-use crate::profile_files::ProfileFiles;
+use crate::last_run::{self, LastRuns};
 use crate::profiles::vault_folder;
-use crate::{ConvertedNotes, Event, Fix, LastRun, Profile, converter, holding_folder, last_run};
+use crate::{ConvertedNotes, Event, Fix, LastRun, Profile, converter, holding_folder};
 
 pub(crate) struct Conversion {
     converter: PathBuf,
-    files: Arc<ProfileFiles>,
+    last_runs: Arc<LastRuns>,
     events: Sender<Event>,
     running: Arc<Mutex<Option<Running>>>,
 }
@@ -29,10 +29,10 @@ struct Running {
 }
 
 impl Conversion {
-    pub(crate) fn new(converter: PathBuf, files: ProfileFiles, events: Sender<Event>) -> Self {
+    pub(crate) fn new(converter: PathBuf, last_runs: Arc<LastRuns>, events: Sender<Event>) -> Self {
         Self {
             converter,
-            files: Arc::new(files),
+            last_runs,
             events,
             running: Arc::default(),
         }
@@ -40,17 +40,6 @@ impl Conversion {
 
     pub(crate) fn converter(&self) -> &Path {
         &self.converter
-    }
-
-    pub(crate) fn last_run(&self, id: &str) -> Option<LastRun> {
-        self.files.last_run(id)
-    }
-
-    /// Writes the log of the profile's last run to the file.
-    pub(crate) fn save_log(&self, id: &str, to: &Path) -> Result<(), String> {
-        let run = self.last_run(id).ok_or("This profile has no log yet.")?;
-        let text: String = run.log.iter().map(|line| format!("{line}\n")).collect();
-        fs::write(to, text).map_err(|e| format!("Could not save the log: {e}"))
     }
 
     /// The profile whose conversion is running, if one is.
@@ -107,7 +96,7 @@ impl Conversion {
             }
         });
         let (events, running) = (self.events.clone(), self.running.clone());
-        let (vault, files) = (profile.vault.clone(), self.files.clone());
+        let (vault, last_runs) = (profile.vault.clone(), self.last_runs.clone());
         std::thread::spawn(move || {
             let mut log = Vec::new();
             for line in lines {
@@ -176,7 +165,7 @@ impl Conversion {
                     warnings: last_run::warnings(&log),
                     log,
                 };
-                if let Err(e) = files.save_last_run(&id, &run) {
+                if let Err(e) = last_runs.save(&id, &run) {
                     message = format!("{message} The last run could not be saved: {e}.");
                 }
             }

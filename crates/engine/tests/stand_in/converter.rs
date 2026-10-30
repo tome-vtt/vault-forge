@@ -53,6 +53,7 @@ fn main() {
     fs::create_dir_all(&rules).unwrap();
     fs::write(rules.join("conditions.md"), "# Conditions\n").unwrap();
     println!("Writing {}conditions.md", text("rules"));
+    eprintln!("🔸 WARN| Unresolved link to Strahd zombie");
     // A line that is not UTF-8, as a Windows code page prints "café".
     std::io::stdout().write_all(b"Read caf\xe9.json\n").unwrap();
     for (book, code) in [("EXIT1", 1), ("EXIT2", 2)] {

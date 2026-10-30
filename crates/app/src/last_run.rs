@@ -249,7 +249,8 @@ fn warnings(ui: &mut egui::Ui, run: &LastRun, action: &mut Option<Action>) {
                         ui.painter().rect_filled(rule, 0, p.rule);
                         ui.add_space(10.0);
                     }
-                    ui.label(&warning.line);
+                    // The log names no subject or book to set apart, so the text stays whole.
+                    ui.label(&warning.text);
                     if !warning.step.is_empty() {
                         ui.label(egui::RichText::new(&warning.step).size(13.0).color(p.muted));
                     }
@@ -277,36 +278,41 @@ fn failed(ui: &mut egui::Ui, run: &LastRun, action: &mut Option<Action>) {
         .inner_margin(20)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                if let Some(fix) = run.fix {
-                    let label = match fix {
-                        Fix::DownloadAddress => "Check the download address",
-                        Fix::Vault => "Show the vault folder",
-                    };
-                    if ui.button(label).clicked() {
-                        *action = Some(Action::Fix(fix));
+            // On a phone the fix sits under the message, as the demo folds it.
+            let phone = ui.ctx().content_rect().width() <= theme::PHONE;
+            let message = |ui: &mut egui::Ui, action: &mut Option<Action>| {
+                ui.spacing_mut().item_spacing.x = 12.0;
+                let (icon, _) =
+                    ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+                let ink = egui::Stroke::new(1.6, p.negative);
+                let c = icon.center();
+                ui.painter().circle_stroke(c, 8.0, ink);
+                ui.painter()
+                    .line_segment([c + egui::vec2(0.0, -4.0), c + egui::vec2(0.0, 1.0)], ink);
+                ui.painter()
+                    .circle_filled(c + egui::vec2(0.0, 3.7), 0.9, p.negative);
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new(run.headline())
+                            .font(FontId::new(15.0, FontFamily::Name("semibold".into()))),
+                    );
+                    ui.label(egui::RichText::new(&run.message).color(p.text2));
+                    if phone && run.fix.is_some() {
+                        ui.add_space(8.0);
+                        fix_button(ui, run, action);
                     }
-                }
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
-                    ui.spacing_mut().item_spacing.x = 12.0;
-                    let (icon, _) =
-                        ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
-                    let ink = egui::Stroke::new(1.6, p.negative);
-                    let c = icon.center();
-                    ui.painter().circle_stroke(c, 8.0, ink);
-                    ui.painter()
-                        .line_segment([c + egui::vec2(0.0, -4.0), c + egui::vec2(0.0, 1.0)], ink);
-                    ui.painter()
-                        .circle_filled(c + egui::vec2(0.0, 3.7), 0.9, p.negative);
-                    ui.vertical(|ui| {
-                        ui.label(
-                            egui::RichText::new(run.headline())
-                                .font(FontId::new(15.0, FontFamily::Name("semibold".into()))),
-                        );
-                        ui.label(egui::RichText::new(&run.message).color(p.text2));
+                });
+            };
+            if phone {
+                ui.horizontal_top(|ui| message(ui, action));
+            } else {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    fix_button(ui, run, action);
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                        message(ui, action);
                     });
                 });
-            });
+            }
         });
     ui.add_space(24.0);
     card(ui, |ui| {
@@ -314,6 +320,19 @@ fn failed(ui: &mut egui::Ui, run: &LastRun, action: &mut Option<Action>) {
         let lines: Vec<&String> = run.log.iter().collect();
         log(ui, &lines);
     });
+}
+
+/// The button for the failure's likely cause, when one is known.
+fn fix_button(ui: &mut egui::Ui, run: &LastRun, action: &mut Option<Action>) {
+    if let Some(fix) = run.fix {
+        let label = match fix {
+            Fix::DownloadAddress => "Check the download address",
+            Fix::Vault => "Show the vault folder",
+        };
+        if ui.button(label).clicked() {
+            *action = Some(Action::Fix(fix));
+        }
+    }
 }
 
 fn never(ui: &mut egui::Ui) {
@@ -446,16 +465,15 @@ fn date_time(time: SystemTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{Duration, UNIX_EPOCH};
+    use chrono::TimeZone;
+    use std::time::Duration;
 
     #[test]
     fn a_time_today_reads_today_and_an_earlier_one_its_date() {
-        // Noon UTC on 26 Oct 2026, the same date in nearly every time zone.
-        let noon = UNIX_EPOCH + Duration::from_secs(1_793_016_000);
-        assert!(when(noon, noon).starts_with("today, "));
+        // Noon on 26 Oct 2026 in the machine's own time zone.
+        let noon = SystemTime::from(Local.with_ymd_and_hms(2026, 10, 26, 12, 0, 0).unwrap());
+        assert_eq!(when(noon, noon), "today, 12:00");
         let later = noon + Duration::from_secs(3 * 86_400);
-        let earlier = when(noon, later);
-        assert!(earlier.starts_with("26 Oct 2026, "), "{earlier}");
-        assert_eq!(earlier.len(), "26 Oct 2026, 12:00".len());
+        assert_eq!(when(noon, later), "26 Oct 2026, 12:00");
     }
 }

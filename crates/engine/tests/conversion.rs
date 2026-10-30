@@ -268,6 +268,7 @@ fn log_lines_arrive_in_the_order_the_converter_prints_them() {
             "Writing compendium/XPHB.md",
             "Warning: no image file for img/bestiary/Vrock.webp",
             "Writing rules/conditions.md",
+            "🔸 WARN| Unresolved link to Strahd zombie",
             "Read caf\u{FFFD}.json",
             "Done",
         ]
@@ -629,12 +630,25 @@ fn a_conversion_keeps_its_last_run_with_notes_counted_by_vault_folder() {
     );
     assert_eq!(run.notes(), notes_in_vault(&setup.vault));
     assert_eq!(run.log, lines);
-    assert_eq!(run.warnings.len(), 1);
+    // Each without its level mark, beside the step the converter was on.
+    let warnings: Vec<_> = run
+        .warnings
+        .iter()
+        .map(|w| (w.text.as_str(), w.step.as_str()))
+        .collect();
     assert_eq!(
-        run.warnings[0].line,
-        "Warning: no image file for img/bestiary/Vrock.webp"
+        warnings,
+        [
+            (
+                "no image file for img/bestiary/Vrock.webp",
+                "Writing compendium/bestiary/VGM.md"
+            ),
+            (
+                "Unresolved link to Strahd zombie",
+                "Writing rules/conditions.md"
+            ),
+        ]
     );
-    assert_eq!(run.warnings[0].step, "Writing compendium/bestiary/VGM.md");
 }
 
 #[test]
@@ -677,6 +691,25 @@ fn the_last_run_is_kept_across_a_restart_and_removed_with_its_profile() {
     let again = profile(&setup, "Thursday", &address, &["XPHB"]);
     assert_eq!(again.id, id, "the same file name");
     assert_eq!(setup.engine.last_run(&id), None);
+}
+
+#[test]
+fn a_profile_whose_last_run_cannot_be_removed_is_not_deleted() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    // A folder in the record's place, which removing a file refuses.
+    let profiles = setup._dir.path().join("app").join("profiles");
+    let record = profiles.join(format!("{id}.last-run.json"));
+    std::fs::create_dir_all(record.join("stuck")).unwrap();
+
+    setup.engine.send(Command::DeleteProfile(id.clone()));
+    wait(&setup.events, |e| matches!(e, Event::Failed(_)));
+
+    // Still whole, so a new profile of the same name never takes its id and record.
+    assert!(setup.engine.profiles().iter().any(|p| p.id == id));
+    let again = profile(&setup, "Thursday", &address, &["XPHB"]);
+    assert_ne!(again.id, id);
 }
 
 #[test]
