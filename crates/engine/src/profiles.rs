@@ -32,7 +32,8 @@ impl Profiles {
         let templates = app_data.join("templates");
         std::fs::create_dir_all(&templates)?;
         // Written on every start, so an app update brings its newer copy.
-        let statblock_template = std::path::absolute(templates.join("monster2md-yamlStatblock-body.txt"))?;
+        let statblock_template =
+            std::path::absolute(templates.join("monster2md-yamlStatblock-body.txt"))?;
         write_atomic(&statblock_template, STATBLOCK_TEMPLATE)?;
         let mut profiles = Self {
             files,
@@ -191,7 +192,9 @@ fn vault_folder(folder: &str, what: &str) -> Result<String, String> {
         .components()
         .all(|c| matches!(c, Component::Normal(_)));
     if folder.is_empty() || !inside {
-        return Err(format!("The {what} folder must be a folder inside the vault."));
+        return Err(format!(
+            "The {what} folder must be a folder inside the vault."
+        ));
     }
     Ok(format!("{folder}/"))
 }

@@ -25,6 +25,14 @@ _Avoid_: assets, media, img
 One source in the game data (a rulebook, supplement or adventure), named by its source code such as XPHB.
 _Avoid_: source, module
 
+**Homebrew**:
+Extra game data files the user picks for a profile, converted alongside its books.
+_Avoid_: custom content, extras
+
+**Template**:
+The layout the converter writes one type of note with, such as monsters or spells. Built in, or from a folder of the user's own that replaces them type by type.
+_Avoid_: layout file, theme
+
 **Vault**:
 The user's Obsidian folder that converted notes go into.
 _Avoid_: output folder, destination

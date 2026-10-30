@@ -283,6 +283,28 @@ pub fn nav_row(ui: &mut egui::Ui, selected: bool, text: &str, tag: &str) -> egui
     })
 }
 
+/// A Setup screen section, as the demo lays it out: title and description on the left, the
+/// controls in a panel on the right.
+pub fn section(ui: &mut egui::Ui, title: &str, about: &str, add: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal_top(|ui| {
+        let column = egui::Layout::top_down(egui::Align::Min);
+        ui.allocate_ui_with_layout(egui::vec2(340.0, 0.0), column, |ui| {
+            ui.set_width(340.0);
+            ui.label(egui::RichText::new(title).size(16.0).strong());
+            ui.weak(about);
+        });
+        ui.add_space(24.0);
+        egui::Frame::new()
+            .fill(ui.visuals().faint_bg_color)
+            .corner_radius(16.0)
+            .inner_margin(16.0)
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.vertical(add);
+            });
+    });
+}
+
 /// A button for an action that removes something.
 pub fn danger_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let p = palette(ui);

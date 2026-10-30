@@ -17,7 +17,11 @@ fn create(engine: &Engine, events: &Receiver<Event>, rules: Rules) -> Profile {
         address: "http://127.0.0.1:1/data.zip".into(),
         vault: "/vaults/thursday".into(),
     }));
-    assert!(events.try_iter().any(|e| matches!(e, Event::ProfileCreated(_))));
+    assert!(
+        events
+            .try_iter()
+            .any(|e| matches!(e, Event::ProfileCreated(_)))
+    );
     engine.profiles().remove(0)
 }
 
@@ -155,7 +159,10 @@ fn the_statblock_switch_selects_the_yaml_statblock_monster_template() {
         "monster2md-yamlStatblock-body.txt"
     );
     let template = std::fs::read_to_string(&monster).unwrap();
-    assert!(template.contains("```statblock"), "the statblock body template");
+    assert!(
+        template.contains("```statblock"),
+        "the statblock body template"
+    );
 
     profile.config.yaml_statblocks = false;
     save(&engine, &events, profile.clone());
@@ -167,7 +174,13 @@ fn the_statblock_switch_selects_the_yaml_statblock_monster_template() {
 fn a_custom_template_folder_overrides_the_built_in_templates_type_by_type() {
     let dir = tempfile::tempdir().unwrap();
     let templates = tempfile::tempdir().unwrap();
-    for name in ["monster2md.txt", "spell2md.txt", "index.txt", "notes.md", "README.txt"] {
+    for name in [
+        "monster2md.txt",
+        "spell2md.txt",
+        "index.txt",
+        "notes.md",
+        "README.txt",
+    ] {
         std::fs::write(templates.path().join(name), "{name}").unwrap();
     }
     let (engine, events) = start(dir.path());
@@ -183,7 +196,11 @@ fn a_custom_template_folder_overrides_the_built_in_templates_type_by_type() {
     assert_eq!(template["monster"], path("monster2md.txt"));
     assert_eq!(template["spell"], path("spell2md.txt"));
     assert_eq!(template["index"], path("index.txt"));
-    assert_eq!(template.len(), 3, "files that are not templates are left out");
+    assert_eq!(
+        template.len(),
+        3,
+        "files that are not templates are left out"
+    );
 
     drop(engine);
     let (engine, _) = start(dir.path());

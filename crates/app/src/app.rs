@@ -9,6 +9,7 @@ use vault_forge_engine::{
 
 use crate::game_data::GameDataSection;
 use crate::new_profile::NewProfile;
+use crate::setup::SetupSections;
 use crate::theme;
 
 enum Screen {
@@ -31,6 +32,9 @@ pub struct App {
     /// The latest state of each download address, from the Engine's events.
     data: HashMap<String, DataState>,
     game_data: Option<GameDataSection>,
+    setup: Option<SetupSections>,
+    /// The profile whose last change was saved, for the quiet "Saved" note.
+    saved: Option<String>,
     /// The narrow window's folded sidebar is showing.
     menu_open: bool,
 }
@@ -76,6 +80,8 @@ impl App {
             error: None,
             data: HashMap::new(),
             game_data: None,
+            setup: None,
+            saved: None,
             menu_open: false,
         }
     }
@@ -93,6 +99,7 @@ impl App {
                         self.screen = first_screen(&self.engine);
                     }
                 }
+                Event::ProfileSaved(id) => self.saved = Some(id),
                 Event::GameData { address, state } => {
                     self.data.insert(address, state);
                 }
@@ -238,6 +245,8 @@ impl App {
         // Opening a profile checks its game data for newer data.
         if self.game_data.as_ref().is_none_or(|s| s.id != profile.id) {
             self.game_data = Some(GameDataSection::new(profile));
+            self.setup = Some(SetupSections::new(profile));
+            self.saved = None;
             self.engine.send(Command::CheckGameData(profile.id.clone()));
         }
         ui.horizontal(|ui| {
@@ -253,23 +262,56 @@ impl App {
                 );
             });
         });
-        ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            let (id, name) = (profile.id.clone(), profile.name.clone());
-            if ui.button("Rename profile").clicked() {
-                self.dialog = Some(Dialog::Rename {
-                    id: id.clone(),
-                    name: name.clone(),
-                });
-            }
-            if theme::danger_button(ui, "Delete profile").clicked() {
-                self.dialog = Some(Dialog::Delete { id, name });
-            }
-        });
         ui.add_space(24.0);
-        if let Some(section) = &mut self.game_data {
-            section.show(ui, &self.engine, profile, &self.data);
-        }
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            if let Some(section) = &mut self.game_data {
+                section.show(ui, &self.engine, profile, &self.data);
+            }
+            ui.add_space(24.0);
+            if let Some(sections) = &mut self.setup {
+                sections.show(ui, &self.engine, profile);
+            }
+            ui.add_space(24.0);
+            self.profile_file(ui, profile);
+        });
+    }
+
+    fn profile_file(&mut self, ui: &mut egui::Ui, profile: &Profile) {
+        let about = "Every change saves here at once, as a converter config you can also run \
+                     from the command line.";
+        theme::section(ui, "Profile file", about, |ui| {
+            let row = egui::vec2(ui.available_width(), 40.0);
+            let layout = egui::Layout::right_to_left(egui::Align::Center);
+            ui.allocate_ui_with_layout(row, layout, |ui| {
+                if ui.button("Show in folder").clicked() {
+                    self.engine
+                        .send(Command::ShowProfileFile(profile.id.clone()));
+                }
+                let mut file = self.engine.profile_file(&profile.id).display().to_string();
+                let field = ui.add(theme::input(
+                    egui::TextEdit::singleline(&mut file).interactive(false),
+                ));
+                field.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::Role::TextInput, true, "Profile file")
+                });
+            });
+            if self.saved.as_ref() == Some(&profile.id) {
+                ui.weak("Saved just now.");
+            }
+            ui.add_space(16.0);
+            ui.horizontal(|ui| {
+                let (id, name) = (profile.id.clone(), profile.name.clone());
+                if ui.button("Rename profile").clicked() {
+                    self.dialog = Some(Dialog::Rename {
+                        id: id.clone(),
+                        name: name.clone(),
+                    });
+                }
+                if theme::danger_button(ui, "Delete profile").clicked() {
+                    self.dialog = Some(Dialog::Delete { id, name });
+                }
+            });
+        });
     }
 
     fn dialog(&mut self, ctx: &egui::Context) {
@@ -514,7 +556,8 @@ mod tests {
                 elapsed: Duration::from_secs(21),
             },
         );
-        harness.run();
+        // The animated progress bar repaints every frame, so the screen never settles.
+        harness.run_steps(2);
         harness.get_by_label("Downloading… 148 MB so far, 0 m 21 s. Unpacking follows.");
         harness.get_by_label("Cancel");
         assert!(convert_disabled(&harness), "no Convert while downloading");
@@ -586,6 +629,78 @@ mod tests {
         assert!(!convert_disabled(&harness));
     }
 
+    /// The app with the Engine's own events, opened on a new profile.
+    fn harness_created(dir: &std::path::Path) -> Harness<'static, App> {
+        let mut harness = harness(dir);
+        harness.state_mut().new_profile.draft = ProfileDraft {
+            name: "Thursday".into(),
+            rules: Rules::Dnd5e,
+            address: "http://127.0.0.1:1/data.zip".into(),
+            vault: "/vault".into(),
+        };
+        harness.run();
+        harness.get_by_label("Create profile").click();
+        harness.run();
+        harness
+    }
+
+    #[test]
+    fn a_notes_switch_saves_into_the_converter_config_with_a_quiet_saved_note() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut harness = harness_created(dir.path());
+        assert!(harness.query_by_label("Saved just now.").is_none());
+
+        harness
+            .get_by_label("Statblocks for Fantasy Statblocks")
+            .scroll_to_me();
+        harness.run();
+        harness
+            .get_by_label("Statblocks for Fantasy Statblocks")
+            .click();
+        harness.run();
+
+        harness.get_by_label("Saved just now.");
+        let file = dir.path().join("profiles/thursday.yaml");
+        let shown = harness
+            .get_by_role_and_label(egui::accesskit::Role::TextInput, "Profile file")
+            .value();
+        assert_eq!(shown.as_deref(), Some(&*file.display().to_string()));
+        let config = std::fs::read_to_string(file).unwrap();
+        assert!(config.contains("yamlStatblocks: true"), "{config}");
+        assert!(harness.state().engine.profiles()[0].config.yaml_statblocks);
+    }
+
+    #[test]
+    fn a_homebrew_file_shows_by_name_and_remove_takes_it_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut harness = harness_created(dir.path());
+        let mut profile = harness.state().engine.profiles().remove(0);
+        let brew = std::path::PathBuf::from("/brew/Kibbles; Compendium of Craft and Creation.json");
+        profile.config.sources.homebrew.push(brew);
+        harness.state().engine.send(Command::SaveProfile(profile));
+        harness.run();
+
+        let remove = "Remove Kibbles; Compendium of Craft and Creation.json";
+        harness.get_by_label("Kibbles; Compendium of Craft and Creation.json");
+        harness.get_by_label(remove).scroll_to_me();
+        harness.run();
+        harness.get_by_label(remove).click();
+        harness.run();
+
+        assert!(
+            harness.state().engine.profiles()[0]
+                .config
+                .sources
+                .homebrew
+                .is_empty()
+        );
+        assert!(
+            harness
+                .query_by_label("Kibbles; Compendium of Craft and Creation.json")
+                .is_none()
+        );
+    }
+
     #[test]
     fn deleting_asks_first_says_the_vault_is_kept_and_returns_to_new_profile() {
         let dir = tempfile::tempdir().unwrap();
@@ -598,6 +713,8 @@ mod tests {
         };
         harness.run();
         harness.get_by_label("Create profile").click();
+        harness.run();
+        harness.get_by_label("Delete profile").scroll_to_me();
         harness.run();
         harness.get_by_label("Delete profile").click();
         harness.run();

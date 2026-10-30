@@ -7,6 +7,7 @@ use eframe::egui;
 use vault_forge_engine::{Command, DataState, Engine, Profile, Rules};
 
 use crate::app::rules_name;
+use crate::theme;
 
 /// The section for one open profile, holding the addresses while they are being typed.
 pub struct GameDataSection {
@@ -35,36 +36,29 @@ impl GameDataSection {
             Rules::Dnd5e => "5eTools",
             Rules::Pf2e => "Pf2eTools",
         };
-        ui.horizontal_top(|ui| {
-            ui.allocate_ui(egui::vec2(340.0, 0.0), |ui| {
-                ui.set_width(340.0);
-                ui.label(egui::RichText::new("Game data").size(16.0).strong());
-                ui.weak(format!(
-                    "The {kind} data the books are read from. Paste its download address \
-                     once; Vault Forge downloads, unpacks and updates it."
-                ));
-            });
-            ui.add_space(24.0);
-            panel(ui, |ui| {
-                ui.strong("Game rules");
-                ui.horizontal(|ui| {
-                    for rules in [Rules::Dnd5e, Rules::Pf2e] {
-                        let on = profile.rules == rules;
-                        if ui.selectable_label(on, rules_name(rules)).clicked() && !on {
-                            engine.send(Command::SaveProfile(Profile {
-                                rules,
-                                ..profile.clone()
-                            }));
-                        }
+        let about = format!(
+            "The {kind} data the books are read from. Paste its download address \
+             once; Vault Forge downloads, unpacks and updates it."
+        );
+        theme::section(ui, "Game data", &about, |ui| {
+            ui.strong("Game rules");
+            ui.horizontal(|ui| {
+                for rules in [Rules::Dnd5e, Rules::Pf2e] {
+                    let on = profile.rules == rules;
+                    if ui.selectable_label(on, rules_name(rules)).clicked() && !on {
+                        engine.send(Command::SaveProfile(Profile {
+                            rules,
+                            ..profile.clone()
+                        }));
                     }
-                });
-                ui.add_space(16.0);
-                ui.strong("Download address");
-                self.address_line(ui, engine, profile, data.get(&profile.address), kind);
-                ui.add_space(12.0);
-                ui.separator();
-                self.images(ui, engine, profile, data);
+                }
             });
+            ui.add_space(16.0);
+            ui.strong("Download address");
+            self.address_line(ui, engine, profile, data.get(&profile.address), kind);
+            ui.add_space(12.0);
+            ui.separator();
+            self.images(ui, engine, profile, data);
         });
     }
 
@@ -224,17 +218,6 @@ impl GameDataSection {
             _ => {}
         });
     }
-}
-
-fn panel(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::new()
-        .fill(ui.visuals().faint_bg_color)
-        .corner_radius(16.0)
-        .inner_margin(16.0)
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            add(ui);
-        });
 }
 
 enum Pill {

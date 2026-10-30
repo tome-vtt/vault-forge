@@ -4,6 +4,7 @@
 mod app;
 mod game_data;
 mod new_profile;
+mod setup;
 mod theme;
 
 use eframe::egui;

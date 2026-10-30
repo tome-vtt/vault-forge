@@ -6,6 +6,7 @@
 mod app_settings;
 mod data_cache;
 mod downloader;
+mod file_manager;
 mod game_data;
 mod profile_files;
 mod profiles;
@@ -210,6 +211,8 @@ pub enum Command {
     /// Downloads, or updates, the profile's game data and its images when switched on.
     DownloadGameData(String),
     CancelDownload(String),
+    /// Opens the OS file manager on the profile's converter config file.
+    ShowProfileFile(String),
     SetAppearance(Appearance),
 }
 
@@ -312,6 +315,8 @@ impl Engine {
                     self.game_data.cancel(address);
                 }
             }),
+            Command::ShowProfileFile(id) => file_manager::show(&profiles.file(&id))
+                .map_err(|e| format!("Could not open the file manager: {e}")),
             Command::SetAppearance(appearance) => {
                 self.settings.lock().unwrap().set_appearance(appearance)
             }
