@@ -243,6 +243,32 @@ fn a_profile_without_a_vault_is_refused() {
 }
 
 #[test]
+fn a_vault_of_spaces_is_refused_and_a_vault_is_trimmed() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, Rules::Dnd5e);
+    engine.send(Command::SaveProfile(Profile {
+        vault: PathBuf::from("   "),
+        ..profile.clone()
+    }));
+    assert!(
+        events
+            .try_iter()
+            .any(|e| matches!(e, Event::Failed(m) if m == "A profile needs a vault folder."))
+    );
+
+    save(
+        &engine,
+        &events,
+        Profile {
+            vault: PathBuf::from(" /v "),
+            ..profile
+        },
+    );
+    assert_eq!(engine.profiles()[0].vault, PathBuf::from("/v"));
+}
+
+#[test]
 fn pathfinder_has_no_statblock_template_and_takes_only_its_own_template_types() {
     let dir = tempfile::tempdir().unwrap();
     let templates = tempfile::tempdir().unwrap();

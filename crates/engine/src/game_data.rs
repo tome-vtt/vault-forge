@@ -51,8 +51,9 @@ impl GameData {
         })
     }
 
-    /// Reports the address's copy at once, then asks the server, without downloading, whether
-    /// there is newer data (or, with no copy yet, how big the download is).
+    /// Reports the address's copy, then asks the server, without downloading, whether there is
+    /// newer data (or, with no copy yet, how big the download is). Both run on a worker thread,
+    /// since reading the copy parses its books lists.
     pub(crate) fn check(&self, address: &str) {
         let ended = {
             let running = self.running.lock().unwrap();
@@ -61,14 +62,24 @@ impl GameData {
             }
             running.ended.get(address).copied()
         };
-        let cached = read(&self.cache, address);
-        send(&self.events, address, state_of(cached.as_ref(), false));
-        let (events, running, address) = (
+        let (cache, events, running, address) = (
+            self.cache.clone(),
             self.events.clone(),
             self.running.clone(),
             address.to_owned(),
         );
         std::thread::spawn(move || {
+            let cached = read(&cache, &address);
+            {
+                // Held while sending, so a download starting now reports after this.
+                let running = running.lock().unwrap();
+                if running.cancels.contains_key(&address)
+                    || running.ended.get(&address) != ended.as_ref()
+                {
+                    return; // A download ran meanwhile and reports its own state.
+                }
+                send(&events, &address, state_of(cached.as_ref(), false));
+            }
             let Ok(head) = downloader::head(&address) else {
                 return; // Offline: the copy already reported stands.
             };

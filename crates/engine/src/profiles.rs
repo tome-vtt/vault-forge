@@ -140,6 +140,10 @@ impl Profiles {
         let mut profile = Profile {
             address: profile.address.trim().into(),
             images_address: profile.images_address.trim().into(),
+            vault: match profile.vault.to_str() {
+                Some(vault) => PathBuf::from(vault.trim()),
+                None => profile.vault.clone(),
+            },
             ..profile
         };
         // Each game's books have their own codes, so a switch of game rules starts over.

@@ -323,6 +323,37 @@ fn cancel_leaves_no_partial_folder() {
 }
 
 #[test]
+fn switching_images_off_mid_download_stops_it_and_leaves_no_partial_folder() {
+    let server = Server::start();
+    let address = server.put("/data.zip", game_data(3, 2));
+    let images = format!("{}/endless.zip", server.url);
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = Profile {
+        images: true,
+        images_address: images.clone(),
+        ..create(&engine, &events, "Thursday", &address)
+    };
+    engine.send(Command::DownloadImages(profile.clone()));
+    wait(
+        &events,
+        &images,
+        |s| matches!(s, DataState::Downloading { bytes, .. } if *bytes > 0),
+    );
+
+    engine.send(Command::SaveProfile(Profile {
+        images: false,
+        ..profile
+    }));
+
+    let state = wait(&events, &images, |s| {
+        !matches!(s, DataState::Downloading { .. })
+    });
+    assert_eq!(state, DataState::Missing { size: None });
+    assert!(cache_entries(dir.path()).is_empty());
+}
+
+#[test]
 fn two_profiles_on_one_address_share_one_cached_folder() {
     let server = Server::start();
     let address = server.put("/data.zip", game_data(3, 2));

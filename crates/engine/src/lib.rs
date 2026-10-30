@@ -168,11 +168,12 @@ impl Profile {
         }
     }
 
-    /// Whether any of the profile's downloads is running.
+    /// Whether any of the profile's downloads is running, counting images switched off until
+    /// their cancelled download has stopped.
     pub fn is_downloading(&self, data: &HashMap<String, DataState>) -> bool {
-        self.downloads()
+        [&self.address, &self.images_address]
             .iter()
-            .any(|(address, _)| data.get(*address).is_some_and(DataState::is_busy))
+            .any(|address| data.get(*address).is_some_and(DataState::is_busy))
     }
 }
 
@@ -388,7 +389,7 @@ impl Engine {
                 }
             }),
             Command::CancelDownload(id) => profiles.get(&id).map(|p| {
-                for (address, _) in p.downloads() {
+                for address in [&p.address, &p.images_address] {
                     self.game_data.cancel(address);
                 }
             }),
@@ -416,6 +417,14 @@ impl Engine {
         if new.downloads() != old.downloads() {
             for (address, _) in new.downloads() {
                 self.game_data.check(address);
+            }
+        }
+        // A download the profile no longer wants (images switched off) stops, unless another
+        // profile still downloads that address.
+        for (address, _) in old.downloads() {
+            let wanted = |p: &Profile| p.downloads().iter().any(|(a, _)| *a == address);
+            if !profiles.list().iter().any(wanted) {
+                self.game_data.cancel(address);
             }
         }
         let _ = self.events.send(Event::ProfileSaved(id));
