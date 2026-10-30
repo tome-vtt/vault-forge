@@ -141,8 +141,8 @@ impl GameData {
         }
     }
 
-    /// Stops the address's download, once no profile downloads it, and reports it stopping
-    /// until it has, so the profile that switched it off still waits for it.
+    /// Stops the address's download and reports it stopping until it has, so a profile that
+    /// switched it off still waits for it.
     pub(crate) fn stop(&self, address: &str) {
         // Held while reporting, so the download cannot report itself running after this.
         let running = self.running.lock().unwrap();

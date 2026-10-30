@@ -365,6 +365,37 @@ fn switching_images_off_mid_download_stops_it_and_leaves_no_partial_folder() {
 }
 
 #[test]
+fn switching_images_off_with_nothing_downloading_reports_nothing_stopping() {
+    let server = Server::start();
+    let address = server.put("/data.zip", game_data(1, 0));
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = Profile {
+        images: true,
+        images_address: format!("{}/images.zip", server.url),
+        ..create(&engine, &events, "Thursday", &address)
+    };
+    engine.send(Command::SaveProfile(profile.clone()));
+
+    engine.send(Command::SaveProfile(Profile {
+        images: false,
+        ..profile
+    }));
+
+    // A stop is reported before the save returns, so it would be waiting here already.
+    let stopping = events.try_iter().any(|e| {
+        matches!(
+            e,
+            Event::GameData {
+                state: DataState::Stopping,
+                ..
+            }
+        )
+    });
+    assert!(!stopping);
+}
+
+#[test]
 fn switching_images_off_leaves_another_profiles_images_download_running() {
     let server = Server::start();
     let images = format!("{}/endless.zip", server.url);
