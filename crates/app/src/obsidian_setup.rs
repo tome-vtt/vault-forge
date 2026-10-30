@@ -4,7 +4,7 @@ use eframe::egui;
 use vault_forge_engine::{ADMONITIONS_STYLES, CSS_SNIPPET, Engine, Paths, Profile};
 
 use crate::app::narrow_column;
-use crate::game_data::{Pill, pill};
+use crate::theme::{Pill, pill};
 use crate::{file_manager, theme};
 
 /// Each plugin: its name, whether the notes need it, what it does, and its id in Obsidian.

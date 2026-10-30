@@ -6,6 +6,7 @@ mod app;
 mod books;
 mod file_manager;
 mod game_data;
+mod last_run;
 mod new_profile;
 mod obsidian_setup;
 mod os_theme;

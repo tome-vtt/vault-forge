@@ -14,6 +14,8 @@ pub struct GameDataSection {
     pub id: String,
     pub address: String,
     pub images_address: String,
+    /// The download address field takes the keyboard focus on the next frame.
+    pub focus_address: bool,
 }
 
 impl GameDataSection {
@@ -22,6 +24,7 @@ impl GameDataSection {
             id: profile.id.clone(),
             address: profile.address.clone(),
             images_address: profile.images_address.clone(),
+            focus_address: false,
         }
     }
 
@@ -97,6 +100,10 @@ impl GameDataSection {
             label,
             can_press,
         );
+        if std::mem::take(&mut self.focus_address) {
+            field.request_focus();
+            field.scroll_to_me(Some(egui::Align::Center));
+        }
         // The download saves the address itself, and downloads nothing if the save is refused.
         if button.clicked() {
             engine.send(command);
@@ -134,15 +141,15 @@ impl GameDataSection {
                     date(*downloaded)
                 );
                 if *newer {
-                    pill(ui, Pill::Warn, "Newer data");
+                    theme::pill(ui, theme::Pill::Warn, "Newer data");
                     ui.weak(format!("{copy}. Update downloads the newer data."));
                 } else {
-                    pill(ui, Pill::Ok, "Ready");
+                    theme::pill(ui, theme::Pill::Ok, "Ready");
                     ui.weak(format!("{copy}, up to date"));
                 }
             }
             Some(DataState::NotGameData) => {
-                pill(ui, Pill::Bad, "Not game data");
+                theme::pill(ui, theme::Pill::Bad, "Not game data");
                 let rest =
                     format!(", so it isn't {kind} data. Check the address and download again.");
                 let mut job = egui::text::LayoutJob::default();
@@ -242,45 +249,16 @@ impl GameDataSection {
                 ui.weak("Unpacking images…");
             }
             Some(DataState::Ready { downloaded, .. }) => {
-                pill(ui, Pill::Ok, "Ready");
+                theme::pill(ui, theme::Pill::Ok, "Ready");
                 ui.weak(format!("Images downloaded {}", date(*downloaded)));
             }
             Some(DataState::NotGameData) => {
-                pill(ui, Pill::Bad, "Not an archive");
+                theme::pill(ui, theme::Pill::Bad, "Not an archive");
                 ui.weak("That download isn't a zip archive. Check the address and download again.");
             }
             _ => {}
         });
     }
-}
-
-pub(crate) enum Pill {
-    Ok,
-    Warn,
-    Bad,
-    Neutral,
-}
-
-/// The demo's rounded status label, in its light and dark colours.
-pub(crate) fn pill(ui: &mut egui::Ui, kind: Pill, text: &str) {
-    let rgb = |c: u32| egui::Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8);
-    let [bg, fg] = match (kind, ui.visuals().dark_mode) {
-        (Pill::Ok, false) => [0xdcfae5, 0x04250e],
-        (Pill::Ok, true) => [0x172a1d, 0x5fd393],
-        (Pill::Warn, false) => [0xfffbeb, 0x92400e],
-        (Pill::Warn, true) => [0x2b2213, 0xe8b45a],
-        (Pill::Bad, false) => [0xffedea, 0x831c1e],
-        (Pill::Bad, true) => [0x2c1a1c, 0xf08a8a],
-        (Pill::Neutral, false) => [0xebedee, 0x353736],
-        (Pill::Neutral, true) => [0x2a2c2e, 0xd0d2d4],
-    };
-    egui::Frame::new()
-        .fill(rgb(bg))
-        .corner_radius(10.0)
-        .inner_margin(egui::vec2(8.0, 2.0))
-        .show(ui, |ui| {
-            ui.label(egui::RichText::new(text).size(12.0).strong().color(rgb(fg)));
-        });
 }
 
 /// "412 MB" or "3.2 GB", as the demo writes sizes.

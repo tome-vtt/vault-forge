@@ -1,10 +1,10 @@
 //! Profile files adapter: reads and writes the files on disk and holds no rules.
 //! A profile is `<id>.yaml` (a converter config) beside `<id>.forge.yaml` (what the converter
-//! does not read).
+//! does not read), and its last run beside them in `<id>.last-run.json`.
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::Profile;
+use crate::{LastRun, Profile};
 
 pub(crate) struct ProfileFiles {
     dir: PathBuf,
@@ -33,6 +33,22 @@ impl ProfileFiles {
 
     fn beside_path(&self, id: &str) -> PathBuf {
         self.dir.join(format!("{id}.forge.yaml"))
+    }
+
+    fn last_run_path(&self, id: &str) -> PathBuf {
+        self.dir.join(format!("{id}.last-run.json"))
+    }
+
+    /// The profile's last run; `None` when it has none, or its file cannot be read.
+    pub(crate) fn last_run(&self, id: &str) -> Option<LastRun> {
+        let text = std::fs::read_to_string(self.last_run_path(id)).ok()?;
+        serde_json::from_str(&text).ok()
+    }
+
+    /// Replaces the profile's last run.
+    pub(crate) fn save_last_run(&self, id: &str, run: &LastRun) -> io::Result<()> {
+        let text = serde_json::to_string(run).map_err(io::Error::other)?;
+        write_atomic(&self.last_run_path(id), &text)
     }
 
     pub(crate) fn exists(&self, id: &str) -> bool {
@@ -76,10 +92,15 @@ impl ProfileFiles {
         write_atomic(&self.beside_path(&p.id), &beside)
     }
 
-    /// Removes both files; one already missing is fine.
+    /// Removes its files; one already missing is fine.
     pub(crate) fn delete(&self, id: &str) -> io::Result<()> {
         // Sidecar first: without it the profile no longer loads, so a half delete never half shows.
-        for path in [self.beside_path(id), self.config_path(id)] {
+        let paths = [
+            self.beside_path(id),
+            self.config_path(id),
+            self.last_run_path(id),
+        ];
+        for path in paths {
             match std::fs::remove_file(path) {
                 Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
                 _ => {}

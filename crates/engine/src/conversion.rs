@@ -1,19 +1,22 @@
 //! Conversion: runs one conversion at a time across the app. The converter writes into a holding
 //! folder, and only on exit code 0 are the profile's compendium and rules folders swapped into the
 //! vault; a failure or a cancel discards the holding folder, so the vault is never half updated.
+//! Each conversion that runs to its end is saved as the profile's last run.
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
+use crate::profile_files::ProfileFiles;
 use crate::profiles::vault_folder;
-use crate::{ConvertedNotes, Event, Profile, converter, holding_folder};
+use crate::{ConvertedNotes, Event, Fix, LastRun, Profile, converter, holding_folder, last_run};
 
 pub(crate) struct Conversion {
     converter: PathBuf,
+    files: Arc<ProfileFiles>,
     events: Sender<Event>,
     running: Arc<Mutex<Option<Running>>>,
 }
@@ -26,9 +29,10 @@ struct Running {
 }
 
 impl Conversion {
-    pub(crate) fn new(converter: PathBuf, events: Sender<Event>) -> Self {
+    pub(crate) fn new(converter: PathBuf, files: ProfileFiles, events: Sender<Event>) -> Self {
         Self {
             converter,
+            files: Arc::new(files),
             events,
             running: Arc::default(),
         }
@@ -36,6 +40,17 @@ impl Conversion {
 
     pub(crate) fn converter(&self) -> &Path {
         &self.converter
+    }
+
+    pub(crate) fn last_run(&self, id: &str) -> Option<LastRun> {
+        self.files.last_run(id)
+    }
+
+    /// Writes the log of the profile's last run to the file.
+    pub(crate) fn save_log(&self, id: &str, to: &Path) -> Result<(), String> {
+        let run = self.last_run(id).ok_or("This profile has no log yet.")?;
+        let text: String = run.log.iter().map(|line| format!("{line}\n")).collect();
+        fs::write(to, text).map_err(|e| format!("Could not save the log: {e}"))
     }
 
     /// The profile whose conversion is running, if one is.
@@ -64,6 +79,8 @@ impl Conversion {
             format!("Could not start the converter: {e}")
         })?;
         let id = profile.id.clone();
+        let (started, clock) = (SystemTime::now(), Instant::now());
+        let (books, homebrew) = (profile.book_count(), profile.config.sources.homebrew.len());
         *running = Some(Running {
             id: id.clone(),
             cancelled: false,
@@ -78,7 +95,7 @@ impl Conversion {
             let mut last = Vec::new();
             while let Err(RecvTimeoutError::Timeout) = stopped.recv_timeout(Duration::from_secs(1))
             {
-                let written = written(&poll_holding, &poll_folders);
+                let written = by_name(&written(&poll_holding, &poll_folders));
                 if written != last {
                     let id = poll_id.clone();
                     let _ = events.send(Event::ConversionProgress {
@@ -90,9 +107,11 @@ impl Conversion {
             }
         });
         let (events, running) = (self.events.clone(), self.running.clone());
-        let vault = profile.vault.clone();
+        let (vault, files) = (profile.vault.clone(), self.files.clone());
         std::thread::spawn(move || {
+            let mut log = Vec::new();
             for line in lines {
+                log.push(line.clone());
                 let id = id.clone();
                 let _ = events.send(Event::ConversionLog { id, line });
             }
@@ -105,22 +124,24 @@ impl Conversion {
             drop(stop);
             // Windows refuses to move a folder the poller is still reading.
             let _ = poller.join();
+            let mut notes = written(&holding, &folders);
             let cancelled = running
                 .lock()
                 .unwrap()
                 .as_ref()
                 .is_some_and(|r| r.cancelled);
             let mut keep = false;
-            let (converted, message) = match code {
-                _ if cancelled => (false, CANCELLED.to_owned()),
+            let (converted, mut message, fix) = match code {
+                _ if cancelled => (false, CANCELLED.to_owned(), None),
                 Some(0) => match holding_folder::swap(&holding, &vault, &folders) {
-                    Ok(()) => (true, explain(Some(0))),
+                    Ok(()) => (true, explain(Some(0)), None),
                     Err(failed) if failed.put_back => (
                         false,
                         format!(
                             "Could not put the notes into the vault ({}), so it was not changed.",
                             failed.error
                         ),
+                        Some(Fix::Vault),
                     ),
                     // The old notes are still in the holding folder, so it must stay.
                     Err(failed) => {
@@ -131,13 +152,33 @@ impl Conversion {
                             failed.error,
                             holding.display()
                         );
-                        (false, message)
+                        (false, message, Some(Fix::Vault))
                     }
                 },
-                code => (false, explain(code)),
+                Some(2) => (false, explain(code), Some(Fix::DownloadAddress)),
+                code => (false, explain(code), None),
             };
             if !keep {
                 let _ = holding_folder::discard(&holding);
+            }
+            if !cancelled {
+                notes.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                let run = LastRun {
+                    started,
+                    seconds: clock.elapsed().as_secs(),
+                    converted,
+                    exit_code: code,
+                    message: message.clone(),
+                    fix,
+                    books,
+                    homebrew,
+                    folders: notes,
+                    warnings: last_run::warnings(&log),
+                    log,
+                };
+                if let Err(e) = files.save_last_run(&id, &run) {
+                    message = format!("{message} The last run could not be saved: {e}.");
+                }
             }
             // Cleared before the end is reported, so a Convert straight after it is not refused.
             *running.lock().unwrap() = None;
@@ -217,16 +258,12 @@ fn folders(profile: &Profile) -> Result<Vec<String>, String> {
     })
 }
 
-/// The notes in the holding folder's `folders` so far, by each folder in them; notes directly in
-/// one count under its own name.
+/// The notes in the holding folder's `folders` so far, by vault folder (`compendium/bestiary`);
+/// notes directly in one of `folders` count under its own path.
 fn written(holding: &Path, folders: &[String]) -> Vec<(String, usize)> {
     let mut by_folder = BTreeMap::new();
     for folder in folders {
-        let own = folder
-            .trim_end_matches(['/', '\\'])
-            .rsplit(['/', '\\'])
-            .next()
-            .unwrap_or(folder);
+        let own = folder.trim_end_matches(['/', '\\']);
         for entry in fs::read_dir(holding.join(folder))
             .into_iter()
             .flatten()
@@ -236,7 +273,7 @@ fn written(holding: &Path, folders: &[String]) -> Vec<(String, usize)> {
             let (mut notes, mut newest) = (0, SystemTime::UNIX_EPOCH);
             let name = if path.is_dir() {
                 walk(&path, &mut notes, &mut newest);
-                entry.file_name().to_string_lossy().into_owned()
+                format!("{own}/{}", entry.file_name().to_string_lossy())
             } else {
                 notes = 1;
                 own.to_owned()
@@ -245,6 +282,16 @@ fn written(holding: &Path, folders: &[String]) -> Vec<(String, usize)> {
         }
     }
     by_folder.into_iter().filter(|(_, n)| *n > 0).collect()
+}
+
+/// The counts by each folder's own name, as progress shows them.
+fn by_name(written: &[(String, usize)]) -> Vec<(String, usize)> {
+    let mut by_name = BTreeMap::new();
+    for (path, notes) in written {
+        let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+        *by_name.entry(name.to_owned()).or_insert(0) += notes;
+    }
+    by_name.into_iter().collect()
 }
 
 /// Counts the notes in `dir` and its folders, and finds when the newest was written.

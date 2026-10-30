@@ -1,7 +1,8 @@
 //! A stand-in for ttrpg-convert-cli, which the conversion tests run in its place. It takes the
 //! converter's arguments (`-c <config> -o <output> -g <game> <data>`), prints log lines on
 //! stdout and stderr, and writes a note per chosen book into the config's compendium folder and
-//! one into its rules folder. A chosen book named EXIT1 or EXIT2 makes it end with that exit code
+//! one into its rules folder; a book named with a slash (`bestiary/MM`) goes into a folder of the
+//! compendium. A chosen book named EXIT1 or EXIT2 makes it end with that exit code
 //! once its notes are written; HANG makes it wait until it is killed.
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -42,7 +43,9 @@ fn main() {
     let compendium = PathBuf::from(&output).join(text("compendium"));
     fs::create_dir_all(&compendium).unwrap();
     for book in &books {
-        fs::write(compendium.join(format!("{book}.md")), format!("# {book}\n")).unwrap();
+        let note = compendium.join(format!("{book}.md"));
+        fs::create_dir_all(note.parent().unwrap()).unwrap();
+        fs::write(note, format!("# {book}\n")).unwrap();
         println!("Writing {}{book}.md", text("compendium"));
     }
     eprintln!("Warning: no image file for img/bestiary/Vrock.webp");
