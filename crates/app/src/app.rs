@@ -394,7 +394,7 @@ impl App {
             return;
         };
         ui.spacing_mut().item_spacing.x = 8.0;
-        ui.hyperlink_to("See what's new", page);
+        ui.hyperlink_to(theme::medium("See what's new"), page);
         if !phone {
             ui.label(format!("Vault Forge {version} is out"));
         }
