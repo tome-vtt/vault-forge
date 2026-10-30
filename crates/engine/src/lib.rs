@@ -9,6 +9,7 @@ mod downloader;
 mod game_data;
 mod profile_files;
 mod profiles;
+mod release_check;
 mod settings_file;
 
 use std::collections::HashMap;
@@ -157,13 +158,18 @@ pub enum Command {
     SaveProfile(Profile),
     /// Reports the profile's game data and asks the server whether it has newer data.
     CheckGameData(String),
-    /// Downloads, or updates, the profile's game data.
-    DownloadGameData(String),
-    /// Downloads, or updates, the profile's book images, when switched on.
-    DownloadImages(String),
+    /// Saves the profile as the screen shows it, then downloads, or updates, its game data.
+    /// Nothing downloads when the save is refused.
+    DownloadGameData(Profile),
+    /// Saves the profile as the screen shows it, then downloads, or updates, its book images,
+    /// when switched on. Nothing downloads when the save is refused.
+    DownloadImages(Profile),
     /// Stops every download the profile has running.
     CancelDownload(String),
     SetAppearance(Appearance),
+    /// Asks the latest-release address (GitHub's API; the app sends [`LATEST_RELEASE`]) whether a
+    /// newer Vault Forge is out. Answers only when one is; a failed check stays silent.
+    CheckRelease(String),
 }
 
 #[derive(Debug)]
@@ -175,9 +181,24 @@ pub enum Event {
         address: String,
         state: DataState,
     },
+    /// A newer Vault Forge than [`VERSION`] is out; `page` is its release page.
+    NewerRelease {
+        version: String,
+        page: String,
+    },
     /// A command could not be carried out; the message is for the user.
     Failed(String),
 }
+
+/// This Vault Forge's version.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The bundled converter's pinned version.
+pub const CONVERTER_VERSION: &str = "3.3.7";
+
+/// Where GitHub says which Vault Forge release is the newest.
+pub const LATEST_RELEASE: &str =
+    "https://api.github.com/repos/tome-vtt/vault-forge/releases/latest";
 
 pub struct Engine {
     profiles: Mutex<Profiles>,
@@ -211,7 +232,7 @@ impl Engine {
     }
 
     // ponytail: profile commands are small file writes, so they run on the caller's thread;
-    // downloads, update checks and conversion use worker threads.
+    // downloads, the release check and conversion use worker threads.
     /// Hands the command to the part that owns it.
     pub fn send(&self, command: Command) {
         let mut profiles = self.profiles.lock().unwrap();
@@ -227,28 +248,16 @@ impl Engine {
                     old.map_or(Ok(()), |old| self.release_unused(&profiles, &old))
                 })
             }
-            Command::SaveProfile(profile) => profiles.get(&profile.id).cloned().and_then(|old| {
-                let id = profile.id.clone();
-                profiles.save(profile)?;
-                let new = profiles.get(&id)?;
-                // A changed address or images switch is checked at once, so its state and the
-                // images' size show before anything downloads.
-                if new.downloads() != old.downloads() {
-                    for (address, _) in new.downloads() {
-                        self.game_data.check(address);
-                    }
-                }
-                self.release_unused(&profiles, &old)
-            }),
+            Command::SaveProfile(profile) => self.save(&mut profiles, profile).map(drop),
             Command::CheckGameData(id) => profiles.get(&id).map(|p| {
                 for (address, _) in p.downloads() {
                     self.game_data.check(address);
                 }
             }),
-            Command::DownloadGameData(id) => profiles
-                .get(&id)
+            Command::DownloadGameData(profile) => self
+                .save(&mut profiles, profile)
                 .map(|p| self.game_data.download(&p.address, Kind::GameData)),
-            Command::DownloadImages(id) => profiles.get(&id).map(|p| {
+            Command::DownloadImages(profile) => self.save(&mut profiles, profile).map(|p| {
                 for (address, kind) in p.downloads() {
                     if kind == Kind::Images {
                         self.game_data.download(address, kind);
@@ -263,10 +272,31 @@ impl Engine {
             Command::SetAppearance(appearance) => {
                 self.settings.lock().unwrap().set_appearance(appearance)
             }
+            Command::CheckRelease(url) => {
+                release_check::check(url, self.events.clone());
+                Ok(())
+            }
         };
         if let Err(message) = outcome {
             let _ = self.events.send(Event::Failed(message));
         }
+    }
+
+    /// Saves a changed profile and returns it as saved.
+    fn save(&self, profiles: &mut Profiles, profile: Profile) -> Result<Profile, String> {
+        let old = profiles.get(&profile.id)?.clone();
+        let id = profile.id.clone();
+        profiles.save(profile)?;
+        let new = profiles.get(&id)?.clone();
+        // A changed address or images switch is checked at once, so its state and the images'
+        // size show before anything downloads.
+        if new.downloads() != old.downloads() {
+            for (address, _) in new.downloads() {
+                self.game_data.check(address);
+            }
+        }
+        self.release_unused(profiles, &old)?;
+        Ok(new)
     }
 
     /// Removes the cached copy of each of `old`'s addresses that no profile uses any more.

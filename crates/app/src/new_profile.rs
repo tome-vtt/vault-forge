@@ -52,12 +52,13 @@ impl NewProfile {
                     );
                     ui.add_space(16.0);
                     ui.label(theme::medium("Vault folder"));
-                    let browse = theme::pathline(
+                    let (_, browse) = theme::pathline(
                         ui,
                         egui::TextEdit::singleline(&mut self.draft.vault)
                             .hint_text(egui::RichText::new("Your Obsidian vault").monospace())
                             .font(egui::TextStyle::Monospace),
                         "Browse…",
+                        true,
                     );
                     if browse.clicked()
                         && let Some(folder) = rfd::FileDialog::new().pick_folder()

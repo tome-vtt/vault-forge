@@ -4,7 +4,8 @@ use std::sync::mpsc::Receiver;
 
 use eframe::egui;
 use vault_forge_engine::{
-    Appearance, Command, DataState, Engine, Event, Profile, Rules, is_valid_name,
+    Appearance, CONVERTER_VERSION, Command, DataState, Engine, Event, Profile, Rules, VERSION,
+    is_valid_name,
 };
 
 use crate::game_data::GameDataSection;
@@ -33,6 +34,8 @@ pub struct App {
     game_data: Option<GameDataSection>,
     /// The narrow window's folded sidebar is showing.
     menu_open: bool,
+    /// The newer release's version and page, once the release check has found one.
+    newer_release: Option<(String, String)>,
     /// The OS theme where the window cannot report it (Linux).
     os_theme: Receiver<egui::Theme>,
 }
@@ -79,6 +82,7 @@ impl App {
             data: HashMap::new(),
             game_data: None,
             menu_open: false,
+            newer_release: None,
             os_theme,
         }
     }
@@ -110,6 +114,9 @@ impl App {
                     self.data.insert(address, state);
                 }
                 Event::Failed(message) => self.error = Some(message),
+                Event::NewerRelease { version, page } => {
+                    self.newer_release = Some((version, page));
+                }
             }
         }
     }
@@ -126,6 +133,7 @@ impl App {
         }
         let width = ui.ctx().content_rect().width();
         let narrow = width <= theme::NARROW;
+        let phone = width <= theme::PHONE;
         let ground = egui::Frame::new().fill(theme::palette(ui).ground);
         if narrow && self.menu_open {
             egui::CentralPanel::default()
@@ -207,6 +215,9 @@ impl App {
                             ui.label(theme::medium("New profile"));
                         }
                     }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        self.versions_and_notice(ui, narrow, phone);
+                    });
                 });
             });
         let sheet = egui::CentralPanel::default()
@@ -316,6 +327,32 @@ impl App {
         if let Some(section) = &mut self.game_data {
             section.show(ui, &self.engine, profile, &self.data);
         }
+    }
+
+    /// The top bar's right side, right to left: the versions, then the new-version notice when one
+    /// arrived. Narrow drops the versions; phone-sized keeps only the notice's dot and link.
+    fn versions_and_notice(&self, ui: &mut egui::Ui, narrow: bool, phone: bool) {
+        if !narrow {
+            ui.label(
+                egui::RichText::new(format!(
+                    "Vault Forge {VERSION} · converter {CONVERTER_VERSION}"
+                ))
+                .small()
+                .weak(),
+            );
+            ui.add_space(8.0);
+        }
+        let Some((version, page)) = &self.newer_release else {
+            return;
+        };
+        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.hyperlink_to("See what's new", page);
+        if !phone {
+            ui.label(format!("Vault Forge {version} is out"));
+        }
+        let (dot, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+        ui.painter()
+            .circle_filled(dot.center(), 3.0, theme::palette(ui).accent);
     }
 
     fn dialog(&mut self, ctx: &egui::Context) {
@@ -612,6 +649,37 @@ mod tests {
     }
 
     #[test]
+    fn the_game_data_panel_stacks_its_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path());
+        harness.run();
+        let bounds = |label| {
+            harness
+                .get_by_label(label)
+                .accesskit_node()
+                .raw_bounds()
+                .unwrap()
+        };
+        let (rules, address) = (bounds("Game rules"), bounds("Download address"));
+        assert_eq!(rules.x0, address.x0);
+        assert!(address.y0 > rules.y1);
+    }
+
+    #[test]
+    fn download_sends_the_address_as_typed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path());
+        harness.run();
+        let typed = "http://127.0.0.1:1/other.zip";
+        harness.state_mut().game_data.as_mut().unwrap().address = typed.into();
+        harness.run();
+        harness.get_by_label("Download").click();
+        harness.run();
+        assert_eq!(harness.state().error, None);
+        assert_eq!(harness.state().engine.profiles()[0].address, typed);
+    }
+
+    #[test]
     fn the_setup_screen_shows_each_game_data_state_from_engine_events() {
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
@@ -809,5 +877,77 @@ mod tests {
         // The top bar's breadcrumb and the screen's title.
         assert_eq!(harness.get_all_by_label("New profile").count(), 2);
         assert!(harness.state().engine.profiles().is_empty());
+    }
+
+    #[test]
+    fn the_top_bar_shows_the_versions_and_the_new_version_notice_only_once_it_arrives() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, _) = Engine::start(dir.path().to_path_buf()).unwrap();
+        let (events, received) = std::sync::mpsc::channel();
+        let mut harness = Harness::builder()
+            .with_size([1280.0, 820.0])
+            .with_context_setup(theme::install)
+            .build_ui_state(
+                |ui, app: &mut App| app.ui(ui),
+                App::new(engine, received, mpsc::channel().1),
+            );
+        harness.run();
+        harness.get_by_label(&format!(
+            "Vault Forge {} · converter {}",
+            vault_forge_engine::VERSION,
+            vault_forge_engine::CONVERTER_VERSION
+        ));
+        assert!(harness.query_by_label("See what's new").is_none());
+
+        events
+            .send(Event::NewerRelease {
+                version: "1.1.0".into(),
+                page: "https://github.com/tome-vtt/vault-forge/releases/tag/v1.1.0".into(),
+            })
+            .unwrap();
+        harness.run();
+        harness.get_by_label("Vault Forge 1.1.0 is out");
+        harness.get_by_label("See what's new");
+    }
+
+    /// The top bar at `width` after the release check found 1.1.0.
+    fn top_bar_with_notice(dir: &std::path::Path, width: f32) -> Harness<'static, App> {
+        let (engine, _) = Engine::start(dir.to_path_buf()).unwrap();
+        let (events, received) = std::sync::mpsc::channel();
+        events
+            .send(Event::NewerRelease {
+                version: "1.1.0".into(),
+                page: "https://github.com/tome-vtt/vault-forge/releases/tag/v1.1.0".into(),
+            })
+            .unwrap();
+        let mut harness = Harness::builder()
+            .with_size([width, 820.0])
+            .with_context_setup(theme::install)
+            .build_ui_state(
+                |ui, app: &mut App| app.ui(ui),
+                App::new(engine, received, mpsc::channel().1),
+            );
+        harness.run();
+        harness
+    }
+
+    #[test]
+    fn a_narrow_top_bar_drops_the_versions_and_a_phone_one_keeps_only_the_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let versions = format!(
+            "Vault Forge {} · converter {}",
+            vault_forge_engine::VERSION,
+            vault_forge_engine::CONVERTER_VERSION
+        );
+
+        let narrow = top_bar_with_notice(dir.path(), 800.0);
+        assert!(narrow.query_by_label(&versions).is_none());
+        narrow.get_by_label("Vault Forge 1.1.0 is out");
+        narrow.get_by_label("See what's new");
+
+        let phone = top_bar_with_notice(dir.path(), 500.0);
+        assert!(phone.query_by_label(&versions).is_none());
+        assert!(phone.query_by_label("Vault Forge 1.1.0 is out").is_none());
+        phone.get_by_label("See what's new");
     }
 }
