@@ -395,3 +395,126 @@ fn convert_is_refused_until_the_game_data_is_downloaded() {
             .any(|e| matches!(&e, Event::Failed(m) if m == "Download the game data first."))
     );
 }
+
+#[test]
+fn a_folder_outside_the_vault_is_refused_and_left_alone() {
+    let address = serve_game_data();
+    let Setup {
+        _dir: dir,
+        engine,
+        vault,
+        ..
+    } = setup(&address);
+    let id = engine.profiles()[0].id.clone();
+    let config = engine.profile_file(&id);
+    drop(engine);
+    let outside = dir.path().join("Documents");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("mine.md"), "my own note").unwrap();
+    let before = (files(&outside), files(&vault));
+    let saved = std::fs::read_to_string(&config).unwrap();
+    let converter = PathBuf::from(env!("CARGO_BIN_EXE_stand-in-converter"));
+
+    // A config edited by hand, which saving the profile would have refused.
+    for folder in [
+        format!("{}/", outside.display()),
+        "../Documents/".into(),
+        ".vault-forge-holding/".into(),
+    ] {
+        let edited = saved.replace(
+            "compendium: compendium/",
+            &format!("compendium: '{folder}'"),
+        );
+        assert_ne!(edited, saved);
+        std::fs::write(&config, edited).unwrap();
+        let (engine, events) =
+            Engine::start_with_converter(dir.path().join("app"), converter.clone()).unwrap();
+
+        engine.send(Command::Convert(id.clone()));
+
+        let refused = events.try_iter().find_map(|e| match e {
+            Event::Failed(m) => Some(m),
+            _ => None,
+        });
+        assert_eq!(
+            refused.as_deref(),
+            Some("The compendium folder must be a folder inside the vault."),
+            "{folder}"
+        );
+        assert!(!vault.join(".vault-forge-holding").exists());
+        drop(engine);
+        std::fs::write(&config, &saved).unwrap();
+        assert_eq!((files(&outside), files(&vault)), before, "{folder}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_swap_that_fails_partway_puts_every_folder_back() {
+    use std::os::unix::fs::PermissionsExt;
+    let address = serve_game_data();
+    let setup = setup(&address);
+    fill(&setup.vault);
+    let before = files(&setup.vault);
+    let id = setup.engine.profiles()[0].id.clone();
+    // A folder that cannot be moved, as one open in another program on Windows. The compendium
+    // is swapped in first, so the rules folder fails after it.
+    let rules = setup.vault.join("rules");
+    std::fs::set_permissions(&rules, std::fs::Permissions::from_mode(0o555)).unwrap();
+    if std::fs::write(rules.join("probe"), "").is_ok() {
+        return; // Running as root, which permissions do not stop.
+    }
+
+    let (_, converted, message) = convert(&setup, &id);
+
+    std::fs::set_permissions(&rules, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(!converted);
+    assert!(
+        message.starts_with("Could not put the notes into the vault (")
+            && message.ends_with("), so it was not changed."),
+        "{message}"
+    );
+    assert_eq!(files(&setup.vault), before);
+}
+
+#[test]
+fn old_notes_a_swap_could_not_put_back_are_kept() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    let kept = setup.vault.join(".vault-forge-holding/.replaced-0/old.md");
+    std::fs::create_dir_all(kept.parent().unwrap()).unwrap();
+    std::fs::write(&kept, "old compendium note").unwrap();
+
+    setup.engine.send(Command::Convert(id));
+
+    let refused = setup.events.try_iter().find_map(|e| match e {
+        Event::Failed(m) => Some(m),
+        _ => None,
+    });
+    let refused = refused.expect("Convert is refused");
+    assert!(refused.contains("could not be put back"), "{refused}");
+    assert_eq!(
+        std::fs::read_to_string(&kept).unwrap(),
+        "old compendium note"
+    );
+}
+
+#[test]
+fn the_notes_written_so_far_are_reported_by_folder() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    choose(&setup, &id, &["XPHB", "HANG"]);
+
+    setup.engine.send(Command::Convert(id.clone()));
+
+    wait(&setup.events, |e| {
+        matches!(e, Event::ConversionProgress { written, .. }
+            if *written == [("compendium".to_owned(), 2), ("rules".to_owned(), 1)])
+    });
+    setup.engine.send(Command::CancelConversion(id));
+    wait(&setup.events, |e| {
+        matches!(e, Event::ConversionEnded { .. })
+    });
+}

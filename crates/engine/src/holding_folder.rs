@@ -4,21 +4,41 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// Inside the vault, so the swap is a rename on one disk; Obsidian leaves dot folders alone.
-const NAME: &str = ".vault-forge-holding";
+/// The holding folder's name. It is inside the vault, so the swap is a rename on one disk;
+/// Obsidian leaves dot folders alone.
+pub(crate) const NAME: &str = ".vault-forge-holding";
 
-/// An empty holding folder in the vault, clearing any a stopped app left behind.
+/// The start of the name a vault folder takes in the holding folder while it is replaced.
+const REPLACED: &str = ".replaced-";
+
+/// An empty holding folder in the vault, clearing any a stopped app left behind, unless it still
+/// holds old folders a swap could not put back.
 pub(crate) fn create(vault: &Path) -> io::Result<PathBuf> {
     let holding = vault.join(NAME);
+    let mut entries = fs::read_dir(&holding).into_iter().flatten().flatten();
+    if entries.any(|e| e.file_name().to_string_lossy().starts_with(REPLACED)) {
+        return Err(io::Error::other(format!(
+            "{} still holds old notes that could not be put back; move them back into the vault \
+             first",
+            holding.display()
+        )));
+    }
     discard(&holding)?;
     fs::create_dir_all(&holding)?;
     Ok(holding)
 }
 
+/// Why a swap failed, and whether every folder it had moved was put back.
+pub(crate) struct SwapFailed {
+    pub(crate) error: io::Error,
+    pub(crate) put_back: bool,
+}
+
 /// Replaces each of the vault's `folders` with the holding folder's, moving the old ones into the
 /// holding folder. A folder the holding folder lacks is removed from the vault. On an error, every
-/// folder already moved is put back and the vault is as it was.
-pub(crate) fn swap(holding: &Path, vault: &Path, folders: &[String]) -> io::Result<()> {
+/// folder already moved is put back; when that fails too, the old folders stay in the holding
+/// folder.
+pub(crate) fn swap(holding: &Path, vault: &Path, folders: &[String]) -> Result<(), SwapFailed> {
     let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut rename = |from: PathBuf, to: PathBuf| {
         fs::rename(&from, &to)?;
@@ -28,7 +48,7 @@ pub(crate) fn swap(holding: &Path, vault: &Path, folders: &[String]) -> io::Resu
     let outcome = folders.iter().enumerate().try_for_each(|(i, folder)| {
         let (old, new) = (vault.join(folder), holding.join(folder));
         if old.exists() {
-            rename(old.clone(), holding.join(format!(".replaced-{i}")))?;
+            rename(old.clone(), holding.join(format!("{REPLACED}{i}")))?;
         }
         if new.exists() {
             fs::create_dir_all(old.parent().unwrap_or(vault))?;
@@ -36,13 +56,13 @@ pub(crate) fn swap(holding: &Path, vault: &Path, folders: &[String]) -> io::Resu
         }
         Ok(())
     });
-    if let Err(e) = outcome {
-        for (from, to) in moved.into_iter().rev() {
-            let _ = fs::rename(to, from);
-        }
-        return Err(e);
-    }
-    Ok(())
+    outcome.map_err(|error| SwapFailed {
+        error,
+        put_back: moved
+            .into_iter()
+            .rev()
+            .fold(true, |ok, (from, to)| fs::rename(to, from).is_ok() && ok),
+    })
 }
 
 /// Removes the holding folder and everything in it.

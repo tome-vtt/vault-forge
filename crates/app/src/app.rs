@@ -42,6 +42,7 @@ struct Running {
     id: String,
     started: Instant,
     log: Vec<String>,
+    written: Vec<(String, usize)>,
 }
 
 pub struct App {
@@ -159,11 +160,17 @@ impl App {
                         id,
                         started: Instant::now(),
                         log: Vec::new(),
+                        written: Vec::new(),
                     });
                 }
                 Event::ConversionLog { id, line } => {
                     if let Some(running) = self.running.as_mut().filter(|r| r.id == id) {
                         running.log.push(line);
+                    }
+                }
+                Event::ConversionProgress { id, written } => {
+                    if let Some(running) = self.running.as_mut().filter(|r| r.id == id) {
+                        running.written = written;
                     }
                 }
                 Event::ConversionEnded {
@@ -616,7 +623,10 @@ fn converting_view(ui: &mut egui::Ui, running: &Running) {
     });
     // The track repaints every frame, which keeps the time current too.
     theme::track(ui);
-    ui.weak("The converter does not report a total, so there is no percentage.");
+    ui.weak(format!(
+        "{} The converter does not report a total, so there is no percentage.",
+        notes_written(&running.written)
+    ));
     ui.add_space(24.0);
     egui::Frame::new()
         .stroke(egui::Stroke::new(1.0, p.border))
@@ -636,18 +646,51 @@ fn converting_view(ui: &mut egui::Ui, running: &Running) {
                 .show_rows(ui, height, running.log.len(), |ui, rows| {
                     for line in &running.log[rows] {
                         let text = egui::RichText::new(line).monospace();
-                        let lower = line.to_lowercase();
-                        let text = if lower.starts_with("error") {
-                            text.color(ui.visuals().error_fg_color)
-                        } else if lower.starts_with("warn") {
-                            text.color(p.warning)
-                        } else {
-                            text.color(p.text2)
-                        };
-                        ui.label(text);
+                        ui.label(text.color(match mark(line) {
+                            Mark::Error => ui.visuals().error_fg_color,
+                            Mark::Warning => p.warning,
+                            Mark::None => p.text2,
+                        }));
                     }
                 });
         });
+}
+
+/// How the log marks a line.
+#[derive(Debug, PartialEq)]
+enum Mark {
+    Error,
+    Warning,
+    None,
+}
+
+/// Errors and warnings as the converter prints them (`🛑  ERR|`, `🔸 WARN|`), or starting
+/// `Error`/`Warning`.
+fn mark(line: &str) -> Mark {
+    let level = line.split_once('|').map_or("", |(level, _)| level);
+    let lower = line.to_lowercase();
+    if level.ends_with("ERR") || lower.starts_with("error") {
+        Mark::Error
+    } else if level.ends_with("WARN") || lower.starts_with("warn") {
+        Mark::Warning
+    } else {
+        Mark::None
+    }
+}
+
+/// The notes a conversion has written so far, by folder, as one sentence.
+fn notes_written(written: &[(String, usize)]) -> String {
+    let mut parts: Vec<String> = written
+        .iter()
+        .map(|(folder, notes)| format!("{} {folder}", thousands(*notes)))
+        .collect();
+    let Some(last) = parts.pop() else {
+        return "No notes written yet.".into();
+    };
+    match parts.is_empty() {
+        true => format!("{last} notes written so far."),
+        false => format!("{} and {last} notes written so far.", parts.join(", ")),
+    }
 }
 
 /// 4212 as "4,212".
@@ -1072,7 +1115,22 @@ mod tests {
             events.send(Event::ConversionLog { id, line }).unwrap();
         }
         harness.run_steps(2);
+        harness.get_by_label(
+            "No notes written yet. The converter does not report a total, so there is no \
+             percentage.",
+        );
+        let written = vec![("bestiary".into(), 1408), ("items".into(), 1127)];
+        let progress = Event::ConversionProgress {
+            id: id.clone(),
+            written,
+        };
+        events.send(progress).unwrap();
+        harness.run_steps(2);
 
+        harness.get_by_label(
+            "1,408 bestiary and 1,127 items notes written so far. The converter does not report \
+             a total, so there is no percentage.",
+        );
         let button = harness.get_by_label("Converting…");
         assert!(button.accesskit_node().is_disabled());
         harness.get_by_label("D&D 5e · converting 1 book into /vault");
@@ -1105,6 +1163,37 @@ mod tests {
         harness.get_by_label(message);
         assert!(!convert_disabled(&harness));
         harness.get_by_label("Game rules");
+    }
+
+    #[test]
+    fn the_logs_errors_and_warnings_are_marked_as_the_converter_prints_them() {
+        for (line, marked) in [
+            ("🛑  ERR| ❌ No tools directory found.", Mark::Error),
+            ("Error: unable to find books.json", Mark::Error),
+            ("🔸 WARN| Unresolved link to Strahd zombie", Mark::Warning),
+            (
+                "Warning: no image file for img/bestiary/Vrock.webp",
+                Mark::Warning,
+            ),
+            ("🔷 INFO| ⏳ Reading data", Mark::None),
+            ("Writing compendium/spells", Mark::None),
+        ] {
+            assert_eq!(mark(line), marked, "{line}");
+        }
+    }
+
+    #[test]
+    fn the_notes_written_so_far_read_as_one_sentence() {
+        let written = |folders: &[(&str, usize)]| {
+            let folders: Vec<_> = folders.iter().map(|(f, n)| (f.to_string(), *n)).collect();
+            notes_written(&folders)
+        };
+        assert_eq!(written(&[]), "No notes written yet.");
+        assert_eq!(written(&[("rules", 1)]), "1 rules notes written so far.");
+        assert_eq!(
+            written(&[("bestiary", 1408), ("items", 1127), ("spells", 612)]),
+            "1,408 bestiary, 1,127 items and 612 spells notes written so far."
+        );
     }
 
     #[test]
