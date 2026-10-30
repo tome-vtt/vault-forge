@@ -528,3 +528,28 @@ fn the_notes_written_so_far_are_reported_by_folder() {
         matches!(e, Event::ConversionEnded { .. })
     });
 }
+
+#[test]
+fn nested_folders_are_converted_again_over_their_own_notes() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    // Folders whose old notes could share one name while they are replaced; a backslash is a
+    // separator on Windows.
+    for (compendium, rules) in [
+        ("a/b/", "a_b/"),
+        ("Notes\\Compendium/", "Notes_Compendium/"),
+    ] {
+        let mut profile = choose(&setup, &id, &["XPHB"]);
+        profile.config.paths.compendium = compendium.into();
+        profile.config.paths.rules = rules.into();
+        setup.engine.send(Command::SaveProfile(profile));
+
+        for run in ["first", "second"] {
+            let (_, converted, message) = convert(&setup, &id);
+            assert!(converted, "{compendium} {run}: {message}");
+        }
+        assert!(setup.vault.join(compendium).join("XPHB.md").is_file());
+        assert!(setup.vault.join(rules).join("conditions.md").is_file());
+    }
+}
