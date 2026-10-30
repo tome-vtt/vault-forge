@@ -471,6 +471,77 @@ fn row(ui: &mut egui::Ui, selected: bool, text: egui::RichText, tag: &str) -> eg
     .inner
 }
 
+/// A Setup screen section, as the demo lays it out: title and description on the left, the
+/// controls in a panel on the right.
+pub fn section(ui: &mut egui::Ui, title: &str, about: &str, add: impl FnOnce(&mut egui::Ui)) {
+    // A narrow window stacks the description above the panel.
+    let narrow = ui.ctx().content_rect().width() <= NARROW;
+    let layout = if narrow {
+        egui::Layout::top_down(egui::Align::Min)
+    } else {
+        egui::Layout::left_to_right(egui::Align::Min)
+    };
+    ui.with_layout(layout, |ui| {
+        let width = if narrow { ui.available_width() } else { 340.0 };
+        let column = egui::Layout::top_down(egui::Align::Min);
+        ui.allocate_ui_with_layout(egui::vec2(width, 0.0), column, |ui| {
+            ui.set_width(width);
+            ui.label(medium(title).size(16.0));
+            ui.weak(about);
+        });
+        if narrow {
+            ui.add_space(12.0 - ui.spacing().item_spacing.y);
+        } else {
+            ui.add_space(24.0);
+        }
+        egui::Frame::new()
+            .fill(ui.visuals().faint_bg_color)
+            .corner_radius(16.0)
+            .inner_margin(16.0)
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.vertical(add);
+            });
+    });
+}
+
+/// The demo's on/off switch: its label on the left and the track on the right, the whole row
+/// clickable. Screen readers hear it as a switch, as the demo marks it.
+pub fn switch(ui: &mut egui::Ui, on: &mut bool, label: &str) -> egui::Response {
+    let p = palette(ui);
+    let track = egui::vec2(32.0, 18.0);
+    let galley = egui::WidgetText::from(medium(label)).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Wrap),
+        ui.available_width() - track.x - 16.0,
+        TextStyle::Body,
+    );
+    let size = egui::vec2(ui.available_width(), galley.size().y.max(track.y));
+    let (rect, mut response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    let enabled = ui.is_enabled();
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, enabled, *on, label));
+    if ui.is_rect_visible(rect) {
+        // The demo's knob slides over 120 ms.
+        let knob = ui.ctx().animate_bool_with_time(response.id, *on, 0.12);
+        let top_right = egui::pos2(rect.right() - track.x, rect.top() + 1.0);
+        let bar = egui::Rect::from_min_size(top_right, track);
+        let painter = ui.painter();
+        painter.rect_filled(bar, 9.0, if *on { p.primary } else { p.toggle_off });
+        let x = egui::lerp(bar.left() + 9.0..=bar.right() - 9.0, knob);
+        painter.circle_filled(egui::pos2(x, bar.center().y), 7.0, p.surface);
+        if response.has_focus() {
+            let ring = ui.visuals().selection.stroke;
+            painter.rect_stroke(bar.expand(2.0), 11.0, ring, egui::StrokeKind::Outside);
+        }
+        painter.galley(rect.left_top(), galley, p.text);
+    }
+    response
+}
+
 /// A button for an action that removes something.
 pub fn danger_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let p = palette(ui);
@@ -526,35 +597,6 @@ pub fn segmented<T: PartialEq + Copy>(
                 }
             });
         });
-}
-
-/// The demo's on/off switch row: the label on the left, the switch at the right edge.
-pub fn toggle(ui: &mut egui::Ui, on: &mut bool, label: &str) -> egui::Response {
-    let p = palette(ui);
-    ui.horizontal(|ui| {
-        ui.label(medium(label).color(p.text));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let (rect, mut response) =
-                ui.allocate_exact_size(egui::vec2(32.0, 18.0), egui::Sense::click());
-            if response.clicked() {
-                *on = !*on;
-                response.mark_changed();
-            }
-            let enabled = ui.is_enabled();
-            response.widget_info(|| {
-                egui::WidgetInfo::selected(egui::Role::Switch, enabled, *on, label)
-            });
-            let painter = ui.painter();
-            painter.rect_filled(rect, 9, if *on { p.primary } else { p.toggle_off });
-            // The demo's knob slides over 120 ms.
-            let t = ui.ctx().animate_bool_with_time(response.id, *on, 0.12);
-            let x = egui::lerp(rect.left() + 9.0..=rect.right() - 9.0, t);
-            painter.circle_filled(egui::pos2(x, rect.center().y), 7.0, p.surface);
-            response
-        })
-        .inner
-    })
-    .inner
 }
 
 /// The demo's progress track: an accent bar sliding along a thin grey track, for work whose
