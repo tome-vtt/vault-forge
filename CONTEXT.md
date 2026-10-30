@@ -48,3 +48,7 @@ _Avoid_: CLI, tool
 **Engine**:
 The part of Vault Forge with no screens, which holds every rule and is the only thing the screens ask.
 _Avoid_: backend, core, service
+
+**Release check**:
+The Engine's launch-time look at GitHub for a newer Vault Forge; when one is out, the top bar shows a notice with a link to its release page. It never installs anything.
+_Avoid_: update check, auto-update
