@@ -257,9 +257,18 @@ fn a_bundled_file_is_named_inside_the_converters_folder() {
         .join("ttrpg-convert");
     let (engine, _) = Engine::start_with_converter(dir.path().join("data"), converter).unwrap();
 
+    // Compared as text: Windows paths compare equal across '/' and '\', but Explorer does not.
+    let expected = dir
+        .path()
+        .join("app")
+        .join("converter")
+        .join("examples")
+        .join("admonitions")
+        .join("admonitions-5e.json");
     assert_eq!(
-        engine.bundled_file(vault_forge_engine::ADMONITIONS_STYLES),
-        dir.path()
-            .join("app/converter/examples/admonitions/admonitions-5e.json")
+        engine
+            .bundled_file(vault_forge_engine::ADMONITIONS_STYLES)
+            .to_str(),
+        expected.to_str()
     );
 }
