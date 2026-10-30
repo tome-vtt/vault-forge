@@ -141,6 +141,17 @@ impl GameData {
         }
     }
 
+    /// Stops the address's download, once no profile downloads it, and reports it stopping
+    /// until it has, so the profile that switched it off still waits for it.
+    pub(crate) fn stop(&self, address: &str) {
+        // Held while reporting, so the download cannot report itself running after this.
+        let running = self.running.lock().unwrap();
+        if let Some(cancel) = running.cancels.get(address) {
+            cancel.store(true, Ordering::Relaxed);
+            send(&self.events, address, DataState::Stopping);
+        }
+    }
+
     /// Removes the address's copy, once no profile uses the address any more.
     pub(crate) fn release(&self, address: &str) -> Result<(), String> {
         // Held while removing, so a running download cannot put its copy back afterwards.
@@ -172,21 +183,24 @@ fn fetch(
 ) -> Result<(), Stop> {
     let failed = |e: std::io::Error| Stop::Failed(e.to_string());
     let started = Instant::now();
-    send(
-        events,
-        address,
-        DataState::Downloading {
-            bytes: 0,
-            elapsed: Duration::ZERO,
-        },
-    );
+    // Under the lock `stop` holds, so a stopped download never reports itself running again.
+    let report = |state| {
+        let _running = running.lock().unwrap();
+        if !cancel.load(Ordering::Relaxed) {
+            send(events, address, state);
+        }
+    };
+    report(DataState::Downloading {
+        bytes: 0,
+        elapsed: Duration::ZERO,
+    });
     let mut archive = BufWriter::new(cache.archive(address).map_err(failed)?);
     let mut next_report = PROGRESS_STEP;
     let head = downloader::get(address, &mut archive, |bytes| {
         if bytes >= next_report {
             next_report = bytes + PROGRESS_STEP;
             let elapsed = started.elapsed();
-            send(events, address, DataState::Downloading { bytes, elapsed });
+            report(DataState::Downloading { bytes, elapsed });
         }
         !cancel.load(Ordering::Relaxed)
     })
@@ -197,7 +211,7 @@ fn fetch(
     let file = archive.into_inner().map_err(|e| failed(e.into_error()))?;
     let bytes = file.metadata().map_err(failed)?.len();
     drop(file);
-    send(events, address, DataState::Unpacking);
+    report(DataState::Unpacking);
     let unpacked = cache.unpack(address).map_err(|e| match e.kind() {
         std::io::ErrorKind::InvalidData => Stop::NotGameData,
         _ => failed(e),

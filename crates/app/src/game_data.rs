@@ -167,7 +167,7 @@ impl GameDataSection {
             Some(DataState::Missing { .. }) => {
                 ui.weak("Not downloaded yet.");
             }
-            None => {}
+            Some(DataState::Stopping) | None => {}
         });
     }
 
