@@ -3,6 +3,7 @@
 
 mod app;
 mod new_profile;
+mod os_theme;
 mod theme;
 
 use eframe::egui;
@@ -25,7 +26,8 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| {
             theme::install(&cc.egui_ctx);
-            Ok(Box::new(Shell(app::App::new(engine, events))))
+            let os_theme = os_theme::watch(cc.egui_ctx.clone());
+            Ok(Box::new(Shell(app::App::new(engine, events, os_theme))))
         }),
     )
 }
@@ -33,6 +35,11 @@ fn main() -> eframe::Result {
 struct Shell(app::App);
 
 impl eframe::App for Shell {
+    // Runs before each frame starts, unlike `logic`, which runs inside it.
+    fn raw_input_hook(&mut self, ctx: &egui::Context, _raw_input: &mut egui::RawInput) {
+        self.0.apply_theme(ctx);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.0.ui(ui);
     }

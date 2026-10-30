@@ -3495,6 +3495,7 @@ dependencies = [
  "rfd",
  "tempfile",
  "vault-forge-engine",
+ "zbus",
 ]
 
 [[package]]

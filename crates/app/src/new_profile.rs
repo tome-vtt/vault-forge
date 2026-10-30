@@ -29,41 +29,41 @@ impl NewProfile {
                 .inner_margin(16.0)
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.label("Name");
-                    ui.add(theme::input(
+                    ui.label(theme::medium("Name"));
+                    theme::input(
+                        ui,
                         egui::TextEdit::singleline(&mut self.draft.name)
                             .hint_text("For example: Thursday campaign"),
-                    ));
+                    );
                     ui.add_space(16.0);
-                    ui.label("Game rules");
+                    ui.label(theme::medium("Game rules"));
                     let choices = [Rules::Dnd5e, Rules::Pf2e].map(|r| (r, rules_name(r)));
                     theme::segmented(ui, &mut self.draft.rules, &choices, false);
                     ui.add_space(16.0);
-                    ui.label("Game data download address");
-                    ui.add(theme::input(
+                    ui.label(theme::medium("Game data download address"));
+                    theme::input(
+                        ui,
                         egui::TextEdit::singleline(&mut self.draft.address)
                             .hint_text("https://…/data.zip"),
-                    ));
+                    );
                     hint(
                         ui,
                         "Downloaded and unpacked for you after you create the profile.",
                     );
                     ui.add_space(16.0);
-                    ui.label("Vault folder");
-                    let row = egui::vec2(ui.available_width(), 40.0);
-                    let layout = egui::Layout::right_to_left(egui::Align::Center);
-                    ui.allocate_ui_with_layout(row, layout, |ui| {
-                        if ui.button("Browse…").clicked()
-                            && let Some(folder) = rfd::FileDialog::new().pick_folder()
-                        {
-                            self.draft.vault = folder.to_string_lossy().into_owned();
-                        }
-                        ui.add(theme::input(
-                            egui::TextEdit::singleline(&mut self.draft.vault)
-                                .hint_text(egui::RichText::new("Your Obsidian vault").monospace())
-                                .font(egui::TextStyle::Monospace),
-                        ));
-                    });
+                    ui.label(theme::medium("Vault folder"));
+                    let browse = theme::pathline(
+                        ui,
+                        egui::TextEdit::singleline(&mut self.draft.vault)
+                            .hint_text(egui::RichText::new("Your Obsidian vault").monospace())
+                            .font(egui::TextStyle::Monospace),
+                        "Browse…",
+                    );
+                    if browse.clicked()
+                        && let Some(folder) = rfd::FileDialog::new().pick_folder()
+                    {
+                        self.draft.vault = folder.to_string_lossy().into_owned();
+                    }
                     ui.add_space(16.0);
                     let create =
                         theme::primary_button(ui, self.draft.is_complete(), "Create profile");
