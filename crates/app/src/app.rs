@@ -591,6 +591,11 @@ mod tests {
         harness.run();
         harness.get_by_label("Update images");
 
+        events.send(images(DataState::NotGameData)).unwrap();
+        harness.run();
+        harness.get_by_label("Not an archive");
+        harness.get_by_label("Download images");
+
         events.send(images(ready(false))).unwrap();
         harness.run();
         assert!(!convert_disabled(&harness));

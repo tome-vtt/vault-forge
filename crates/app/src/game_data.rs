@@ -191,9 +191,10 @@ impl GameDataSection {
         ui.strong("Book images download address");
         let edited = self.images_address.trim() != profile.images_address;
         // No button while running: the Download address line's Cancel stops the images too.
+        let busy = state.is_some_and(DataState::is_busy);
         let label = match state {
+            _ if busy => None,
             _ if edited => Some("Download images"),
-            Some(s) if s.is_busy() => None,
             Some(DataState::Ready { newer: false, .. }) => None,
             Some(DataState::Ready { newer: true, .. }) => Some("Update images"),
             _ => Some("Download images"),
@@ -219,6 +220,10 @@ impl GameDataSection {
                 engine.send(Command::DownloadImages(profile.id.clone()));
             }
         });
+        if busy {
+            ui.add_space(12.0);
+            theme::track(ui);
+        }
         ui.horizontal_wrapped(|ui| match state {
             Some(DataState::Downloading { bytes, .. }) => {
                 ui.weak(format!("Downloading images… {} so far.", size(*bytes)));
