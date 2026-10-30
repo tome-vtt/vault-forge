@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod game_data;
 mod new_profile;
 
 use eframe::egui;
@@ -22,7 +23,20 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Vault Forge",
         options,
-        Box::new(|_cc| Ok(Box::new(Shell(app::App::new(engine, events))))),
+        Box::new(|cc| {
+            // Worker threads send events while the window sleeps, so each one wakes it.
+            let (forward, received) = std::sync::mpsc::channel();
+            let ctx = cc.egui_ctx.clone();
+            std::thread::spawn(move || {
+                for event in events {
+                    if forward.send(event).is_err() {
+                        break;
+                    }
+                    ctx.request_repaint();
+                }
+            });
+            Ok(Box::new(Shell(app::App::new(engine, received))))
+        }),
     )
 }
 

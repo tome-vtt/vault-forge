@@ -10,11 +10,14 @@ use std::time::Duration;
 
 use vault_forge_engine::{Command, DataState, Engine, Event, Profile, ProfileDraft, Rules};
 
+/// Each path's version (its ETag) and body.
+type Files = HashMap<String, (u32, Vec<u8>)>;
+
 /// Serves files from memory with an ETag that changes on every `put`, and counts the GETs.
 /// `/endless.zip` never finishes, for Cancel.
 struct Server {
     url: String,
-    files: Arc<Mutex<HashMap<String, (u32, Vec<u8>)>>>,
+    files: Arc<Mutex<Files>>,
     gets: Arc<AtomicUsize>,
 }
 
@@ -22,7 +25,7 @@ impl Server {
     fn start() -> Server {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
-        let files: Arc<Mutex<HashMap<String, (u32, Vec<u8>)>>> = Arc::default();
+        let files: Arc<Mutex<Files>> = Arc::default();
         let gets = Arc::new(AtomicUsize::new(0));
         let (f, g) = (files.clone(), gets.clone());
         std::thread::spawn(move || {
@@ -46,7 +49,7 @@ impl Server {
     }
 }
 
-fn serve(stream: TcpStream, files: &Mutex<HashMap<String, (u32, Vec<u8>)>>, gets: &AtomicUsize) {
+fn serve(stream: TcpStream, files: &Mutex<Files>, gets: &AtomicUsize) {
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut request = String::new();
     reader.read_line(&mut request).unwrap();
