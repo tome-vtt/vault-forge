@@ -142,6 +142,14 @@ impl BooksSection {
                                         // Clicks on the stuck heading stay off the rows beneath.
                                         let id = ui.scope_id().with("stuck");
                                         ui.interact(rect, id, egui::Sense::click());
+                                        // Rounded as the list's top corners it sits under.
+                                        let corners = egui::CornerRadius {
+                                            nw: 11,
+                                            ne: 11,
+                                            ..Default::default()
+                                        };
+                                        let field = ui.visuals().extreme_bg_color;
+                                        ui.painter().rect_filled(rect, corners, field);
                                         group_header(ui, profile, group, &rows)
                                     })
                                     .inner;
@@ -185,12 +193,13 @@ impl BooksSection {
             let edit = egui::TextEdit::singleline(text).font(egui::TextStyle::Monospace);
             let field = theme::input(ui, edit).labelled_by(title.id);
             // Saved as typed, so nothing is lost when the field goes before it loses focus.
-            if field.changed() && typed_codes(text) != *saved {
+            let codes = typed_codes(text);
+            if field.changed() && codes != *saved {
                 let mut typed = profile.clone();
                 if adventures {
-                    typed.config.sources.adventure = typed_codes(text);
+                    typed.config.sources.adventure = codes;
                 } else {
-                    typed.config.sources.book = typed_codes(text);
+                    typed.config.sources.book = codes;
                 }
                 engine.send(Command::SaveProfile(typed));
             } else if !field.has_focus() {
@@ -259,7 +268,6 @@ fn group_header(
     let accent = theme::palette(ui).accent;
     let mut pressed = false;
     let heading = egui::Frame::new()
-        .fill(ui.visuals().extreme_bg_color)
         .inner_margin(egui::Margin {
             left: 16,
             right: 16,

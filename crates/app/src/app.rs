@@ -1106,6 +1106,14 @@ mod tests {
             heading.top() - bar.bottom() < 40.0,
             "it sits at the list's top"
         );
+        // Its Choose all still works there.
+        harness
+            .get_all_by_label("Choose all")
+            .find(|n| n.rect().top() > bar.bottom())
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("30 of 30 chosen");
     }
 
     #[test]

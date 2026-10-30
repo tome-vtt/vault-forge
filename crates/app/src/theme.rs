@@ -522,7 +522,7 @@ pub fn add_row(ui: &mut egui::Ui, selected: bool, text: &str) -> egui::Response 
 fn row(ui: &mut egui::Ui, selected: bool, text: egui::RichText, tag: &str) -> egui::Response {
     let p = palette(ui);
     ui.scope(|ui| {
-        ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
+        ui.spacing_mut().button_padding.x = 10.0;
         let hovered = &mut ui.visuals_mut().widgets.hovered;
         hovered.weak_bg_fill = p.hover;
         hovered.bg_fill = p.hover;
