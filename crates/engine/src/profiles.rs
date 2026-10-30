@@ -142,6 +142,14 @@ impl Profiles {
             images_address: profile.images_address.trim().into(),
             ..profile
         };
+        // Each game's books have their own codes, so a switch of game rules starts over.
+        if self
+            .get(&profile.id)
+            .is_ok_and(|old| old.rules != profile.rules)
+        {
+            profile.config.sources.book.clear();
+            profile.config.sources.adventure.clear();
+        }
         if profile.address.is_empty() {
             return Err("A profile needs a game data address.".into());
         }

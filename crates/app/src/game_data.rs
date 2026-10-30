@@ -128,7 +128,8 @@ impl GameDataSection {
                 newer,
             }) => {
                 let copy = format!(
-                    "{books} books and adventures · {} · downloaded {}",
+                    "{} books and adventures · {} · downloaded {}",
+                    books.len(),
                     size(*bytes),
                     date(*downloaded)
                 );

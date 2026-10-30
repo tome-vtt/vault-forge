@@ -74,6 +74,10 @@ pub struct ConverterConfig {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Sources {
+    /// The chosen books' codes; adventures go in `adventure`.
+    pub book: Vec<String>,
+    /// The chosen adventures' codes.
+    pub adventure: Vec<String>,
     /// 5eTools homebrew JSON files, converted alongside the books.
     pub homebrew: Vec<PathBuf>,
 }
@@ -104,6 +108,25 @@ pub struct Images {
     pub copy_external: bool,
 }
 
+/// Where the Books checklist lists a book, in its order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Group {
+    CoreRules,
+    Supplements,
+    Adventures,
+}
+
+/// One book or adventure in the game data's lists.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Book {
+    /// The source code the converter config names it by, such as XPHB.
+    pub code: String,
+    pub name: String,
+    /// The year it was published; empty when the list does not say.
+    pub year: String,
+    pub group: Group,
+}
+
 impl Profile {
     /// What the profile downloads: its game data, and its images when switched on.
     fn downloads(&self) -> Vec<(&str, Kind)> {
@@ -121,6 +144,28 @@ impl Profile {
     /// Convert needs the game data downloaded and none of the profile's downloads running.
     pub fn can_convert(&self, data: &HashMap<String, DataState>) -> bool {
         data.get(&self.address).is_some_and(DataState::can_convert) && !self.is_downloading(data)
+    }
+
+    /// Whether the book is chosen.
+    pub fn has(&self, book: &Book) -> bool {
+        let codes = match book.group {
+            Group::Adventures => &self.config.sources.adventure,
+            _ => &self.config.sources.book,
+        };
+        codes.contains(&book.code)
+    }
+
+    /// Ticks or unticks a book: an adventure goes in the config's `adventure` key, any other
+    /// book in `book`.
+    pub fn choose(&mut self, book: &Book, on: bool) {
+        let codes = match book.group {
+            Group::Adventures => &mut self.config.sources.adventure,
+            _ => &mut self.config.sources.book,
+        };
+        codes.retain(|code| *code != book.code);
+        if on {
+            codes.push(book.code.clone());
+        }
     }
 
     /// Whether any of the profile's downloads is running.
@@ -143,10 +188,11 @@ pub enum DataState {
         elapsed: Duration,
     },
     Unpacking,
-    /// `books` counts books and adventures (none for images); `newer` means the server has newer
-    /// data than this copy, not yet downloaded.
+    /// `books` lists the copy's books and adventures, by group; it is empty for images, and for
+    /// game data whose lists cannot be read, when the books are typed by code instead. `newer`
+    /// means the server has newer data than this copy, not yet downloaded.
     Ready {
-        books: usize,
+        books: Vec<Book>,
         bytes: u64,
         downloaded: SystemTime,
         newer: bool,
@@ -196,6 +242,18 @@ impl ProfileDraft {
     }
 }
 
+/// The book codes typed where the game data has no books list to tick: separated by commas or
+/// spaces, each once.
+pub fn typed_codes(text: &str) -> Vec<String> {
+    let mut codes: Vec<String> = Vec::new();
+    for code in text.split(|c: char| c == ',' || c.is_whitespace()) {
+        if !code.is_empty() && !codes.iter().any(|c| c == code) {
+            codes.push(code.to_owned());
+        }
+    }
+    codes
+}
+
 /// A profile's name must have something in it.
 pub fn is_valid_name(name: &str) -> bool {
     !name.trim().is_empty()
@@ -209,7 +267,8 @@ pub enum Command {
         name: String,
     },
     DeleteProfile(String),
-    /// Saves any change to the profile: rules, addresses, vault, converter config or templates.
+    /// Saves any change to the profile: rules, addresses, vault, converter config, templates or
+    /// chosen books. Changing the rules clears the chosen books.
     SaveProfile(Profile),
     /// Reports the profile's game data and asks the server whether it has newer data.
     CheckGameData(String),

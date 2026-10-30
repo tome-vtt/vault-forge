@@ -9,6 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use crate::Book;
+
 /// What the cache remembers about one downloaded copy.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Cached {
@@ -16,9 +18,11 @@ pub(crate) struct Cached {
     pub(crate) etag: Option<String>,
     pub(crate) last_modified: Option<String>,
     pub(crate) bytes: u64,
-    pub(crate) books: usize,
     /// Seconds since the Unix epoch.
     pub(crate) downloaded: u64,
+    /// Read from the copy's own lists, not stored.
+    #[serde(skip)]
+    pub(crate) books: Vec<Book>,
 }
 
 const META: &str = "forge.yaml";
@@ -49,6 +53,11 @@ impl DataCache {
             (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
         });
         self.dir.join(format!("{hash:016x}{suffix}"))
+    }
+
+    /// Where the address's unpacked copy is.
+    pub(crate) fn folder(&self, address: &str) -> PathBuf {
+        self.path(address, "")
     }
 
     /// The copy for the address, if one was downloaded.
