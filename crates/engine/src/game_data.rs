@@ -141,6 +141,18 @@ impl GameData {
         }
     }
 
+    /// Whether the address is downloading.
+    pub(crate) fn is_running(&self, address: &str) -> bool {
+        self.running.lock().unwrap().cancels.contains_key(address)
+    }
+
+    /// The `data` folder of the address's copy, the one the converter reads; `None` until one is
+    /// downloaded.
+    pub(crate) fn data_folder(&self, address: &str) -> Option<PathBuf> {
+        self.cache.read(address)?;
+        find_data(&self.cache.folder(address), 2)
+    }
+
     /// Removes the address's copy, once no profile uses the address any more.
     pub(crate) fn release(&self, address: &str) -> Result<(), String> {
         // Held while removing, so a running download cannot put its copy back afterwards.

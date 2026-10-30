@@ -361,7 +361,7 @@ fn switching_images_off_mid_download_stops_it_and_leaves_no_partial_folder() {
         (images.clone(), DataState::Unpacking),
     ]);
     assert!(saved.is_downloading(&data));
-    assert!(!saved.can_convert(&data));
+    assert!(saved.convert_blocker(&data, None).is_some());
     let state = wait(&events, &images, |s| {
         !matches!(s, DataState::Downloading { .. })
     });

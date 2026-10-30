@@ -4,9 +4,12 @@
 //! The front door: [`Engine::start`] opens the app data folder and returns the Engine and an
 //! event receiver; screens call [`Engine::send`] and drain the receiver every frame.
 mod app_settings;
+mod conversion;
+mod converter;
 mod data_cache;
 mod downloader;
 mod game_data;
+mod holding_folder;
 mod profile_files;
 mod profiles;
 mod release_check;
@@ -14,7 +17,7 @@ mod settings_file;
 
 use std::collections::{BTreeMap, HashMap};
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, SystemTime};
@@ -22,6 +25,7 @@ use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 
 use app_settings::AppSettings;
+use conversion::Conversion;
 use game_data::{GameData, Kind};
 use profiles::Profiles;
 
@@ -141,9 +145,38 @@ impl Profile {
         self.address == address || self.images_address == address
     }
 
-    /// Convert needs the game data downloaded and none of the profile's downloads running.
-    pub fn can_convert(&self, data: &HashMap<String, DataState>) -> bool {
-        data.get(&self.address).is_some_and(DataState::can_convert) && !self.is_downloading(data)
+    /// How many books are chosen, adventures included.
+    pub fn book_count(&self) -> usize {
+        self.config.sources.book.len() + self.config.sources.adventure.len()
+    }
+
+    /// Why Convert is off for the profile, or `None` when it can convert. `converting` is the
+    /// profile whose conversion is running, if one is.
+    pub fn convert_blocker(
+        &self,
+        data: &HashMap<String, DataState>,
+        converting: Option<&str>,
+    ) -> Option<&'static str> {
+        let ready = data.get(&self.address).is_some_and(DataState::can_convert);
+        self.blocker(ready, self.is_downloading(data), converting)
+    }
+
+    /// The rule behind Convert: one conversion at a time, no download running, game data
+    /// downloaded and a book chosen.
+    fn blocker(
+        &self,
+        ready: bool,
+        downloading: bool,
+        converting: Option<&str>,
+    ) -> Option<&'static str> {
+        match converting {
+            Some(id) if id == self.id => Some("Converting now."),
+            Some(_) => Some("Another profile is converting."),
+            None if downloading => Some("Wait for the download to finish."),
+            None if !ready => Some("Download the game data first."),
+            None if self.book_count() == 0 => Some("Choose at least one book first."),
+            None => None,
+        }
     }
 
     /// Whether the book is chosen.
@@ -204,7 +237,7 @@ pub enum DataState {
 }
 
 impl DataState {
-    /// Whether this download, on its own, lets a profile convert: see [`Profile::can_convert`].
+    /// Whether this download, on its own, lets a profile convert: see [`Profile::convert_blocker`].
     pub fn can_convert(&self) -> bool {
         matches!(self, DataState::Ready { .. })
     }
@@ -281,6 +314,11 @@ pub enum Command {
     DownloadImages(Profile),
     /// Stops every download the profile has running.
     CancelDownload(String),
+    /// Converts the profile's chosen books into its vault, unless Convert is off for it (see
+    /// [`Profile::convert_blocker`]); a refusal is a `Failed` event with the reason.
+    Convert(String),
+    /// Stops the profile's conversion; its vault stays as it was.
+    CancelConversion(String),
     SetAppearance(Appearance),
     /// Asks the latest-release address (GitHub's API; the app sends [`LATEST_RELEASE`]) whether a
     /// newer Vault Forge is out. Answers only when one is; a failed check stays silent.
@@ -303,6 +341,20 @@ pub enum Event {
         version: String,
         page: String,
     },
+    /// The profile's conversion started.
+    ConversionStarted(String),
+    /// One line the converter printed, stdout and stderr alike, in the order it printed them.
+    ConversionLog {
+        id: String,
+        line: String,
+    },
+    /// The profile's conversion ended. `converted` only when the notes replaced the vault's
+    /// converted notes; otherwise the vault is as it was. `message` says so in one sentence.
+    ConversionEnded {
+        id: String,
+        converted: bool,
+        message: String,
+    },
     /// A command could not be carried out; the message is for the user.
     Failed(String),
 }
@@ -313,6 +365,28 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The bundled converter's pinned version.
 pub const CONVERTER_VERSION: &str = "3.3.7";
 
+/// The sha256 of each file the bundle step takes from the pinned converter release: the native
+/// build for each platform the app ships on, and the examples. The platform names are the
+/// release's own.
+pub const CONVERTER_SHA256: [(&str, &str); 4] = [
+    (
+        "windows-x86_64",
+        "14cb4eb0c3a09ffb79137f64e44c3ffd99705d308f1dbb3fd1d3e3626b875ff9",
+    ),
+    (
+        "osx-aarch_64",
+        "057673515ba1c97c776bf5c475131cd452f0dea90bd29593c27568abe130436e",
+    ),
+    (
+        "linux-x86_64",
+        "cdc8cfcbf49d7173034349cae6504de11775f4ae6847229e68a55316daa3c4cb",
+    ),
+    (
+        "examples",
+        "3ea6c053c700177ebe451ebf52570ef1408d1639ce8140937798a08fa7687118",
+    ),
+];
+
 /// Where GitHub says which Vault Forge release is the newest.
 pub const LATEST_RELEASE: &str =
     "https://api.github.com/repos/tome-vtt/vault-forge/releases/latest";
@@ -321,11 +395,41 @@ pub struct Engine {
     profiles: Mutex<Profiles>,
     settings: Mutex<AppSettings>,
     game_data: GameData,
+    conversion: Conversion,
     events: Sender<Event>,
+}
+
+/// The notes in the vault folders a conversion replaces.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConvertedNotes {
+    pub notes: usize,
+    /// When the newest of them was written.
+    pub written: SystemTime,
+    /// The folders, as the profile names them (`compendium/`).
+    pub folders: Vec<String>,
+}
+
+const WAIT_FOR_CONVERSION: &str = "Wait for the conversion to finish.";
+
+/// The bundled converter: in the `converter` folder beside the app.
+fn bundled_converter() -> PathBuf {
+    let app = std::env::current_exe().unwrap_or_default();
+    let beside = app.parent().unwrap_or(Path::new(""));
+    beside
+        .join("converter")
+        .join(format!("ttrpg-convert{}", std::env::consts::EXE_SUFFIX))
 }
 
 impl Engine {
     pub fn start(app_data: PathBuf) -> io::Result<(Engine, Receiver<Event>)> {
+        Self::start_with_converter(app_data, bundled_converter())
+    }
+
+    /// [`Engine::start`] with another converter program in place of the bundled one.
+    pub fn start_with_converter(
+        app_data: PathBuf,
+        converter: PathBuf,
+    ) -> io::Result<(Engine, Receiver<Event>)> {
         let profiles = Mutex::new(Profiles::open(&app_data)?);
         let settings = Mutex::new(AppSettings::open(&app_data));
         let (events, receiver) = channel();
@@ -334,6 +438,7 @@ impl Engine {
             profiles,
             settings,
             game_data,
+            conversion: Conversion::new(converter, events.clone()),
             events,
         };
         Ok((engine, receiver))
@@ -347,6 +452,13 @@ impl Engine {
     /// The profile's converter config file, which the converter can also run from the command line.
     pub fn profile_file(&self, id: &str) -> PathBuf {
         self.profiles.lock().unwrap().file(id)
+    }
+
+    /// The notes an earlier conversion left in the profile's vault; `None` when there are none,
+    /// so converting replaces nothing.
+    pub fn converted_notes(&self, id: &str) -> Option<ConvertedNotes> {
+        let profiles = self.profiles.lock().unwrap();
+        conversion::converted_notes(profiles.get(id).ok()?)
     }
 
     pub fn appearance(&self) -> Appearance {
@@ -365,6 +477,9 @@ impl Engine {
             Command::RenameProfile { id, name } => profiles.rename(&id, &name).map(|()| {
                 let _ = self.events.send(Event::ProfileSaved(id));
             }),
+            Command::DeleteProfile(id) if self.conversion.converting() == Some(id.clone()) => {
+                Err(WAIT_FOR_CONVERSION.into())
+            }
             Command::DeleteProfile(id) => {
                 let old = profiles.get(&id).ok().cloned();
                 profiles.delete(&id).and_then(|()| {
@@ -378,6 +493,11 @@ impl Engine {
                     self.game_data.check(address);
                 }
             }),
+            Command::DownloadGameData(profile)
+                if self.converting_from(&profiles, &profile.address) =>
+            {
+                Err(WAIT_FOR_CONVERSION.into())
+            }
             Command::DownloadGameData(profile) => self
                 .save(&mut profiles, profile)
                 .map(|p| self.game_data.download(&p.address, Kind::GameData)),
@@ -393,6 +513,25 @@ impl Engine {
                     self.game_data.cancel(address);
                 }
             }),
+            Command::Convert(id) => profiles.get(&id).and_then(|p| {
+                let data = self.game_data.data_folder(&p.address);
+                let downloading = p
+                    .downloads()
+                    .iter()
+                    .any(|(a, _)| self.game_data.is_running(a));
+                let converting = self.conversion.converting();
+                match p.blocker(data.is_some(), downloading, converting.as_deref()) {
+                    Some(reason) => Err(reason.into()),
+                    None => {
+                        self.conversion
+                            .start(p, &profiles.file(&id), &data.unwrap_or_default())
+                    }
+                }
+            }),
+            Command::CancelConversion(id) => {
+                self.conversion.cancel(&id);
+                Ok(())
+            }
             Command::SetAppearance(appearance) => {
                 self.settings.lock().unwrap().set_appearance(appearance)
             }
@@ -409,6 +548,11 @@ impl Engine {
     /// Saves a changed profile and returns it as saved.
     fn save(&self, profiles: &mut Profiles, profile: Profile) -> Result<Profile, String> {
         let old = profiles.get(&profile.id)?.clone();
+        // Its old copy would be removed while the converter reads it.
+        let converting = self.conversion.converting() == Some(profile.id.clone());
+        if converting && profile.address != old.address {
+            return Err(WAIT_FOR_CONVERSION.into());
+        }
         let id = profile.id.clone();
         profiles.save(profile)?;
         let new = profiles.get(&id)?.clone();
@@ -422,6 +566,13 @@ impl Engine {
         let _ = self.events.send(Event::ProfileSaved(id));
         self.release_unused(profiles, &old)?;
         Ok(new)
+    }
+
+    /// Whether the running conversion reads the address's game data, which nothing may replace
+    /// or remove until it ends.
+    fn converting_from(&self, profiles: &Profiles, address: &str) -> bool {
+        let converting = self.conversion.converting();
+        converting.is_some_and(|id| profiles.get(&id).is_ok_and(|p| p.address == address))
     }
 
     /// Stops each of `old`'s downloads that no profile downloads any more (images switched
