@@ -233,12 +233,7 @@ impl App {
     fn sidebar(&mut self, ui: &mut egui::Ui, profiles: &[Profile]) {
         ui.add_space(28.0);
         egui::Frame::new()
-            .inner_margin(egui::Margin {
-                left: 10,
-                right: 10,
-                top: 0,
-                bottom: 0,
-            })
+            .inner_margin(egui::Margin::symmetric(10, 0))
             .show(ui, |ui| {
                 ui.label(egui::RichText::new("Profiles").small().weak())
             });
@@ -340,13 +335,13 @@ impl App {
                     let ok = is_valid_name(name);
                     let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     theme::dialog_actions(ui, |ui| {
+                        cancel = ui.button("Cancel").clicked();
                         if theme::primary_button(ui, ok, "Rename").clicked() || (enter && ok) {
                             command = Some(Command::RenameProfile {
                                 id: id.clone(),
                                 name: name.clone(),
                             });
                         }
-                        cancel = ui.button("Cancel").clicked();
                     });
                 }
                 Dialog::Delete { id, name } => {
@@ -359,10 +354,10 @@ impl App {
                         .color(theme::palette(ui).text2),
                     );
                     theme::dialog_actions(ui, |ui| {
+                        cancel = ui.button("Cancel").clicked();
                         if theme::danger_button(ui, "Delete profile").clicked() {
                             command = Some(Command::DeleteProfile(id.clone()));
                         }
-                        cancel = ui.button("Cancel").clicked();
                     });
                 }
             }
@@ -779,6 +774,13 @@ mod tests {
             "Cancel before the main action"
         );
         assert!((rename.right() - field.right()).abs() < 1.0);
+        // Screen readers and Tab meet them in reading order too.
+        let buttons: Vec<_> = harness
+            .get_all_by_role(egui::accesskit::Role::Button)
+            .filter_map(|n| n.accesskit_node().label())
+            .collect();
+        let at = |name| buttons.iter().position(|b| b == name).unwrap();
+        assert!(at("Cancel") < at("Rename"), "{buttons:?}");
     }
 
     #[test]

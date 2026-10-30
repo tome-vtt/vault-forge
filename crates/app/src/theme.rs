@@ -252,14 +252,21 @@ pub fn dialog_title(ui: &mut egui::Ui, text: &str) -> egui::Response {
     title
 }
 
-/// The dialog's buttons: at the right, 8px apart, 20px below the content. `add` adds them from
-/// the right, the main action first.
+/// The dialog's buttons: at the right, 8px apart, 20px below the content. `add` adds them in
+/// reading order, the main action last, so Tab moves left to right.
 pub fn dialog_actions(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     ui.add_space(20.0 - ui.spacing().item_spacing.y);
-    let layout = egui::Layout::right_to_left(egui::Align::Center);
-    ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 0.0), layout, |ui| {
+    ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
+        // Pushed right by the buttons' width from the frame before; a modal's first frame is an
+        // unseen sizing pass, so it never shows them unaligned.
+        let id = ui.scope_id().with("actions_width");
+        let width = ui.data(|d| d.get_temp::<f32>(id)).unwrap_or(0.0);
+        ui.add_space((ui.available_width() - width).max(0.0));
+        let start = ui.cursor().min.x;
         add(ui);
+        let width = ui.cursor().min.x - start - ui.spacing().item_spacing.x;
+        ui.data_mut(|d| d.insert_temp(id, width));
     });
 }
 
