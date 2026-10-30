@@ -84,6 +84,16 @@ impl Profiles {
         if profile.address.is_empty() {
             return Err("A profile needs a game data address.".into());
         }
+        // The cache keeps one copy per address, checked as game data or not at all.
+        let mut others = self.list.iter().filter(|p| p.id != profile.id);
+        if others.clone().any(|p| p.images_address == profile.address) {
+            return Err("That address is used for book images, so it can't be game data.".into());
+        }
+        if profile.images_address == profile.address
+            || others.any(|p| p.address == profile.images_address)
+        {
+            return Err("That address is used for game data, so it can't be book images.".into());
+        }
         self.files
             .save(&profile, CONVERTER_CONFIG)
             .map_err(|e| format!("Could not save the profile: {e}"))?;
