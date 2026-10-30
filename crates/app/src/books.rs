@@ -56,19 +56,43 @@ impl BooksSection {
 
     fn checklist(&mut self, ui: &mut egui::Ui, engine: &Engine, profile: &Profile, books: &[Book]) {
         let p = theme::palette(ui);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 12.0;
-            ui.allocate_ui(egui::vec2(ui.available_width().min(280.0), 32.0), |ui| {
-                let edit = egui::TextEdit::singleline(&mut self.search).hint_text("Find a book");
-                theme::small_input(ui, edit);
+        let phone = ui.ctx().content_rect().width() <= theme::PHONE;
+        let count = format!(
+            "{} of {} chosen",
+            books.iter().filter(|b| profile.has(b)).count(),
+            books.len()
+        );
+        let search_width = if phone { f32::INFINITY } else { 280.0 };
+        let mut search_field = |ui: &mut egui::Ui| {
+            ui.allocate_ui(
+                egui::vec2(ui.available_width().min(search_width), 32.0),
+                |ui| {
+                    let edit =
+                        egui::TextEdit::singleline(&mut self.search).hint_text("Find a book");
+                    theme::small_input(ui, edit);
+                },
+            );
+        };
+        let choices = [(false, "All"), (true, "Chosen")];
+        // On a phone the bar wraps: the search on its own line, the count beside the switch.
+        if phone {
+            search_field(ui);
+            ui.add_space(12.0 - ui.spacing().item_spacing.y);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 12.0;
+                theme::segmented(ui, &mut self.chosen_only, &choices, theme::Seg::Small);
+                ui.weak(count);
             });
-            let choices = [(false, "All"), (true, "Chosen")];
-            theme::segmented(ui, &mut self.chosen_only, &choices, false);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let chosen = books.iter().filter(|b| profile.has(b)).count();
-                ui.weak(format!("{chosen} of {} chosen", books.len()));
+        } else {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 12.0;
+                search_field(ui);
+                theme::segmented(ui, &mut self.chosen_only, &choices, theme::Seg::Small);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.weak(count);
+                });
             });
-        });
+        }
         ui.add_space(12.0);
         let search = self.search.trim().to_lowercase();
         let shows = |b: &Book| {
@@ -76,7 +100,6 @@ impl BooksSection {
                 && (b.name.to_lowercase().contains(&search)
                     || b.code.to_lowercase().contains(&search))
         };
-        let phone = ui.ctx().content_rect().width() <= theme::PHONE;
         let mut changed = None;
         egui::Frame::new()
             .fill(ui.visuals().extreme_bg_color)
@@ -97,12 +120,33 @@ impl BooksSection {
                                 continue;
                             }
                             any = true;
-                            if let Some(choice) = group_header(ui, profile, group, &rows) {
-                                changed = Some(choice);
+                            let (heading, choice) = group_header(ui, profile, group, &rows);
+                            if choice.is_some() {
+                                changed = choice;
                             }
                             for book in shown {
                                 if let Some(choice) = row(ui, profile, book, phone) {
                                     changed = Some(choice);
+                                }
+                            }
+                            // The heading sticks to the list's top while its books scroll
+                            // under it, until the next group's heading pushes it up.
+                            let top = ui.clip_rect().top();
+                            let bottom = ui.min_rect().bottom();
+                            if heading.top() < top && bottom > top {
+                                let y = top.min(bottom - heading.height());
+                                let rect = heading.translate(egui::vec2(0.0, y - heading.top()));
+                                let stuck = egui::UiBuilder::new().max_rect(rect);
+                                let (_, choice) = ui
+                                    .scope_builder(stuck, |ui| {
+                                        // Clicks on the stuck heading stay off the rows beneath.
+                                        let id = ui.scope_id().with("stuck");
+                                        ui.interact(rect, id, egui::Sense::click());
+                                        group_header(ui, profile, group, &rows)
+                                    })
+                                    .inner;
+                                if choice.is_some() {
+                                    changed = choice;
                                 }
                             }
                         }
@@ -198,13 +242,14 @@ fn describe(ui: &mut egui::Ui, profile: &Profile, books: &[Book]) {
 }
 
 /// A group's heading: its name, how many of its books are chosen, and Choose all or, once every
-/// one is, Clear all. Returns the profile with the group chosen or cleared when pressed.
+/// one is, Clear all. Returns where it is, and the profile with the group chosen or cleared when
+/// pressed.
 fn group_header(
     ui: &mut egui::Ui,
     profile: &Profile,
     group: Group,
     rows: &[&Book],
-) -> Option<Profile> {
+) -> (egui::Rect, Option<Profile>) {
     let name = match group {
         Group::CoreRules => "Core rules",
         Group::Supplements => "Supplements",
@@ -214,7 +259,8 @@ fn group_header(
     let all_on = chosen == rows.len();
     let accent = theme::palette(ui).accent;
     let mut pressed = false;
-    egui::Frame::new()
+    let heading = egui::Frame::new()
+        .fill(ui.visuals().extreme_bg_color)
         .inner_margin(egui::Margin {
             left: 16,
             right: 16,
@@ -235,13 +281,14 @@ fn group_header(
                 });
             });
         });
-    pressed.then(|| {
+    let choice = pressed.then(|| {
         let mut chosen = profile.clone();
         for book in rows {
             chosen.choose(book, !all_on);
         }
         chosen
-    })
+    });
+    (heading.response.rect, choice)
 }
 
 /// One book: its box and name, its code in Plex Mono and its year (not on a phone). The whole
@@ -249,8 +296,10 @@ fn group_header(
 fn row(ui: &mut egui::Ui, profile: &Profile, book: &Book, phone: bool) -> Option<Profile> {
     let p = theme::palette(ui);
     // The row is laid out before its contents, so the box and name stay on top of it.
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), if phone { 44.0 } else { 40.0 }),
+        egui::Sense::click(),
+    );
     if ui.rect_contains_pointer(rect) {
         ui.painter().rect_filled(rect, 0, p.raised);
     }

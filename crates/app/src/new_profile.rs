@@ -38,7 +38,7 @@ impl NewProfile {
                     ui.add_space(16.0);
                     ui.label(theme::medium("Game rules"));
                     let choices = [Rules::Dnd5e, Rules::Pf2e].map(|r| (r, rules_name(r)));
-                    theme::segmented(ui, &mut self.draft.rules, &choices, false);
+                    theme::segmented(ui, &mut self.draft.rules, &choices, theme::Seg::Normal);
                     ui.add_space(16.0);
                     ui.label(theme::medium("Game data download address"));
                     theme::input(
