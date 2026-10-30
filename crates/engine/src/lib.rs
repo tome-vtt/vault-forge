@@ -355,6 +355,13 @@ pub enum Event {
         id: String,
         line: String,
     },
+    /// The notes the running conversion has written so far, by folder: each folder in the
+    /// compendium and rules folders by name, notes directly in one under its own name, in name
+    /// order. Sent when it changes.
+    ConversionProgress {
+        id: String,
+        written: Vec<(String, usize)>,
+    },
     /// The profile's conversion ended. `converted` only when the notes replaced the vault's
     /// converted notes; otherwise the vault is as it was. `message` says so in one sentence.
     ConversionEnded {

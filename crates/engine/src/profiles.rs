@@ -267,7 +267,7 @@ fn converter_path(path: &Path) -> PathBuf {
 
 /// A compendium or rules folder as the converter config writes it, `name/`, refused when it is
 /// empty or leaves the vault: a conversion replaces this folder, so it must be inside the vault.
-fn vault_folder(folder: &str, what: &str) -> Result<String, String> {
+pub(crate) fn vault_folder(folder: &str, what: &str) -> Result<String, String> {
     let folder = folder.trim().trim_matches(['/', '\\']);
     let inside = Path::new(folder)
         .components()
