@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
-use vault_forge_engine::{Command, DataState, Engine, Event, ProfileDraft, Rules};
+use vault_forge_engine::{Command, DataState, Engine, Event, Fix, ProfileDraft, Rules};
 
 /// Serves one game data archive at every path.
 fn serve_game_data() -> String {
@@ -552,4 +552,130 @@ fn nested_folders_are_converted_again_over_their_own_notes() {
         assert!(setup.vault.join(compendium).join("XPHB.md").is_file());
         assert!(setup.vault.join(rules).join("conditions.md").is_file());
     }
+}
+
+/// The notes in the vault's compendium and rules folders.
+fn notes_in_vault(vault: &Path) -> usize {
+    let all = files(vault);
+    all.keys()
+        .filter(|f| f.starts_with("compendium/") || f.starts_with("rules/"))
+        .filter(|f| !f.ends_with('/'))
+        .count()
+}
+
+#[test]
+fn a_conversion_keeps_its_last_run_with_notes_counted_by_vault_folder() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    // The stand-in writes a book named with a slash into a folder of the compendium.
+    choose(&setup, &id, &["XPHB", "bestiary/MM", "bestiary/VGM"]);
+
+    let (lines, converted, message) = convert(&setup, &id);
+
+    assert!(converted, "{message}");
+    let run = setup.engine.last_run(&id).expect("a last run");
+    assert!(run.converted);
+    assert_eq!(run.exit_code, Some(0));
+    assert_eq!(run.message, message);
+    assert_eq!(run.books, 3);
+    assert_eq!(
+        run.folders,
+        [
+            ("compendium/bestiary".to_owned(), 2),
+            ("compendium".to_owned(), 1),
+            ("rules".to_owned(), 1),
+        ],
+        "largest first"
+    );
+    assert_eq!(run.notes(), notes_in_vault(&setup.vault));
+    assert_eq!(run.log, lines);
+    assert_eq!(run.warnings.len(), 1);
+    assert_eq!(
+        run.warnings[0].line,
+        "Warning: no image file for img/bestiary/Vrock.webp"
+    );
+    assert_eq!(run.warnings[0].step, "Writing compendium/bestiary/VGM.md");
+    assert!(run.seconds < 60, "{}", run.seconds);
+}
+
+#[test]
+fn a_failed_conversion_replaces_the_last_run_and_keeps_its_exit_code_and_log() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    convert(&setup, &id);
+    choose(&setup, &id, &["XPHB", "EXIT2"]);
+
+    let (lines, converted, message) = convert(&setup, &id);
+
+    assert!(!converted);
+    let run = setup.engine.last_run(&id).expect("a last run");
+    assert!(!run.converted);
+    assert_eq!(run.exit_code, Some(2));
+    assert_eq!(run.message, message);
+    assert_eq!(run.fix, Some(Fix::DownloadAddress));
+    assert_eq!(run.log, lines);
+    assert_eq!(run.log.last().unwrap(), "Error: stopping with exit code 2");
+}
+
+#[test]
+fn the_last_run_is_kept_across_a_restart_and_removed_with_its_profile() {
+    let address = serve_game_data();
+    let mut setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    let (_, converted, message) = convert(&setup, &id);
+    assert!(converted, "{message}");
+    let run = setup.engine.last_run(&id);
+    assert!(run.is_some());
+
+    let converter = PathBuf::from(env!("CARGO_BIN_EXE_stand-in-converter"));
+    let app = setup._dir.path().join("app");
+    (setup.engine, setup.events) = Engine::start_with_converter(app, converter).unwrap();
+    assert_eq!(setup.engine.last_run(&id), run);
+
+    setup.engine.send(Command::DeleteProfile(id.clone()));
+    wait(&setup.events, |e| matches!(e, Event::ProfileDeleted(_)));
+    let again = profile(&setup, "Thursday", &address, &["XPHB"]);
+    assert_eq!(again.id, id, "the same file name");
+    assert_eq!(setup.engine.last_run(&id), None);
+}
+
+#[test]
+fn a_cancelled_conversion_keeps_the_earlier_last_run() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    convert(&setup, &id);
+    let earlier = setup.engine.last_run(&id);
+    choose(&setup, &id, &["XPHB", "HANG"]);
+
+    setup.engine.send(Command::Convert(id.clone()));
+    wait(
+        &setup.events,
+        |e| matches!(e, Event::ConversionLog { line, .. } if line == "Waiting"),
+    );
+    setup.engine.send(Command::CancelConversion(id.clone()));
+    wait(&setup.events, |e| {
+        matches!(e, Event::ConversionEnded { .. })
+    });
+
+    assert_eq!(setup.engine.last_run(&id), earlier);
+}
+
+#[test]
+fn the_log_is_saved_to_the_file_the_user_picks() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    let (lines, _, _) = convert(&setup, &id);
+    let to = setup._dir.path().join("thursday.log");
+
+    setup.engine.send(Command::SaveLog {
+        id: id.clone(),
+        to: to.clone(),
+    });
+
+    let saved = std::fs::read_to_string(&to).unwrap();
+    assert_eq!(saved.lines().collect::<Vec<_>>(), lines);
 }

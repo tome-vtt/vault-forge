@@ -10,6 +10,7 @@ mod data_cache;
 mod downloader;
 mod game_data;
 mod holding_folder;
+mod last_run;
 mod profile_files;
 mod profiles;
 mod release_check;
@@ -27,7 +28,10 @@ use serde::{Deserialize, Serialize};
 use app_settings::AppSettings;
 use conversion::Conversion;
 use game_data::{GameData, Kind};
+use profile_files::ProfileFiles;
 use profiles::Profiles;
+
+pub use last_run::{Fix, LastRun, LogLevel, Warning, log_level};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Rules {
@@ -326,6 +330,11 @@ pub enum Command {
     Convert(String),
     /// Stops the profile's conversion; its vault stays as it was.
     CancelConversion(String),
+    /// Writes the log of the profile's last run to the file, one line each.
+    SaveLog {
+        id: String,
+        to: PathBuf,
+    },
     SetAppearance(Appearance),
     /// Asks the latest-release address (GitHub's API; the app sends [`LATEST_RELEASE`]) whether a
     /// newer Vault Forge is out. Answers only when one is; a failed check stays silent.
@@ -364,6 +373,7 @@ pub enum Event {
     },
     /// The profile's conversion ended. `converted` only when the notes replaced the vault's
     /// converted notes; otherwise the vault is as it was. `message` says so in one sentence.
+    /// Unless it was cancelled, its [`LastRun`] is saved before this is sent.
     ConversionEnded {
         id: String,
         converted: bool,
@@ -452,7 +462,7 @@ impl Engine {
             profiles,
             settings,
             game_data,
-            conversion: Conversion::new(converter, events.clone()),
+            conversion: Conversion::new(converter, ProfileFiles::open(&app_data)?, events.clone()),
             events,
         };
         Ok((engine, receiver))
@@ -473,6 +483,11 @@ impl Engine {
     pub fn converted_notes(&self, id: &str) -> Option<ConvertedNotes> {
         let profiles = self.profiles.lock().unwrap();
         conversion::converted_notes(profiles.get(id).ok()?)
+    }
+
+    /// The record of the profile's most recent conversion; `None` before its first.
+    pub fn last_run(&self, id: &str) -> Option<LastRun> {
+        self.conversion.last_run(id)
     }
 
     pub fn appearance(&self) -> Appearance {
@@ -546,6 +561,7 @@ impl Engine {
                 self.conversion.cancel(&id);
                 Ok(())
             }
+            Command::SaveLog { id, to } => self.conversion.save_log(&id, &to),
             Command::SetAppearance(appearance) => {
                 self.settings.lock().unwrap().set_appearance(appearance)
             }
