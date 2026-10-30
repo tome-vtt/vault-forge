@@ -19,7 +19,7 @@ pub struct Palette {
     pub ground: Color32,
     pub surface: Color32,
     pub border: Color32,
-    raised: Color32,
+    pub raised: Color32,
     hover: Color32,
     active: Color32,
     rule: Color32,

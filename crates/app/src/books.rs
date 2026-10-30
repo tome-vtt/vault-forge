@@ -237,49 +237,61 @@ fn group_header(
     })
 }
 
-/// One book: its box and name, its code in Plex Mono and its year (not on a phone). Returns the
-/// profile with the book ticked or unticked when the box changes.
+/// One book: its box and name, its code in Plex Mono and its year (not on a phone). The whole
+/// row ticks the box. Returns the profile with the book ticked or unticked when it changes.
 fn row(ui: &mut egui::Ui, profile: &Profile, book: &Book, phone: bool) -> Option<Profile> {
     let p = theme::palette(ui);
-    let top = ui.cursor().top();
-    let line = ui.max_rect().x_range();
-    ui.painter()
-        .hline(line, top, ui.visuals().widgets.noninteractive.bg_stroke);
+    // The row is laid out before its contents, so the box and name stay on top of it.
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), egui::Sense::click());
+    if ui.rect_contains_pointer(rect) {
+        ui.painter().rect_filled(rect, 0, p.raised);
+    }
+    ui.painter().hline(
+        rect.x_range(),
+        rect.top(),
+        ui.visuals().widgets.noninteractive.bg_stroke,
+    );
     let mut on = profile.has(book);
-    let toggled = egui::Frame::new()
-        .inner_margin(egui::vec2(16.0, 0.0))
-        .show(ui, |ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), 40.0),
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
-                    ui.spacing_mut().item_spacing.x = 12.0;
-                    if !phone {
-                        ui.add_sized(
-                            [44.0, 20.0],
-                            egui::Label::new(&book.year).halign(egui::Align::Max),
-                        );
-                    }
-                    let code = egui::RichText::new(&book.code).monospace();
-                    let code = if on {
-                        code.color(p.accent)
-                    } else {
-                        code.weak()
-                    };
-                    ui.add_sized(
-                        [if phone { 64.0 } else { 72.0 }, 20.0],
-                        egui::Label::new(code).halign(egui::Align::Min),
-                    );
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.checkbox(&mut on, &book.name).changed()
-                    })
-                    .inner
-                },
-            )
+    let layout = egui::Layout::right_to_left(egui::Align::Center);
+    let contents = egui::UiBuilder::new()
+        .max_rect(rect.shrink2(egui::vec2(16.0, 0.0)))
+        .layout(layout);
+    let ticked = ui
+        .scope_builder(contents, |ui| {
+            ui.spacing_mut().item_spacing.x = 12.0;
+            if !phone {
+                let year = egui::RichText::new(&book.year).weak();
+                ui.add_sized(
+                    [44.0, 20.0],
+                    egui::Label::new(year)
+                        .halign(egui::Align::Max)
+                        .selectable(false),
+                );
+            }
+            let code = egui::RichText::new(&book.code).monospace();
+            let code = if on {
+                code.color(p.accent)
+            } else {
+                code.weak()
+            };
+            ui.add_sized(
+                [if phone { 64.0 } else { 72.0 }, 20.0],
+                egui::Label::new(code)
+                    .halign(egui::Align::Min)
+                    .selectable(false),
+            );
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.checkbox(&mut on, &book.name)
+            })
             .inner
         })
         .inner;
-    toggled.then(|| {
+    let row_clicked = response.clicked() && !ticked.clicked();
+    if row_clicked {
+        on = !on;
+    }
+    (ticked.changed() || row_clicked).then(|| {
         let mut chosen = profile.clone();
         chosen.choose(book, on);
         chosen

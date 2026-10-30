@@ -922,6 +922,19 @@ mod tests {
     }
 
     #[test]
+    fn clicking_anywhere_on_a_book_row_ticks_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        game_data(&events, three_books());
+        harness.run();
+        // The code sits in the row, beside the box, not in it.
+        harness.get_by_label("PHB").click();
+        harness.run();
+        harness.get_by_label("1 of 3 chosen");
+        assert_eq!(harness.state().engine.profiles()[0].books, ["PHB"]);
+    }
+
+    #[test]
     fn a_dialog_is_at_most_480_wide_with_its_buttons_at_the_right() {
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
