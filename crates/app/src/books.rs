@@ -219,8 +219,7 @@ fn describe(ui: &mut egui::Ui, profile: &Profile, books: &[Book]) {
                     .corner_radius(4)
                     .inner_margin(egui::vec2(8.0, 2.0))
                     .show(ui, |ui| {
-                        let text = egui::RichText::new(code).monospace().size(12.0);
-                        ui.label(text.color(p.accent));
+                        ui.label(theme::mono_medium(code, 12.0).color(p.accent));
                     });
                 if let Some(book) = books.iter().find(|b| b.code == *code) {
                     pill.response.on_hover_text(&book.name);
@@ -325,11 +324,10 @@ fn row(ui: &mut egui::Ui, profile: &Profile, book: &Book, phone: bool) -> Option
                         .selectable(false),
                 );
             }
-            let code = egui::RichText::new(&book.code).monospace();
             let code = if on {
-                code.color(p.accent)
+                theme::mono_medium(&book.code, 13.0).color(p.accent)
             } else {
-                code.weak()
+                egui::RichText::new(&book.code).monospace().weak()
             };
             ui.add_sized(
                 [if phone { 64.0 } else { 72.0 }, 20.0],

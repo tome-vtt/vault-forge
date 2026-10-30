@@ -128,6 +128,10 @@ pub fn install(ctx: &egui::Context) {
             "plex-mono",
             &include_bytes!("../fonts/IBMPlexMono-Regular.ttf")[..],
         ),
+        (
+            "plex-mono-medium",
+            &include_bytes!("../fonts/IBMPlexMono-Medium.ttf")[..],
+        ),
     ] {
         fonts
             .font_data
@@ -142,6 +146,11 @@ pub fn install(ctx: &egui::Context) {
             .families
             .insert(FontFamily::Name(weight.into()), family);
     }
+    let mut mono_medium = vec!["plex-mono-medium".to_owned()];
+    mono_medium.extend(fonts.families[&FontFamily::Monospace].iter().cloned());
+    fonts
+        .families
+        .insert(FontFamily::Name("mono-medium".into()), mono_medium);
     for (family, font) in [
         (FontFamily::Proportional, "plex-sans"),
         (FontFamily::Monospace, "plex-mono"),
@@ -331,6 +340,11 @@ pub fn brand(ui: &mut egui::Ui) {
 /// Text in IBM Plex Sans Medium, the demo's weight 500 for labels and emphasis.
 pub fn medium(text: impl Into<String>) -> egui::RichText {
     egui::RichText::new(text).family(FontFamily::Name("medium".into()))
+}
+
+/// A code in IBM Plex Mono Medium at `size` points, as the demo shows chosen books' codes.
+pub fn mono_medium(text: impl Into<String>, size: f32) -> egui::RichText {
+    egui::RichText::new(text).font(FontId::new(size, FontFamily::Name("mono-medium".into())))
 }
 
 /// The demo's text field: 40 tall, filling the width it is given, with a 1px edge and 10px
