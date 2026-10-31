@@ -4,7 +4,7 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use crate::profile_files::{ProfileFiles, files_in};
-use crate::{Profile, ProfileDraft, Rules, is_valid_name};
+use crate::{Profile, Rules};
 
 /// ttrpg-convert-cli's YAML statblock monster template (Apache-2.0, from its
 /// `examples/templates/tools5e`). The converter's release has no copy of it, so the app ships one.
@@ -60,6 +60,29 @@ const WINDOWS_DEVICES: [&str; 30] = [
     "com8", "com9", "com¹", "com²", "com³", "lpt0", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6",
     "lpt7", "lpt8", "lpt9", "lpt¹", "lpt²", "lpt³",
 ];
+
+/// What the user fills in to create a profile.
+#[derive(Clone, Debug, Default)]
+pub struct ProfileDraft {
+    pub name: String,
+    pub rules: Rules,
+    pub address: String,
+    pub vault: String,
+}
+
+impl ProfileDraft {
+    /// The rule behind the New profile screen's Create button.
+    pub fn is_complete(&self) -> bool {
+        is_valid_name(&self.name)
+            && !self.address.trim().is_empty()
+            && !self.vault.trim().is_empty()
+    }
+}
+
+/// A profile's name must have something in it.
+pub fn is_valid_name(name: &str) -> bool {
+    !name.trim().is_empty()
+}
 
 pub(crate) struct Profiles {
     files: ProfileFiles,
