@@ -750,3 +750,28 @@ fn the_log_is_saved_to_the_file_the_user_picks() {
     let saved = std::fs::read_to_string(&to).unwrap();
     assert_eq!(saved.lines().collect::<Vec<_>>(), lines);
 }
+
+#[test]
+fn a_conversion_uses_the_templates_in_the_folder_now_not_at_save() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let templates = tempfile::tempdir().unwrap();
+    std::fs::write(templates.path().join("monster2md.txt"), "{name}").unwrap();
+    let mut profile = setup.engine.profiles()[0].clone();
+    profile.templates = Some(templates.path().to_path_buf());
+    setup.engine.send(Command::SaveProfile(profile.clone()));
+    std::fs::write(templates.path().join("spell2md.txt"), "{name}").unwrap();
+    std::fs::remove_file(templates.path().join("monster2md.txt")).unwrap();
+
+    let (lines, converted, message) = convert(&setup, &profile.id);
+
+    assert!(converted, "{message}");
+    let used: Vec<&String> = lines
+        .iter()
+        .filter(|l| l.starts_with("Template "))
+        .collect();
+    // The config writes Windows paths with `/`.
+    let spell = templates.path().join("spell2md.txt").display().to_string();
+    let spell = spell.replace('\\', "/");
+    assert_eq!(used, [&format!("Template spell: {spell}")]);
+}

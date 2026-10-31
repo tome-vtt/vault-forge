@@ -74,8 +74,8 @@ pub struct ConverterConfig {
     pub use_dice_roller: bool,
     /// Also selects the YAML statblock monster template, for the Fantasy Statblocks plugin.
     pub yaml_statblocks: bool,
-    /// Template file per note type. The Engine fills it on every save from `yaml_statblocks` and
-    /// the profile's template folder; anything set here is replaced.
+    /// Template file per note type. The Engine fills it on every save and before each conversion
+    /// from `yaml_statblocks` and the profile's template folder; anything set here is replaced.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub template: BTreeMap<String, PathBuf>,
 }
@@ -558,21 +558,25 @@ impl Engine {
                     self.game_data.cancel(address);
                 }
             }),
-            Command::Convert(id) => profiles.get(&id).and_then(|p| {
-                let data = self.game_data.data_folder(&p.address);
-                let downloading = p
-                    .downloads()
-                    .iter()
-                    .any(|(a, _)| self.game_data.is_running(a));
-                let converting = self.conversion.converting();
-                match p.blocker(data.is_some(), downloading, converting.as_deref()) {
-                    Some(reason) => Err(reason.into()),
-                    None => {
-                        self.conversion
-                            .start(p, &profiles.file(&id), &data.unwrap_or_default())
+            Command::Convert(id) => profiles
+                .get(&id)
+                .and_then(|p| {
+                    let data = self.game_data.data_folder(&p.address);
+                    let downloading = p
+                        .downloads()
+                        .iter()
+                        .any(|(a, _)| self.game_data.is_running(a));
+                    let converting = self.conversion.converting();
+                    match p.blocker(data.is_some(), downloading, converting.as_deref()) {
+                        Some(reason) => Err(reason.into()),
+                        None => Ok(data.unwrap_or_default()),
                     }
-                }
-            }),
+                })
+                .and_then(|data| {
+                    profiles.refresh_templates(&id)?;
+                    let p = profiles.get(&id)?;
+                    self.conversion.start(p, &profiles.file(&id), &data)
+                }),
             Command::CancelConversion(id) => {
                 self.conversion.cancel(&id);
                 Ok(())

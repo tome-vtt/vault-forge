@@ -215,6 +215,25 @@ impl Profiles {
         Ok(())
     }
 
+    /// Rewrites the profile's `template` keys from its template folder as it is now, since the
+    /// user may add or remove templates after saving. Run before each conversion. Not `save`:
+    /// that would quietly fix hand-edited folders the conversion must refuse.
+    pub(crate) fn refresh_templates(&mut self, id: &str) -> Result<(), String> {
+        let i = self.list.iter().position(|p| p.id == id);
+        let i = i.ok_or("That profile no longer exists.")?;
+        let templates = self.templates(&self.list[i])?;
+        if templates == self.list[i].config.template {
+            return Ok(());
+        }
+        let mut profile = self.list[i].clone();
+        profile.config.template = templates;
+        self.files
+            .save(&profile)
+            .map_err(|e| format!("Could not save the profile: {e}"))?;
+        self.list[i] = profile;
+        Ok(())
+    }
+
     pub(crate) fn delete(&mut self, id: &str) -> Result<(), String> {
         self.files
             .delete(id)
