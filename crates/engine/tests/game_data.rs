@@ -435,6 +435,37 @@ fn convert_waits_for_switched_off_images_to_stop_downloading() {
 }
 
 #[test]
+fn another_profiles_cancelled_images_download_does_not_hold_back_convert() {
+    let server = Server::start();
+    let images = format!("{}/stalled.zip", server.url);
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let [thursday, sunday] = [("Thursday", true), ("Sunday", false)].map(|(name, on)| {
+        let address = server.put(&format!("/{name}.zip"), game_data(1, 0));
+        let profile = Profile {
+            images: on,
+            images_address: images.clone(),
+            ..create(&engine, &events, name, &address)
+        };
+        engine.send(Command::SaveProfile(profile.clone()));
+        profile
+    });
+    engine.send(Command::DownloadImages(thursday.clone()));
+    wait(&events, &images, |s| {
+        matches!(s, DataState::Downloading { .. })
+    });
+
+    engine.send(Command::CancelDownload(thursday.id));
+    engine.send(Command::Convert(sunday.id));
+
+    let refused = events.try_iter().find_map(|e| match e {
+        Event::Failed(message) => Some(message),
+        _ => None,
+    });
+    assert_eq!(refused.as_deref(), Some("Download the game data first."));
+}
+
+#[test]
 fn switching_images_off_with_nothing_downloading_reports_nothing_stopping() {
     let server = Server::start();
     let address = server.put("/data.zip", game_data(1, 0));
