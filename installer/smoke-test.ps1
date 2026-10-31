@@ -3,7 +3,7 @@
 param([Parameter(Mandatory)] [string] $AppFolder)
 $ErrorActionPreference = 'Stop'
 
-# Where the Engine looks for it (bundled_converter in crates/engine/src/lib.rs).
+# Where the Engine looks for it (bundled_converter_for in crates/engine/src/lib.rs).
 $converter = Join-Path $AppFolder "converter/ttrpg-convert$(if ($IsWindows) { '.exe' })"
 if (-not (Test-Path $converter)) { throw "No converter at $converter" }
 
