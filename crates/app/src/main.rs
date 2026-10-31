@@ -26,7 +26,7 @@ fn main() -> eframe::Result {
     };
     let (app_data, local_data) = app_data_dirs().expect("no home folder to keep app data in");
     let (engine, events) =
-        Engine::start(app_data, local_data).expect("could not open the app data folder");
+        Engine::start(app_data, local_data).expect("could not open the app data folders");
     engine.send(Command::CheckRelease(LATEST_RELEASE.into()));
     eframe::run_native(
         "Vault Forge",

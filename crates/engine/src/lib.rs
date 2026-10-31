@@ -2,7 +2,8 @@
 //! It has no screens; the app crate only asks it.
 //!
 //! The front door: [`Engine::start`] opens the app data folder and the local data folder and
-//! returns the Engine and an event receiver; screens call [`Engine::send`] and drain the receiver every frame.
+//! returns the Engine and an event receiver; screens call [`Engine::send`] and drain the receiver
+//! every frame.
 mod app_settings;
 mod conversion;
 mod converter;
