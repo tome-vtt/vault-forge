@@ -62,7 +62,7 @@ impl eframe::App for Shell {
     }
 }
 
-/// Where profiles and app settings live: `%APPDATA%\Vault Forge` on Windows, as the approved
+/// The app data folder handed to the Engine:`%APPDATA%\Vault Forge` on Windows, as the approved
 /// demo shows. `ProjectDirs::data_dir()` would add a `data` folder there; elsewhere they agree.
 fn app_data_dir() -> Option<std::path::PathBuf> {
     let project = directories::ProjectDirs::from("", "", "Vault Forge")?;
