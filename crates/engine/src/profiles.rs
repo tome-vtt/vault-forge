@@ -216,7 +216,8 @@ impl Profiles {
     }
 
     /// Rewrites the profile's `template` keys from its template folder as it is now, since the
-    /// user may add or remove templates after saving. Run before each conversion.
+    /// user may add or remove templates after saving. Run before each conversion. Not `save`:
+    /// that would quietly fix hand-edited folders the conversion must refuse.
     pub(crate) fn refresh_templates(&mut self, id: &str) -> Result<(), String> {
         let i = self.list.iter().position(|p| p.id == id);
         let i = i.ok_or("That profile no longer exists.")?;

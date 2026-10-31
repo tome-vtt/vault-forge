@@ -2,8 +2,9 @@
 //! converter's arguments (`-c <config> -o <output> -g <game> <data>`), prints log lines on
 //! stdout and stderr, and writes a note per chosen book into the config's compendium folder and
 //! one into its rules folder; a book named with a slash (`bestiary/MM`) goes into a folder of the
-//! compendium. It prints `Template <type>: <path>` for each template the config names. A chosen book named EXIT1 or EXIT2 makes it end with that exit code
-//! once its notes are written; HANG makes it wait until it is killed.
+//! compendium. It prints `Template <type>: <path>` for each template the config names. A chosen
+//! book named EXIT1 or EXIT2 makes it end with that exit code once its notes are written; HANG
+//! makes it wait until it is killed.
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::{env, fs, process, thread, time::Duration};
