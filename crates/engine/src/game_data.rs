@@ -43,9 +43,9 @@ struct Downloads {
 }
 
 impl GameData {
-    pub(crate) fn open(app_data: &Path, events: Sender<Event>) -> std::io::Result<Self> {
+    pub(crate) fn open(local_data: &Path, events: Sender<Event>) -> std::io::Result<Self> {
         Ok(Self {
-            cache: Arc::new(DataCache::open(app_data)?),
+            cache: Arc::new(DataCache::open(local_data)?),
             events,
             running: Arc::default(),
         })

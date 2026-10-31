@@ -1,7 +1,7 @@
-//! Data cache adapter: one folder per download address under `data-cache/`, holding the unpacked
+//! Data cache adapter: one folder per download address under `data/`, holding the unpacked
 //! archive and `forge.yaml` (what was downloaded and when). Holds no rules.
 //! While a download runs, `<key>.part` is the archive and `<key>.new` the unpacked copy; a removed
-//! copy waits in `data-cache.removing/` until it is deleted.
+//! copy waits in `data.removing/` until it is deleted.
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -32,8 +32,8 @@ pub(crate) struct DataCache {
 }
 
 impl DataCache {
-    pub(crate) fn open(app_data: &Path) -> io::Result<Self> {
-        let dir = app_data.join("data-cache");
+    pub(crate) fn open(local_data: &Path) -> io::Result<Self> {
+        let dir = local_data.join("data");
         fs::create_dir_all(&dir)?;
         // Copies a closed app had not finished removing.
         let bin = dir.with_extension("removing");
