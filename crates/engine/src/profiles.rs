@@ -138,7 +138,10 @@ impl Profiles {
             templates: None,
         };
         let id = profile.id.clone();
-        self.save(profile)?;
+        self.save(profile).inspect_err(|_| {
+            // A config without its fields file never loads, yet would keep the id taken.
+            let _ = self.files.delete(&id);
+        })?;
         Ok(id)
     }
 

@@ -188,14 +188,14 @@ fn the_sidebar_lists_profiles_by_name_whatever_their_case() {
 }
 
 #[test]
-fn a_delete_that_stops_partway_leaves_the_profile_whole() {
+fn a_delete_that_fails_partway_keeps_the_config_and_the_profile() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, events) = start(dir.path());
     let profile = create(&engine, &events, "Thursday");
     // A folder in place of the profile's own fields file, so removing it fails.
     let beside = dir.path().join("profiles/thursday.forge.yaml");
     std::fs::remove_file(&beside).unwrap();
-    std::fs::create_dir_all(beside.join("locked")).unwrap();
+    std::fs::create_dir(&beside).unwrap();
 
     engine.send(Command::DeleteProfile(profile.id));
 

@@ -84,19 +84,12 @@ impl ProfileFiles {
         Ok(profiles)
     }
 
-    /// Writes the profile's converter config, and its own fields beside it. A new profile whose
-    /// writes fail leaves no files behind.
+    /// Writes the profile's converter config, and its own fields beside it.
     pub(crate) fn save(&self, p: &Profile) -> io::Result<()> {
         let config = serde_yaml_ng::to_string(&p.config).map_err(io::Error::other)?;
         let beside = serde_yaml_ng::to_string(p).map_err(io::Error::other)?;
-        let new = !self.exists(&p.id);
-        let written = write_atomic(&self.config_path(&p.id), &config)
-            .and_then(|()| write_atomic(&self.beside_path(&p.id), &beside));
-        if written.is_err() && new {
-            // A config without its fields file never loads, yet would keep the id taken.
-            let _ = self.delete(&p.id);
-        }
-        written
+        write_atomic(&self.config_path(&p.id), &config)?;
+        write_atomic(&self.beside_path(&p.id), &beside)
     }
 
     /// Removes its files; one already missing is fine.
