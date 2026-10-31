@@ -150,6 +150,77 @@ fn a_profile_missing_its_config_file_can_still_be_deleted() {
 }
 
 #[test]
+fn a_blank_rename_is_refused_and_the_name_and_file_stay_as_they_were() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Thursday");
+    let file = dir.path().join("profiles/thursday.forge.yaml");
+    let before = std::fs::read(&file).unwrap();
+
+    for blank in ["", "   \t"] {
+        engine.send(Command::RenameProfile {
+            id: profile.id.clone(),
+            name: blank.into(),
+        });
+
+        assert!(events.try_iter().any(|e| matches!(e, Event::Failed(_))));
+        assert_eq!(engine.profiles()[0].name, "Thursday");
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+    }
+}
+
+#[test]
+fn the_sidebar_lists_profiles_by_name_whatever_their_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let alpha = create(&engine, &events, "alpha");
+    create(&engine, &events, "Charlie");
+    create(&engine, &events, "Beta");
+    let names = || -> Vec<_> { engine.profiles().into_iter().map(|p| p.name).collect() };
+    assert_eq!(names(), ["alpha", "Beta", "Charlie"]);
+
+    engine.send(Command::RenameProfile {
+        id: alpha.id,
+        name: "delta".into(),
+    });
+
+    assert_eq!(names(), ["Beta", "Charlie", "delta"]);
+}
+
+#[test]
+fn a_delete_that_fails_partway_keeps_the_config_and_the_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Thursday");
+    // A folder in place of the profile's own fields file, so removing it fails.
+    let beside = dir.path().join("profiles/thursday.forge.yaml");
+    std::fs::remove_file(&beside).unwrap();
+    std::fs::create_dir(&beside).unwrap();
+
+    engine.send(Command::DeleteProfile(profile.id));
+
+    assert!(events.try_iter().any(|e| matches!(e, Event::Failed(_))));
+    assert!(dir.path().join("profiles/thursday.yaml").exists());
+    assert_eq!(engine.profiles().len(), 1);
+}
+
+#[test]
+fn a_create_that_fails_partway_leaves_no_files_and_frees_its_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    // A folder where the fields file's temporary copy goes, so the second write fails.
+    let blocker = dir.path().join("profiles/thursday.forge.tmp");
+    std::fs::create_dir(&blocker).unwrap();
+
+    engine.send(Command::CreateProfile(draft("Thursday")));
+
+    assert!(events.try_iter().any(|e| matches!(e, Event::Failed(_))));
+    assert_eq!(yaml_files(dir.path()), ["thursday.forge.tmp"]);
+    std::fs::remove_dir(&blocker).unwrap();
+    assert_eq!(create(&engine, &events, "Thursday").id, "thursday");
+}
+
+#[test]
 fn a_profile_named_like_a_windows_device_gets_a_file_windows_can_open() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, events) = start(dir.path());

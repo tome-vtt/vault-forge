@@ -32,6 +32,7 @@ use last_run::LastRuns;
 use profiles::Profiles;
 
 pub use last_run::{Fix, LastRun, LogLevel, Warning, log_level};
+pub use profiles::{ProfileDraft, is_valid_name};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Rules {
@@ -278,24 +279,6 @@ pub enum Appearance {
     Dark,
 }
 
-/// What the user fills in to create a profile.
-#[derive(Clone, Debug, Default)]
-pub struct ProfileDraft {
-    pub name: String,
-    pub rules: Rules,
-    pub address: String,
-    pub vault: String,
-}
-
-impl ProfileDraft {
-    /// The rule behind the New profile screen's Create button.
-    pub fn is_complete(&self) -> bool {
-        is_valid_name(&self.name)
-            && !self.address.trim().is_empty()
-            && !self.vault.trim().is_empty()
-    }
-}
-
 /// The book codes typed where the game data has no books list to tick: separated by commas or
 /// spaces, each once.
 pub fn typed_codes(text: &str) -> Vec<String> {
@@ -306,11 +289,6 @@ pub fn typed_codes(text: &str) -> Vec<String> {
         }
     }
     codes
-}
-
-/// A profile's name must have something in it.
-pub fn is_valid_name(name: &str) -> bool {
-    !name.trim().is_empty()
 }
 
 #[derive(Debug)]
