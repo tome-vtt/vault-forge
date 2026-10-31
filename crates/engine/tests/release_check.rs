@@ -45,7 +45,8 @@ fn latest_release(tag: &str) -> String {
 /// leaves the check's worker as the only sender, so the drain ends when the check has finished.
 fn check(url: &str) -> Vec<Event> {
     let dir = tempfile::tempdir().unwrap();
-    let (engine, events) = Engine::start(dir.path().to_path_buf()).unwrap();
+    let (engine, events) =
+        Engine::start(dir.path().to_path_buf(), dir.path().join("local")).unwrap();
     engine.send(Command::CheckRelease(url.into()));
     drop(engine);
     events.iter().collect()

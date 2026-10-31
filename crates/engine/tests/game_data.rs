@@ -166,7 +166,7 @@ fn game_data(books: usize, adventures: usize) -> Vec<u8> {
 }
 
 fn start(dir: &Path) -> (Engine, Receiver<Event>) {
-    Engine::start(dir.to_path_buf()).unwrap()
+    Engine::start(dir.to_path_buf(), dir.join("local")).unwrap()
 }
 
 fn create(engine: &Engine, events: &Receiver<Event>, name: &str, address: &str) -> Profile {
@@ -225,7 +225,7 @@ fn book(code: &str, name: &str, year: &str, group: Group) -> Book {
 }
 
 fn cache_entries(dir: &Path) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(dir.join("data-cache"))
+    let mut names: Vec<String> = std::fs::read_dir(dir.join("local").join("data"))
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
@@ -248,8 +248,29 @@ fn a_good_archive_becomes_ready_with_its_book_count() {
     assert_eq!(books(state), 5);
     let entries = cache_entries(dir.path());
     assert_eq!(entries.len(), 1, "{entries:?}");
-    let folder = dir.path().join("data-cache").join(&entries[0]);
+    let folder = dir.path().join("local").join("data").join(&entries[0]);
     assert!(folder.join("5etools-src/data/books.json").is_file());
+}
+
+#[test]
+fn downloaded_data_is_kept_in_the_local_folder_not_the_app_data_folder() {
+    let server = Server::start();
+    let address = server.put("/5e/data.zip", game_data(3, 2));
+    let dir = tempfile::tempdir().unwrap();
+    let (app_data, local) = (dir.path().join("roaming"), dir.path().join("local"));
+    let (engine, events) = Engine::start(app_data.clone(), local.clone()).unwrap();
+    let profile = create(&engine, &events, "Thursday", &address);
+
+    engine.send(Command::DownloadGameData(profile));
+    wait(&events, &address, ready);
+
+    let mut kept: Vec<_> = std::fs::read_dir(&app_data)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    kept.sort();
+    assert_eq!(kept, ["profiles", "templates"], "no game data roams");
+    assert_eq!(std::fs::read_dir(local.join("data")).unwrap().count(), 1);
 }
 
 #[test]
@@ -575,7 +596,7 @@ fn images_are_a_second_download_only_when_switched_on_with_their_size_shown_firs
     engine.send(Command::DownloadImages(engine.profiles().remove(0)));
     wait(&events, &images, ready);
     assert_eq!(server.gets(), 2);
-    let cache = dir.path().join("data-cache");
+    let cache = dir.path().join("local").join("data");
     let entries = cache_entries(dir.path());
     assert!(
         entries
@@ -835,7 +856,8 @@ fn a_data_folder_with_no_books_list_leaves_the_books_to_be_typed() {
     wait(&events, &address, ready);
     let folder = dir
         .path()
-        .join("data-cache")
+        .join("local")
+        .join("data")
         .join(&cache_entries(dir.path())[0]);
     std::fs::remove_file(folder.join("5etools-src/data/books.json")).unwrap();
 

@@ -1,8 +1,8 @@
 //! The Vault Forge engine: profiles, game data, conversion and everything else that holds a rule.
 //! It has no screens; the app crate only asks it.
 //!
-//! The front door: [`Engine::start`] opens the app data folder and returns the Engine and an
-//! event receiver; screens call [`Engine::send`] and drain the receiver every frame.
+//! The front door: [`Engine::start`] opens the app data folder and the local data folder and
+//! returns the Engine and an event receiver; screens call [`Engine::send`] and drain the receiver every frame.
 mod app_settings;
 mod conversion;
 mod converter;
@@ -450,20 +450,23 @@ fn bundled_converter_for(app: &Path) -> PathBuf {
 }
 
 impl Engine {
-    pub fn start(app_data: PathBuf) -> io::Result<(Engine, Receiver<Event>)> {
+    /// Profiles and app settings live in `app_data`; the data cache lives in `local_data`, a
+    /// folder that does not roam with the user's profile (`%LOCALAPPDATA%` on Windows).
+    pub fn start(app_data: PathBuf, local_data: PathBuf) -> io::Result<(Engine, Receiver<Event>)> {
         let app = std::env::current_exe().unwrap_or_default();
-        Self::start_with_converter(app_data, bundled_converter_for(&app))
+        Self::start_with_converter(app_data, local_data, bundled_converter_for(&app))
     }
 
     /// [`Engine::start`] with another converter program in place of the bundled one.
     pub fn start_with_converter(
         app_data: PathBuf,
+        local_data: PathBuf,
         converter: PathBuf,
     ) -> io::Result<(Engine, Receiver<Event>)> {
         let profiles = Mutex::new(Profiles::open(&app_data)?);
         let settings = Mutex::new(AppSettings::open(&app_data));
         let (events, receiver) = channel();
-        let game_data = GameData::open(&app_data, events.clone())?;
+        let game_data = GameData::open(&local_data, events.clone())?;
         let last_runs = Arc::new(LastRuns::open(&app_data)?);
         let engine = Engine {
             profiles,

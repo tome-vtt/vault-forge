@@ -63,7 +63,9 @@ fn setup_with(address: &str, converter: PathBuf) -> Setup {
     let dir = tempfile::tempdir().unwrap();
     let vault = dir.path().join("vault");
     std::fs::create_dir(&vault).unwrap();
-    let (engine, events) = Engine::start_with_converter(dir.path().join("app"), converter).unwrap();
+    let (engine, events) =
+        Engine::start_with_converter(dir.path().join("app"), dir.path().join("local"), converter)
+            .unwrap();
     let setup = Setup {
         _dir: dir,
         engine,
@@ -414,8 +416,12 @@ fn the_engine_says_whether_the_vault_has_converted_notes() {
 fn convert_is_refused_until_the_game_data_is_downloaded() {
     let dir = tempfile::tempdir().unwrap();
     let converter = PathBuf::from(env!("CARGO_BIN_EXE_stand-in-converter"));
-    let (engine, events) =
-        Engine::start_with_converter(dir.path().to_path_buf(), converter).unwrap();
+    let (engine, events) = Engine::start_with_converter(
+        dir.path().to_path_buf(),
+        dir.path().join("local"),
+        converter,
+    )
+    .unwrap();
     engine.send(Command::CreateProfile(ProfileDraft {
         name: "Thursday".into(),
         rules: Rules::Dnd5e,
@@ -468,8 +474,12 @@ fn a_folder_outside_the_vault_is_refused_and_left_alone() {
         );
         assert_ne!(edited, saved);
         std::fs::write(&config, edited).unwrap();
-        let (engine, events) =
-            Engine::start_with_converter(dir.path().join("app"), converter.clone()).unwrap();
+        let (engine, events) = Engine::start_with_converter(
+            dir.path().join("app"),
+            dir.path().join("local"),
+            converter.clone(),
+        )
+        .unwrap();
 
         engine.send(Command::Convert(id.clone()));
 
@@ -683,7 +693,8 @@ fn the_last_run_is_kept_across_a_restart_and_removed_with_its_profile() {
 
     let converter = PathBuf::from(env!("CARGO_BIN_EXE_stand-in-converter"));
     let app = setup._dir.path().join("app");
-    (setup.engine, setup.events) = Engine::start_with_converter(app, converter).unwrap();
+    (setup.engine, setup.events) =
+        Engine::start_with_converter(app, setup._dir.path().join("local"), converter).unwrap();
     assert_eq!(setup.engine.last_run(&id), run);
 
     setup.engine.send(Command::DeleteProfile(id.clone()));

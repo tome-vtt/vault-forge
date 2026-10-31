@@ -14,7 +14,7 @@ fn draft(name: &str) -> ProfileDraft {
 }
 
 fn start(dir: &Path) -> (Engine, Receiver<Event>) {
-    Engine::start(dir.to_path_buf()).unwrap()
+    Engine::start(dir.to_path_buf(), dir.join("local")).unwrap()
 }
 
 fn create(engine: &Engine, events: &Receiver<Event>, name: &str) -> Profile {
@@ -326,7 +326,9 @@ fn a_bundled_file_is_named_inside_the_converters_folder() {
         .join("app")
         .join("converter")
         .join("ttrpg-convert");
-    let (engine, _) = Engine::start_with_converter(dir.path().join("data"), converter).unwrap();
+    let (engine, _) =
+        Engine::start_with_converter(dir.path().join("data"), dir.path().join("local"), converter)
+            .unwrap();
 
     // Compared as text: Windows paths compare equal across '/' and '\', but Explorer does not.
     let expected = dir

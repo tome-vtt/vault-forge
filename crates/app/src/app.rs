@@ -848,7 +848,7 @@ mod tests {
         dir: &std::path::Path,
         width: f32,
     ) -> (Harness<'static, App>, mpsc::Sender<Theme>) {
-        let (engine, events) = Engine::start(dir.to_path_buf()).unwrap();
+        let (engine, events) = Engine::start(dir.to_path_buf(), dir.join("local")).unwrap();
         let (os, os_theme) = mpsc::channel();
         os.send(Theme::Light).unwrap();
         let mut harness = Harness::builder()
@@ -916,11 +916,13 @@ mod tests {
     #[test]
     fn a_saved_choice_draws_the_first_frame_in_its_theme() {
         let dir = tempfile::tempdir().unwrap();
-        let (engine, _) = Engine::start(dir.path().to_path_buf()).unwrap();
+        let (engine, _) =
+            Engine::start(dir.path().to_path_buf(), dir.path().join("local")).unwrap();
         engine.send(Command::SetAppearance(Appearance::Light));
         drop(engine);
 
-        let (engine, events) = Engine::start(dir.path().to_path_buf()).unwrap();
+        let (engine, events) =
+            Engine::start(dir.path().to_path_buf(), dir.path().join("local")).unwrap();
         let (os, os_theme) = mpsc::channel();
         os.send(Theme::Dark).unwrap();
         let mut shell = crate::Shell(App::new(engine, events, os_theme));
@@ -1044,7 +1046,7 @@ mod tests {
         dir: &std::path::Path,
         width: f32,
     ) -> (Harness<'static, App>, Sender<Event>, Receiver<Event>) {
-        let (engine, heard) = Engine::start(dir.to_path_buf()).unwrap();
+        let (engine, heard) = Engine::start(dir.to_path_buf(), dir.join("local")).unwrap();
         engine.send(Command::CreateProfile(ProfileDraft {
             name: "Thursday".into(),
             rules: Rules::Dnd5e,
@@ -2160,7 +2162,8 @@ mod tests {
     #[test]
     fn the_top_bar_shows_the_versions_and_the_new_version_notice_only_once_it_arrives() {
         let dir = tempfile::tempdir().unwrap();
-        let (engine, _) = Engine::start(dir.path().to_path_buf()).unwrap();
+        let (engine, _) =
+            Engine::start(dir.path().to_path_buf(), dir.path().join("local")).unwrap();
         let (events, received) = std::sync::mpsc::channel();
         let mut harness = Harness::builder()
             .with_size([1280.0, 820.0])
@@ -2191,7 +2194,7 @@ mod tests {
 
     /// The top bar at `width` after the release check found 1.1.0.
     fn top_bar_with_notice(dir: &std::path::Path, width: f32) -> Harness<'static, App> {
-        let (engine, _) = Engine::start(dir.to_path_buf()).unwrap();
+        let (engine, _) = Engine::start(dir.to_path_buf(), dir.join("local")).unwrap();
         let (events, received) = std::sync::mpsc::channel();
         events
             .send(Event::NewerRelease {

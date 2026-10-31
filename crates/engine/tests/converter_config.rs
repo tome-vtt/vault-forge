@@ -7,7 +7,7 @@ use serde_yaml_ng::Value;
 use vault_forge_engine::{Command, Engine, Event, Profile, ProfileDraft, Rules};
 
 fn start(dir: &Path) -> (Engine, Receiver<Event>) {
-    Engine::start(dir.to_path_buf()).unwrap()
+    Engine::start(dir.to_path_buf(), dir.join("local")).unwrap()
 }
 
 fn create(engine: &Engine, events: &Receiver<Event>, rules: Rules) -> Profile {
