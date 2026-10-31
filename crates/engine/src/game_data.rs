@@ -157,6 +157,15 @@ impl GameData {
         self.running.lock().unwrap().cancels.contains_key(address)
     }
 
+    /// Whether the address's download is cancelled but has not stopped yet.
+    pub(crate) fn is_stopping(&self, address: &str) -> bool {
+        let running = self.running.lock().unwrap();
+        running
+            .cancels
+            .get(address)
+            .is_some_and(|cancel| cancel.load(Ordering::Relaxed))
+    }
+
     /// The `data` folder of the address's copy, the one the converter reads; `None` until one is
     /// downloaded.
     pub(crate) fn data_folder(&self, address: &str) -> Option<PathBuf> {

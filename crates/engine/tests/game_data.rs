@@ -19,7 +19,7 @@ type Files = HashMap<String, (u32, Vec<u8>)>;
 type Held = Arc<Mutex<Option<(Receiver<()>, Sender<()>)>>>;
 
 /// Serves files from memory with an ETag that changes on every `put`, and counts the GETs.
-/// `/endless.zip` never finishes, for Cancel.
+/// `/endless.zip` never finishes, for Cancel; `/stalled.zip` sends headers, then nothing.
 struct Server {
     url: String,
     files: Arc<Mutex<Files>>,
@@ -99,6 +99,15 @@ fn serve(stream: TcpStream, files: &Mutex<Files>, gets: &AtomicUsize, held: &Hel
         while out.write_all(&[0; 64 * 1024]).is_ok() {
             std::thread::sleep(Duration::from_millis(5));
         }
+        return;
+    }
+    if path == "/stalled.zip" {
+        let _ = write!(
+            out,
+            "HTTP/1.1 200 OK\r\nContent-Length: 1099511627776\r\n\r\n"
+        );
+        // Silent until the client hangs up, so its download never gets to see a cancel.
+        let _ = std::io::Read::read(&mut reader, &mut [0; 1]);
         return;
     }
     let Some((version, body)) = files.lock().unwrap().get(&path).cloned() else {
@@ -389,6 +398,40 @@ fn switching_images_off_mid_download_stops_it_and_leaves_no_partial_folder() {
         Some("Wait for the download to finish.")
     );
     assert_eq!(cache_entries(dir.path()), copies);
+}
+
+#[test]
+fn convert_waits_for_switched_off_images_to_stop_downloading() {
+    let server = Server::start();
+    let address = server.put("/data.zip", game_data(1, 0));
+    let images = format!("{}/stalled.zip", server.url);
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Thursday", &address);
+    engine.send(Command::DownloadGameData(profile.clone()));
+    wait(&events, &address, ready);
+    let profile = Profile {
+        images: true,
+        images_address: images.clone(),
+        ..profile
+    };
+    engine.send(Command::DownloadImages(profile.clone()));
+    wait(&events, &images, |s| {
+        matches!(s, DataState::Downloading { .. })
+    });
+
+    engine.send(Command::SaveProfile(Profile {
+        images: false,
+        ..profile.clone()
+    }));
+    wait(&events, &images, |s| *s == DataState::Stopping);
+    engine.send(Command::Convert(profile.id));
+
+    let refused = events.try_iter().find_map(|e| match e {
+        Event::Failed(message) => Some(message),
+        _ => None,
+    });
+    assert_eq!(refused.as_deref(), Some("Wait for the download to finish."));
 }
 
 #[test]

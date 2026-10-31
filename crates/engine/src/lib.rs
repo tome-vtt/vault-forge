@@ -219,10 +219,14 @@ impl Profile {
     /// Whether any of the profile's downloads is running, counting images switched off until
     /// their cancelled download has stopped.
     pub fn is_downloading(&self, data: &HashMap<String, DataState>) -> bool {
+        self.can_cancel(data) || data.get(&self.images_address) == Some(&DataState::Stopping)
+    }
+
+    /// Whether Cancel has a download to stop: the game data, or the images while switched on.
+    pub fn can_cancel(&self, data: &HashMap<String, DataState>) -> bool {
         self.downloads()
             .iter()
             .any(|(address, _)| data.get(*address).is_some_and(DataState::is_busy))
-            || data.get(&self.images_address) == Some(&DataState::Stopping)
     }
 }
 
@@ -566,10 +570,12 @@ impl Engine {
                 .get(&id)
                 .and_then(|p| {
                     let data = self.game_data.data_folder(&p.address);
+                    // As `is_downloading`: switched-off images count until they have stopped.
                     let downloading = p
                         .downloads()
                         .iter()
-                        .any(|(a, _)| self.game_data.is_running(a));
+                        .any(|(a, _)| self.game_data.is_running(a))
+                        || self.game_data.is_stopping(&p.images_address);
                     let converting = self.conversion.converting();
                     match p.blocker(data.is_some(), downloading, converting.as_deref()) {
                         Some(reason) => Err(reason.into()),
