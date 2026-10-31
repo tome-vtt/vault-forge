@@ -1,0 +1,88 @@
+name: Release
+
+# Builds, signs and publishes the Windows installer on a vX.Y.Z tag (VF-S2-T11). Silk Setup and
+# Azure Artifact Signing are both Windows-only, so this runs on windows-latest. A tag with a
+# suffix, such as v0.2.0-rc.1, publishes a pre-release.
+on:
+  push:
+    tags: ['v*']
+
+# No OIDC token at workflow level: the release job asks for its own.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, sign and publish
+    runs-on: windows-latest
+    # The Azure app registration's federated credential names this environment. The org uses
+    # ID-based subjects: repo:tome-vtt@327674520/vault-forge@1438533202:environment:release.
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Through env:, never interpolated into the script: a tag name can hold $(...).
+      - name: Check the tag matches the workspace version
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $version = $env:RELEASE_TAG -replace '^v', ''
+          $cargo = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          if (($version -replace '-.*$', '') -ne $cargo) {
+            throw "Tag version $version does not match the workspace version $cargo"
+          }
+          "VERSION=$version" >> $env:GITHUB_ENV
+          "INSTALLER=$(Join-Path $env:RUNNER_TEMP "Vault-Forge-Setup-$version.exe")" >> $env:GITHUB_ENV
+
+      # No cargo cache, deliberately: a cache is shared with every other run on this repository,
+      # so restoring one here would let any of them plant what this job signs.
+      - name: Build the app and bundle its converter into target/payload
+        shell: pwsh
+        run: |
+          cargo build --release -p vault-forge
+          if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
+          New-Item -ItemType Directory -Force target/payload | Out-Null
+          Copy-Item target/release/vault-forge.exe, LICENSE-MIT, LICENSE-APACHE target/payload
+          cargo run --release -p vault-forge-bundle -- target/payload
+          if ($LASTEXITCODE -ne 0) { throw 'The converter bundle step failed' }
+
+      - name: Smoke test the bundled converter
+        shell: pwsh
+        run: ./installer/smoke-test.ps1 target/payload
+
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # AZURE_CLIENT_ID and AZURE_TENANT_ID are not exported: a half-set EnvironmentCredential
+      # fails before the az login session is tried.
+      - name: Sign the app, build and sign the installer, verify both
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.SILK_SETUP_TOKEN }}
+          AZURE_CODESIGNING_ACCOUNT: ${{ vars.AZURE_CODESIGNING_ACCOUNT }}
+          AZURE_CODESIGNING_PROFILE: ${{ vars.AZURE_CODESIGNING_PROFILE }}
+          AZURE_CODESIGNING_ENDPOINT: ${{ vars.AZURE_CODESIGNING_ENDPOINT }}
+        run: ./installer/sign-and-package.ps1
+
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $pre = if ($env:RELEASE_TAG -like '*-*') { '--prerelease' } else { $null }
+          gh release create $env:RELEASE_TAG $env:INSTALLER --title "Vault Forge $env:RELEASE_TAG" --generate-notes $pre
+          if ($LASTEXITCODE -ne 0) { throw 'Could not publish the release' }

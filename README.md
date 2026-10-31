@@ -63,7 +63,7 @@ The workflow needs a `release` environment holding the Azure signing variables T
 release uses (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
 `AZURE_CODESIGNING_ACCOUNT`, `AZURE_CODESIGNING_PROFILE`, `AZURE_CODESIGNING_ENDPOINT`). The Azure
 app registration also needs a federated credential for
-`repo:tome-vtt/vault-forge:environment:release`, and the repository needs the `SILK_SETUP_TOKEN`
+`repo:tome-vtt@327674520/vault-forge@1438533202:environment:release` (the org uses ID-based subjects), and the repository needs the `SILK_SETUP_TOKEN`
 secret. The smoke test also runs on its own, given the folder that holds the app and its
 `converter` folder:
 
