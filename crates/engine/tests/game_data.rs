@@ -707,8 +707,10 @@ fn a_download_whose_address_change_is_refused_downloads_nothing() {
         ..friday
     }));
 
+    // Closing the Engine ends the events only once every worker it started has ended.
+    drop(engine);
     let mut failed = 0;
-    while let Ok(event) = events.recv_timeout(Duration::from_secs(2)) {
+    for event in events.iter() {
         match event {
             Event::Failed(_) => failed += 1,
             Event::GameData { address: a, state }
