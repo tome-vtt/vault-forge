@@ -6,8 +6,16 @@ running ttrpg-convert-cli for them.
 ## Language
 
 **Profile**:
-One vault plus the books and settings that go into it, saved as a converter config file.
+One vault plus the books and settings that go into it, saved as a converter config file, with the settings the converter does not read (its name, game rules, game data address, vault and book images switch) kept beside it.
 _Avoid_: project, campaign, config
+
+**App settings**:
+Choices that belong to the app as a whole rather than to any one profile, such as its appearance.
+_Avoid_: preferences, options, config
+
+**Appearance**:
+How the app looks: System, which follows the operating system's light or dark look as it changes, or Light, or Dark. System by default.
+_Avoid_: theme (for the user's choice), skin, mode
 
 **Game data**:
 The 5eTools or Pf2eTools data a profile reads its books from, downloaded from an address the user pastes.

@@ -24,9 +24,7 @@ fn main() -> eframe::Result {
             .with_min_inner_size([480.0, 600.0]),
         ..Default::default()
     };
-    let app_data = directories::ProjectDirs::from("", "", "Vault Forge")
-        .map(|d| d.data_dir().to_path_buf())
-        .expect("no home folder to keep app data in");
+    let app_data = app_data_dir().expect("no home folder to keep app data in");
     let (engine, events) = Engine::start(app_data).expect("could not open the app data folder");
     engine.send(Command::CheckRelease(LATEST_RELEASE.into()));
     eframe::run_native(
@@ -61,5 +59,32 @@ impl eframe::App for Shell {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.0.ui(ui);
+    }
+}
+
+/// The app data folder handed to the Engine:`%APPDATA%\Vault Forge` on Windows, as the approved
+/// demo shows. `ProjectDirs::data_dir()` would add a `data` folder there; elsewhere they agree.
+fn app_data_dir() -> Option<std::path::PathBuf> {
+    let project = directories::ProjectDirs::from("", "", "Vault Forge")?;
+    let base = directories::BaseDirs::new()?;
+    Some(base.data_dir().join(project.project_path()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::app_data_dir;
+
+    #[cfg(windows)]
+    #[test]
+    fn app_data_is_directly_under_appdata_on_windows() {
+        let appdata = std::path::PathBuf::from(std::env::var_os("APPDATA").unwrap());
+        assert_eq!(app_data_dir().unwrap(), appdata.join("Vault Forge"));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn app_data_is_the_platform_data_folder_elsewhere() {
+        let project = directories::ProjectDirs::from("", "", "Vault Forge").unwrap();
+        assert_eq!(app_data_dir().unwrap(), project.data_dir());
     }
 }
