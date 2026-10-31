@@ -644,11 +644,10 @@ fn an_update_check_answered_after_a_download_does_not_overwrite_its_state() {
     answered.recv().unwrap();
 
     // The late answer is about the copy the download replaced, so nothing more is reported.
-    match events.recv_timeout(Duration::from_secs(2)) {
-        Ok(Event::GameData { state, .. }) => panic!("stale state reported: {state:?}"),
-        Ok(other) => panic!("{other:?}"),
-        Err(_) => {}
-    }
+    // Closing the Engine ends the events only once every worker, the late check too, has ended.
+    drop(engine);
+    let late: Vec<Event> = events.iter().collect();
+    assert!(late.is_empty(), "stale state reported: {late:?}");
 }
 
 #[test]
@@ -708,8 +707,10 @@ fn a_download_whose_address_change_is_refused_downloads_nothing() {
         ..friday
     }));
 
+    // Closing the Engine ends the events only once every worker it started has ended.
+    drop(engine);
     let mut failed = 0;
-    while let Ok(event) = events.recv_timeout(Duration::from_secs(2)) {
+    for event in events.iter() {
         match event {
             Event::Failed(_) => failed += 1,
             Event::GameData { address: a, state }
