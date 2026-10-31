@@ -41,7 +41,8 @@ jobs:
           if (($version -replace '-.*$', '') -ne $cargo) {
             throw "Tag version $version does not match the workspace version $cargo"
           }
-          "VERSION=$version" >> $env:GITHUB_ENV
+          # Silk takes dotted numbers only, so a pre-release installs as its base version.
+          "VERSION=$cargo" >> $env:GITHUB_ENV
           "INSTALLER=$(Join-Path $env:RUNNER_TEMP "Vault-Forge-Setup-$version.exe")" >> $env:GITHUB_ENV
 
       # No cargo cache, deliberately: a cache is shared with every other run on this repository,
