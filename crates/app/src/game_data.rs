@@ -56,7 +56,7 @@ impl GameDataSection {
             }
             ui.add_space(16.0);
             ui.label(theme::medium("Download address"));
-            let busy = profile.is_downloading(data);
+            let busy = profile.can_cancel(data);
             self.address_line(ui, engine, profile, data.get(&profile.address), busy, kind);
             ui.add_space(12.0);
             ui.separator();

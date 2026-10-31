@@ -1,7 +1,7 @@
 //! Game data: downloads, unpacks and updates the archive at an address, one shared copy per
 //! address in the data cache, and holds every rule about it. Each download runs on its own worker
 //! thread and reports through [`Event::GameData`].
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
@@ -40,6 +40,8 @@ struct Downloads {
     /// How many downloads of each address have ended, so an update check can tell its answer
     /// is older than the state a download reported.
     ended: HashMap<String, u64>,
+    /// Downloads `stop` reported stopping, until they end.
+    stopping: HashSet<String>,
 }
 
 impl GameData {
@@ -116,6 +118,7 @@ impl GameData {
             let _ = cache.discard(&address);
             let mut running = running.lock().unwrap();
             running.cancels.remove(&address);
+            running.stopping.remove(&address);
             *running.ended.entry(address.clone()).or_default() += 1;
             if let Err(Stop::Failed(message)) = &outcome {
                 let what = match kind {
@@ -145,16 +148,22 @@ impl GameData {
     /// switched it off still waits for it.
     pub(crate) fn stop(&self, address: &str) {
         // Held while reporting, so the download cannot report itself running after this.
-        let running = self.running.lock().unwrap();
+        let mut running = self.running.lock().unwrap();
         if let Some(cancel) = running.cancels.get(address) {
             cancel.store(true, Ordering::Relaxed);
             send(&self.events, address, DataState::Stopping);
+            running.stopping.insert(address.to_owned());
         }
     }
 
     /// Whether the address is downloading.
     pub(crate) fn is_running(&self, address: &str) -> bool {
         self.running.lock().unwrap().cancels.contains_key(address)
+    }
+
+    /// Whether the address's download is reported stopping and has not stopped yet.
+    pub(crate) fn is_stopping(&self, address: &str) -> bool {
+        self.running.lock().unwrap().stopping.contains(address)
     }
 
     /// The `data` folder of the address's copy, the one the converter reads; `None` until one is

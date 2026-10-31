@@ -1787,6 +1787,32 @@ mod tests {
     }
 
     #[test]
+    fn switched_off_images_still_stopping_hold_convert_with_no_cancel() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        choose_a_book(&harness);
+        let profile = harness.state().engine.profiles().remove(0);
+        let images_address = "http://127.0.0.1:1/img.zip".to_string();
+        harness.state().engine.send(Command::SaveProfile(Profile {
+            images: false,
+            images_address: images_address.clone(),
+            ..profile
+        }));
+        game_data(&events, ready());
+        events
+            .send(Event::GameData {
+                address: images_address,
+                state: DataState::Stopping,
+            })
+            .unwrap();
+        harness.run();
+
+        assert!(convert_disabled(&harness));
+        assert!(harness.query_by_label("Cancel").is_none());
+        harness.get_by_label("Check for update");
+    }
+
+    #[test]
     fn a_narrow_window_stacks_the_game_data_description_above_its_panel() {
         let dir = tempfile::tempdir().unwrap();
         let rect = |harness: &Harness<'_, App>, label| harness.get_by_label(label).rect();

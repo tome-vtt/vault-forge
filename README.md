@@ -11,10 +11,6 @@ Vault Forge belong in this repository's issues.
 the download address of data you are entitled to use, and Vault Forge downloads, unpacks and
 updates it.
 
-## Status
-
-Early development. Nothing is released yet.
-
 ## Install
 
 Download the package for your computer from the
@@ -30,6 +26,9 @@ converter, so there is nothing else to install.
 - **Linux x64:** pick the `.deb` on Debian, Ubuntu, Mint or Pop!_OS, and install it with
   `sudo apt install ./vault-forge_<version>_amd64.deb`. On any other distribution, pick the
   AppImage: make it executable (`chmod +x vault-forge_<version>_x86_64.AppImage`) and run it.
+  The AppImage needs `libfuse2`, which Ubuntu 22.04 and later leave out: install it
+  (`sudo apt install libfuse2`, or `libfuse2t64` on Ubuntu 24.04 and later), or run the AppImage
+  with `--appimage-extract-and-run`.
 
 ## Building
 
@@ -40,7 +39,9 @@ cargo run -p vault-forge
 cargo test
 ```
 
-Converting needs the converter beside the app. The bundle step downloads the pinned
+Converting needs the converter in a `converter` folder where the app looks for it: beside the app
+on Windows and in development builds, in `Contents/Resources/converter` inside the Mac app, and in
+`usr/lib/vault-forge/converter` in the .deb and the AppImage. The bundle step downloads the pinned
 ttrpg-convert-cli release for your platform, checks its sha256 and puts the converter, its licence
 and the release's examples in a `converter` folder in the folder you name. A checksum that differs
 from the pin fails the step. The version and checksums are pinned in `crates/engine/src/lib.rs`.
@@ -59,13 +60,20 @@ runner and runs the real converter once on the tiny sample in `installer/smoke/`
 (`installer/vault-forge.toml`), signs it and verifies both signatures. Only then does the workflow
 publish the installer to a GitHub release.
 
+The macOS and Linux packages are built on GitHub's `macos-latest` and `ubuntu-latest` runners: a
+release build, the bundle step into `target/release`, then
+[cargo-packager](https://github.com/crabnebula-dev/cargo-packager), set up in
+`crates/app/Cargo.toml`, makes the .dmg, or the AppImage and the .deb, in `target/packages`.
+`packaging/smoke-test.sh <package>` unpacks each one and runs the same smoke test on the converter
+inside it; publish a package only once it passes. `release.yml` has no macOS or Linux jobs yet,
+so these steps are not automated.
+
 The workflow needs a `release` environment holding the Azure signing variables TomeVTT's desktop
 release uses (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
 `AZURE_CODESIGNING_ACCOUNT`, `AZURE_CODESIGNING_PROFILE`, `AZURE_CODESIGNING_ENDPOINT`). The Azure
 app registration also needs a federated credential for
 `repo:tome-vtt@327674520/vault-forge@1438533202:environment:release` (the org uses ID-based subjects), and the repository needs the `SILK_SETUP_TOKEN`
-secret. The smoke test also runs on its own, given the folder that holds the app and its
-`converter` folder:
+secret. The smoke test also runs on its own, given the folder that holds the `converter` folder:
 
 ```powershell
 pwsh installer/smoke-test.ps1 target/debug
