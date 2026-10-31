@@ -33,7 +33,9 @@ a user's own 5eTools or Pf2eTools data into Obsidian notes. Two crates:
   pastes it. Do not add one.
 - A conversion writes into a holding folder and replaces only the profile's compendium and rules
   folders in the vault on success. Failure or cancel leaves the vault untouched.
-- Profiles are saved as ordinary converter config files (YAML).
+- Profiles are saved as ordinary converter config files (YAML), each with the settings the
+  converter does not read (name, game rules, game data address, vault, images switch) kept in a
+  side file beside it.
 - One pinned native converter build is bundled per platform with its Apache-2.0 licence: Windows
   x64, macOS arm64 and Linux x64 only. No Java.
 - Obsidian plugin setup is a checklist screen, never automated.
