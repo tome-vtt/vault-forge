@@ -168,10 +168,9 @@ impl App {
                     if self.ended.as_ref().is_some_and(|e| e.0 == id) {
                         self.ended = None;
                     }
-                    // Setup is built with game data, so they go together.
+                    // Setup is rebuilt with game data, so this resets both.
                     if self.game_data.as_ref().is_some_and(|s| s.id == id) {
                         self.game_data = None;
-                        self.setup = None;
                     }
                     if self.books.as_ref().is_some_and(|s| s.id == id) {
                         self.books = None;
@@ -1597,7 +1596,10 @@ mod tests {
             }
         };
 
-        harness.state().engine.send(Command::DeleteProfile(id));
+        harness
+            .state()
+            .engine
+            .send(Command::DeleteProfile(id.clone()));
         forward(|e| matches!(e, Event::ProfileDeleted(_)));
         harness.run();
         harness
@@ -1612,6 +1614,11 @@ mod tests {
         forward(|e| matches!(e, Event::ProfileCreated(_)));
         harness.run();
 
+        assert_eq!(
+            harness.state().engine.profiles()[0].id,
+            id,
+            "the id is reused"
+        );
         assert!(
             harness.query_by_label(cancelled).is_none(),
             "no old ended line"
