@@ -165,6 +165,16 @@ impl App {
                     // A new profile of the same name takes the id, so its record is read afresh.
                     self.last_run = None;
                     self.last_run_view = LastRunView::default();
+                    if self.ended.as_ref().is_some_and(|e| e.0 == id) {
+                        self.ended = None;
+                    }
+                    // Setup is rebuilt with game data, so this resets both.
+                    if self.game_data.as_ref().is_some_and(|s| s.id == id) {
+                        self.game_data = None;
+                    }
+                    if self.books.as_ref().is_some_and(|s| s.id == id) {
+                        self.books = None;
+                    }
                     if matches!(&self.screen, Screen::Profile(open) if *open == id) {
                         self.screen = first_screen(&self.engine);
                     }
@@ -1559,6 +1569,65 @@ mod tests {
 
         harness.get_by_label("D&D 5e · 0 books · not converted yet");
         harness.get_by_label("None");
+    }
+
+    #[test]
+    fn a_profile_made_again_after_a_delete_opens_fresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events, heard) = harness_on_profile_heard(dir.path(), 1280.0);
+        harness.run();
+        let id = harness.state().engine.profiles()[0].id.clone();
+        let cancelled = "The conversion was cancelled. Your vault was not changed.";
+        let ended = Event::ConversionEnded {
+            id: id.clone(),
+            converted: false,
+            message: cancelled.into(),
+        };
+        events.send(ended).unwrap();
+        harness.run();
+        harness.get_by_label(cancelled);
+        harness.state_mut().books.as_mut().unwrap().search = "strahd".into();
+        let forward = |wanted: fn(&Event) -> bool| loop {
+            let event = heard.recv_timeout(Duration::from_secs(10)).unwrap();
+            let done = wanted(&event);
+            events.send(event).unwrap();
+            if done {
+                break;
+            }
+        };
+
+        harness
+            .state()
+            .engine
+            .send(Command::DeleteProfile(id.clone()));
+        forward(|e| matches!(e, Event::ProfileDeleted(_)));
+        harness.run();
+        harness
+            .state()
+            .engine
+            .send(Command::CreateProfile(ProfileDraft {
+                name: "Thursday".into(),
+                rules: Rules::Dnd5e,
+                address: "http://127.0.0.1:1/other.zip".into(),
+                vault: "/other".into(),
+            }));
+        forward(|e| matches!(e, Event::ProfileCreated(_)));
+        harness.run();
+
+        assert_eq!(
+            harness.state().engine.profiles()[0].id,
+            id,
+            "the id is reused"
+        );
+        assert!(
+            harness.query_by_label(cancelled).is_none(),
+            "no old ended line"
+        );
+        let app = harness.state();
+        let game_data = app.game_data.as_ref().unwrap();
+        assert_eq!(game_data.address, "http://127.0.0.1:1/other.zip");
+        assert_eq!(app.setup.as_ref().unwrap().vault, "/other");
+        assert_eq!(app.books.as_ref().unwrap().search, "");
     }
 
     #[test]
