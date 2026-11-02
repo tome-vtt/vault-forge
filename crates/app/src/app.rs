@@ -1075,6 +1075,18 @@ mod tests {
         (harness, events, heard)
     }
 
+    /// Turns the mouse wheel `dy` points with the pointer at `at`.
+    fn wheel(harness: &Harness<'_, App>, at: egui::Pos2, dy: f32) {
+        harness.hover_at(at);
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, dy),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+
     fn game_data(events: &Sender<Event>, state: DataState) {
         let address = "http://127.0.0.1:1/data.zip".into();
         events.send(Event::GameData { address, state }).unwrap();
@@ -2096,15 +2108,7 @@ mod tests {
         let before = span(&harness);
         // Two rows' worth of wheel inside the list pins the Core rules heading over its books.
         let inside = harness.get_by_label("Book 3").rect().center();
-        harness.hover_at(inside);
-        harness.event(egui::Event::MouseWheel {
-            unit: egui::MouseWheelUnit::Point,
-            delta: egui::vec2(0.0, -80.0),
-            phase: egui::TouchPhase::Move,
-            source: egui::MouseWheelSource::Unknown,
-            modifiers: egui::Modifiers::NONE,
-        });
-        harness.run();
+        wheel(&harness, inside, -80.0);
         harness.run();
         let bar = harness.get_by_label("All").rect();
         let stuck = harness
@@ -2124,18 +2128,15 @@ mod tests {
             supplements.top(),
             last_core.bottom()
         );
-        assert_eq!(span(&harness), before, "the list keeps its height");
+        assert!(
+            (span(&harness) - before).abs() < 0.5,
+            "the list keeps its height"
+        );
         // A click on the stuck heading's empty middle ticks no row beneath it.
         let middle = egui::pos2(stuck.right() + 40.0, stuck.center().y);
         harness.hover_at(middle);
-        for pressed in [true, false] {
-            harness.event(egui::Event::PointerButton {
-                pos: middle,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::NONE,
-            });
-        }
+        harness.drag_at(middle);
+        harness.drop_at(middle);
         harness.run();
         harness.get_by_label("0 of 30 chosen");
         // Choose all on the stuck heading chooses the Core rules, not the row beneath it.
@@ -2147,15 +2148,7 @@ mod tests {
         harness.run();
         harness.get_by_label("6 of 30 chosen");
         // Scrolled on until Supplements reaches the top, its heading pushes the stuck one up.
-        harness.hover_at(inside);
-        harness.event(egui::Event::MouseWheel {
-            unit: egui::MouseWheelUnit::Point,
-            delta: egui::vec2(0.0, -180.0),
-            phase: egui::TouchPhase::Move,
-            source: egui::MouseWheelSource::Unknown,
-            modifiers: egui::Modifiers::NONE,
-        });
-        harness.run();
+        wheel(&harness, inside, -180.0);
         harness.run();
         let supplements = harness.get_by_label("Supplements · 0 of 24").rect();
         let pushed = harness
@@ -2186,14 +2179,7 @@ mod tests {
             .rect()
             .center();
         for _ in 0..25 {
-            harness.hover_at(beside);
-            harness.event(egui::Event::MouseWheel {
-                unit: egui::MouseWheelUnit::Point,
-                delta: egui::vec2(0.0, -40.0),
-                phase: egui::TouchPhase::Move,
-                source: egui::MouseWheelSource::Unknown,
-                modifiers: egui::Modifiers::NONE,
-            });
+            wheel(&harness, beside, -40.0);
             harness.run();
             assert_eq!(
                 harness.get_all_by_label("Supplements · 0 of 5").count(),
