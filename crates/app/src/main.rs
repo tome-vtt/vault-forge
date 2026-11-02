@@ -64,7 +64,7 @@ impl eframe::App for Shell {
     }
 }
 
-/// The arcane book-and-anvil icon for the window and its taskbar or dock button.
+/// The arcane book-and-anvil icon for supported window and taskbar icons.
 fn window_icon() -> egui::IconData {
     eframe::icon_data::from_png_bytes(include_bytes!("../icons/vault-forge-arcane.png"))
         .expect("the built-in icon is a valid PNG")
