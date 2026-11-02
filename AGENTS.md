@@ -13,11 +13,12 @@ Spider drives this repository through `silk.yml`. Install the Spider plugin once
 ## What this is
 
 Vault Forge is a Rust + egui (eframe) desktop app over ebullient's ttrpg-convert-cli. It converts
-a user's own 5eTools or Pf2eTools data into Obsidian notes. Two crates:
+a user's own 5eTools or Pf2eTools data into Obsidian notes. Three crates:
 
 - `crates/engine` (`vault-forge-engine`): the **Engine**. It has no screens and holds every rule:
   profiles, game data downloads, conversion, the last run, the release check.
 - `crates/app` (`vault-forge`): the screens. They only ask the Engine.
+- `crates/bundle` (`vault-forge-bundle`): a build step that puts the pinned converter beside the app.
 
 ## Layer rules
 
@@ -33,7 +34,9 @@ a user's own 5eTools or Pf2eTools data into Obsidian notes. Two crates:
   pastes it. Do not add one.
 - A conversion writes into a holding folder and replaces only the profile's compendium and rules
   folders in the vault on success. Failure or cancel leaves the vault untouched.
-- Profiles are saved as ordinary converter config files (YAML).
+- Profiles are saved as ordinary converter config files (YAML), each with the settings the
+  converter does not read (name, game rules, game data address, vault, book images switch) kept in a
+  side file beside it.
 - One pinned native converter build is bundled per platform with its Apache-2.0 licence: Windows
   x64, macOS arm64 and Linux x64 only. No Java.
 - Obsidian plugin setup is a checklist screen, never automated.

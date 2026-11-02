@@ -1,0 +1,13 @@
+# The shape a profile saves (crates/engine/src/lib.rs, ConverterConfig), with the sample's one book.
+sources:
+  book: [XPHB]
+  adventure: []
+  homebrew: []
+paths:
+  compendium: compendium/
+  rules: rules/
+images:
+  copyInternal: false
+  copyExternal: false
+useDiceRoller: false
+yamlStatblocks: false
