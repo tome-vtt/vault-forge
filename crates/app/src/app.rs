@@ -2068,6 +2068,106 @@ mod tests {
     }
 
     #[test]
+    fn the_next_group_stays_below_a_stuck_heading_and_its_books() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        let book = |n: usize, group| Book {
+            code: format!("B{n}"),
+            name: format!("Book {n}"),
+            year: "2024".into(),
+            group,
+        };
+        let books = (1..=6)
+            .map(|n| book(n, Group::CoreRules))
+            .chain((7..=30).map(|n| book(n, Group::Supplements)))
+            .collect();
+        let ready = DataState::Ready {
+            books,
+            bytes: 1,
+            downloaded: UNIX_EPOCH,
+            newer: false,
+        };
+        game_data(&events, ready);
+        harness.run();
+        let span = |harness: &Harness<'_, App>| {
+            harness.get_by_label("Book 30").rect().top()
+                - harness.get_by_label("Book 6").rect().top()
+        };
+        let before = span(&harness);
+        // Two rows' worth of wheel inside the list pins the Core rules heading over its books.
+        let inside = harness.get_by_label("Book 3").rect().center();
+        harness.hover_at(inside);
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -80.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        harness.run();
+        let bar = harness.get_by_label("All").rect();
+        let stuck = harness
+            .get_all_by_label("Core rules · 0 of 6")
+            .map(|n| n.rect())
+            .find(|r| r.top() > bar.bottom())
+            .expect("the Core rules heading is in view");
+        assert!(
+            stuck.top() - bar.bottom() < 40.0,
+            "it is stuck at the list's top"
+        );
+        let supplements = harness.get_by_label("Supplements · 0 of 24").rect();
+        let last_core = harness.get_by_label("Book 6").rect();
+        assert!(
+            supplements.top() >= last_core.bottom(),
+            "Supplements starts at {} over Book 6 ending at {}",
+            supplements.top(),
+            last_core.bottom()
+        );
+        assert_eq!(span(&harness), before, "the list keeps its height");
+        // A click on the stuck heading's empty middle ticks no row beneath it.
+        let middle = egui::pos2(stuck.right() + 40.0, stuck.center().y);
+        harness.hover_at(middle);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: middle,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+        harness.get_by_label("0 of 30 chosen");
+        // Choose all on the stuck heading chooses the Core rules, not the row beneath it.
+        harness
+            .get_all_by_label("Choose all")
+            .find(|n| (n.rect().center().y - stuck.center().y).abs() < 1.0)
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("6 of 30 chosen");
+        // Scrolled on until Supplements reaches the top, its heading pushes the stuck one up.
+        harness.hover_at(inside);
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -180.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        harness.run();
+        let supplements = harness.get_by_label("Supplements · 0 of 24").rect();
+        let pushed = harness
+            .get_all_by_label("Core rules · 6 of 6")
+            .map(|n| n.rect())
+            .find(|r| r.bottom() > bar.bottom())
+            .expect("the pushed heading still shows");
+        assert!(pushed.top() < stuck.top(), "it moved up");
+        assert!(pushed.bottom() <= supplements.top() + 0.5);
+    }
+
+    #[test]
     fn a_group_heading_does_not_stick_when_the_page_scrolls_past_the_list() {
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);

@@ -138,22 +138,21 @@ impl BooksSection {
                                 let y = top.min(bottom - heading.height());
                                 let rect = heading.translate(egui::vec2(0.0, y - heading.top()));
                                 let stuck = egui::UiBuilder::new().max_rect(rect);
-                                let (_, choice) = ui
-                                    .scope_builder(stuck, |ui| {
-                                        // Clicks on the stuck heading stay off the rows beneath.
-                                        let id = ui.scope_id().with("stuck");
-                                        ui.interact(rect, id, egui::Sense::click());
-                                        // Rounded as the list's top corners it sits under.
-                                        let corners = egui::CornerRadius {
-                                            nw: 11,
-                                            ne: 11,
-                                            ..Default::default()
-                                        };
-                                        let field = ui.visuals().extreme_bg_color;
-                                        ui.painter().rect_filled(rect, corners, field);
-                                        group_header(ui, profile, group, &rows)
-                                    })
-                                    .inner;
+                                // A child, not a scope: a scope moves the list's cursor back up
+                                // to the stuck heading, laying the next group over its books.
+                                let ui = &mut ui.new_child(stuck);
+                                // Clicks on the stuck heading stay off the rows beneath.
+                                let id = ui.scope_id().with("stuck");
+                                ui.interact(rect, id, egui::Sense::click());
+                                // Rounded as the list's top corners it sits under.
+                                let corners = egui::CornerRadius {
+                                    nw: 11,
+                                    ne: 11,
+                                    ..Default::default()
+                                };
+                                let field = ui.visuals().extreme_bg_color;
+                                ui.painter().rect_filled(rect, corners, field);
+                                let (_, choice) = group_header(ui, profile, group, &rows);
                                 if choice.is_some() {
                                     changed = choice;
                                 }
