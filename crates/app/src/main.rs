@@ -21,7 +21,8 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("Vault Forge")
             .with_inner_size([1280.0, 820.0])
-            .with_min_inner_size([480.0, 600.0]),
+            .with_min_inner_size([480.0, 600.0])
+            .with_icon(window_icon()),
         ..Default::default()
     };
     let (app_data, local_data) = app_data_dirs().expect("no home folder to keep app data in");
@@ -63,6 +64,12 @@ impl eframe::App for Shell {
     }
 }
 
+/// The arcane book-and-anvil icon for the window and its taskbar or dock button.
+fn window_icon() -> egui::IconData {
+    eframe::icon_data::from_png_bytes(include_bytes!("../icons/vault-forge-arcane.png"))
+        .expect("the built-in icon is a valid PNG")
+}
+
 /// The two folders handed to the Engine: app data (`%APPDATA%\Vault Forge` on Windows, as the
 /// approved demo shows) and local data (`%LOCALAPPDATA%\Vault Forge`, which does not roam, for the
 /// data cache). `ProjectDirs::data_dir()` would add a `data` folder on Windows; elsewhere they
@@ -78,7 +85,14 @@ fn app_data_dirs() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
 
 #[cfg(test)]
 mod tests {
-    use super::app_data_dirs;
+    use super::{app_data_dirs, window_icon};
+
+    #[test]
+    fn built_in_icon_decodes_into_a_256_pixel_window_icon() {
+        let icon = window_icon();
+        assert_eq!((icon.width, icon.height), (256, 256));
+        assert_eq!(icon.rgba.len(), 256 * 256 * 4);
+    }
 
     #[cfg(windows)]
     #[test]
