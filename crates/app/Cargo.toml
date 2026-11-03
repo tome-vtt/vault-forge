@@ -12,6 +12,9 @@ eframe = "0.37.0"
 rfd = "0.17.2"
 vault-forge-engine = { version = "0.1.0", path = "../engine" }
 
+[build-dependencies]
+winresource = { version = "0.1.34", default-features = false }
+
 [dev-dependencies]
 egui_kittest = "0.37.0"
 serde_json = "1.0.154"
@@ -31,8 +34,7 @@ out-dir = "../../target/packages"
 binaries-dir = "../../target/release"
 resources = [{ src = "../../target/release/converter", target = "converter" }]
 category = "Utility"
-# ponytail: a plain square in the accent colour, which the AppImage requires; swap for a designed icon.
-icons = ["icons/icon.png"]
+icons = ["icons/vault-forge-arcane.png"]
 
 # Ad-hoc, not a developer signature: Apple Silicon calls a downloaded bundle with none damaged.
 [package.metadata.packager.macos]
