@@ -64,8 +64,8 @@ The macOS and Linux packages are built on GitHub's `macos-latest` and `ubuntu-la
 release build, the bundle step into `target/release`, then
 [cargo-packager](https://github.com/crabnebula-dev/cargo-packager), set up in
 `crates/app/Cargo.toml`, makes the .dmg, or the AppImage and the .deb, in `target/packages`.
-`packaging/smoke-test.sh <package>` unpacks each one and runs the same smoke test on the converter
-inside it; publish a package only once it passes. `release.yml` has no macOS or Linux jobs yet,
+`packaging/smoke-test.sh <package>` unpacks each one, checks it carries the arcane icon, and runs
+the same smoke test on the converter inside it; publish a package only once it passes. `release.yml` has no macOS or Linux jobs yet,
 so these steps are not automated.
 
 The workflow needs a `release` environment holding the Azure signing variables TomeVTT's desktop
