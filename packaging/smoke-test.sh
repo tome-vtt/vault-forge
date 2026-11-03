@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Release smoke test for macOS and Linux: unpacks a package and runs installer/smoke-test.ps1, the
-# Windows release's own test, on the converter folder inside it, after checking the package icon. Usage: smoke-test.sh <package>,
-# a .dmg, .AppImage or .deb. Needs pwsh, which every GitHub-hosted runner has.
+# Release smoke test for macOS and Linux: unpacks a package, checks its icon, and runs
+# installer/smoke-test.ps1, the Windows release's own test, on the converter folder inside it.
+# Usage: smoke-test.sh <package>, a .dmg, .AppImage or .deb. Needs pwsh, which every GitHub-hosted
+# runner has.
 set -euo pipefail
 
 package=$(realpath "$1")
