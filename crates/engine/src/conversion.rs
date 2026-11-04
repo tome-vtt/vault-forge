@@ -10,8 +10,9 @@ use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
+use crate::game_data::GameData;
 use crate::last_run::{self, LastRuns};
-use crate::profiles::vault_folder;
+use crate::profiles::{Profiles, vault_folder};
 use crate::{ConvertedNotes, Event, Fix, LastRun, Profile, converter, holding_folder};
 
 pub(crate) struct Conversion {
@@ -47,22 +48,32 @@ impl Conversion {
         self.running.lock().unwrap().as_ref().map(|r| r.id.clone())
     }
 
-    /// Starts converting the profile from the config file and the game data's `data` folder,
-    /// unless a conversion is already running anywhere in the app.
+    /// Starts converting the profile from its config file and its game data's `data` folder,
+    /// unless [`Profile::blocker`] refuses it: one conversion at a time across the app, no
+    /// download running, game data downloaded and a book chosen.
     pub(crate) fn start(
         &self,
-        profile: &Profile,
-        config: &Path,
-        data: &Path,
+        profiles: &mut Profiles,
+        game_data: &GameData,
+        id: &str,
     ) -> Result<(), String> {
         let mut running = self.running.lock().unwrap();
-        if running.is_some() {
-            return Err("Another profile is converting.".into());
+        let p = profiles.get(id)?;
+        let data = game_data.data_folder(&p.address);
+        // As `is_downloading`: switched-off images count until they have stopped.
+        let downloading = p.downloads().iter().any(|(a, _)| game_data.is_running(a))
+            || game_data.is_stopping(&p.images_address);
+        let converting = running.as_ref().map(|r| r.id.as_str());
+        if let Some(reason) = p.blocker(data.is_some(), downloading, converting) {
+            return Err(reason.into());
         }
+        let data = data.unwrap_or_default();
+        profiles.refresh_templates(id)?;
+        let (profile, config) = (profiles.get(id)?, profiles.file(id));
         let folders = folders(profile)?;
         let holding = holding_folder::create(&profile.vault)
             .map_err(|e| format!("Could not make the holding folder in the vault: {e}"))?;
-        let started = converter::start(&self.converter, config, profile.rules, data, &holding);
+        let started = converter::start(&self.converter, &config, profile.rules, &data, &holding);
         let (child, lines) = started.map_err(|e| {
             let _ = holding_folder::discard(&holding);
             format!("Could not start the converter: {e}")
