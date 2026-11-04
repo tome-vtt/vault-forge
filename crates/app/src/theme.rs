@@ -452,6 +452,7 @@ fn field(
         // The edge stays as it is while focused; `focus_ring` marks the focus. It is set on the
         // frame, not through `selection.stroke`, which also colours the selected letters.
         let edge = Stroke::new(1.0, p.border);
+        // 12 by (height - 20) / 2 inside the edge, less the edge's own pixel.
         let frame = egui::Frame::new()
             .fill(ui.visuals().text_edit_bg_color())
             .stroke(edge)
@@ -801,17 +802,18 @@ mod tests {
             ("small_input", small_input),
             ("pathline", |ui, edit| pathline(ui, edit, "Browse", true).0),
         ];
-        for (theme, palette) in [(Theme::Dark, &DARK), (Theme::Light, &LIGHT)] {
+        for (theme, colours_of) in [(Theme::Dark, &DARK), (Theme::Light, &LIGHT)] {
             for (name, field) in fields {
-                let mut harness = Harness::builder().with_theme(theme).build_ui_state(
-                    |ui, text: &mut String| {
-                        let label = ui.label("Address");
-                        field(ui, egui::TextEdit::singleline(text)).labelled_by(label.id);
-                    },
-                    "Hello".to_owned(),
-                );
-                install(&harness.ctx);
-                harness.ctx.set_theme(theme);
+                let mut harness = Harness::builder()
+                    .with_theme(theme)
+                    .with_context_setup(install)
+                    .build_ui_state(
+                        |ui, text: &mut String| {
+                            let label = ui.label("Address");
+                            field(ui, egui::TextEdit::singleline(text)).labelled_by(label.id);
+                        },
+                        "Hello".to_owned(),
+                    );
                 harness.run();
                 harness.get_by_label("Address").focus();
                 harness.run();
@@ -824,8 +826,7 @@ mod tests {
                 }
                 assert!(!colours.is_empty(), "{name} in {theme:?} painted no text");
                 for colour in colours {
-                    assert_ne!(colour, palette.active, "{name} in {theme:?}: text vanishes");
-                    assert_eq!(colour, palette.text, "{name} in {theme:?}");
+                    assert_eq!(colour, colours_of.text, "{name} in {theme:?}");
                 }
             }
         }
