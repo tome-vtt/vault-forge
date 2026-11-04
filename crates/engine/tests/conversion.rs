@@ -376,12 +376,16 @@ fn converting_the_same_profile_again_is_refused_while_it_runs() {
         |e| matches!(e, Event::ConversionLog { line, .. } if line == "Waiting"),
     );
     setup.engine.send(Command::Convert(id.clone()));
-    let refused = setup.events.recv_timeout(Duration::from_secs(30)).unwrap();
+    // Progress may still arrive, so the refusal is looked for rather than taken as the next event.
+    let refused = std::iter::from_fn(|| setup.events.recv_timeout(Duration::from_secs(30)).ok())
+        .find_map(|e| match e {
+            Event::Failed(m) => Some(m),
+            Event::ConversionEnded { .. } => panic!("the conversion ended before the refusal"),
+            _ => None,
+        })
+        .unwrap();
 
-    assert!(
-        matches!(&refused, Event::Failed(m) if m == "Converting now."),
-        "{refused:?}"
-    );
+    assert_eq!(refused, "Converting now.");
     setup.engine.send(Command::CancelConversion(id));
     wait(&setup.events, |e| {
         matches!(e, Event::ConversionEnded { .. })
