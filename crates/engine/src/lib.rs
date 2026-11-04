@@ -566,27 +566,7 @@ impl Engine {
                     self.game_data.cancel(address);
                 }
             }),
-            Command::Convert(id) => profiles
-                .get(&id)
-                .and_then(|p| {
-                    let data = self.game_data.data_folder(&p.address);
-                    // As `is_downloading`: switched-off images count until they have stopped.
-                    let downloading = p
-                        .downloads()
-                        .iter()
-                        .any(|(a, _)| self.game_data.is_running(a))
-                        || self.game_data.is_stopping(&p.images_address);
-                    let converting = self.conversion.converting();
-                    match p.blocker(data.is_some(), downloading, converting.as_deref()) {
-                        Some(reason) => Err(reason.into()),
-                        None => Ok(data.unwrap_or_default()),
-                    }
-                })
-                .and_then(|data| {
-                    profiles.refresh_templates(&id)?;
-                    let p = profiles.get(&id)?;
-                    self.conversion.start(p, &profiles.file(&id), &data)
-                }),
+            Command::Convert(id) => self.conversion.start(&mut profiles, &self.game_data, &id),
             Command::CancelConversion(id) => {
                 self.conversion.cancel(&id);
                 Ok(())

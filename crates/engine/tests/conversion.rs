@@ -364,6 +364,35 @@ fn a_second_conversion_is_refused_while_one_runs() {
 }
 
 #[test]
+fn converting_the_same_profile_again_is_refused_while_it_runs() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    choose(&setup, &id, &["HANG"]);
+
+    setup.engine.send(Command::Convert(id.clone()));
+    wait(
+        &setup.events,
+        |e| matches!(e, Event::ConversionLog { line, .. } if line == "Waiting"),
+    );
+    setup.engine.send(Command::Convert(id.clone()));
+    // Progress may still arrive, so the refusal is looked for rather than taken as the next event.
+    let refused = std::iter::from_fn(|| setup.events.recv_timeout(Duration::from_secs(30)).ok())
+        .find_map(|e| match e {
+            Event::Failed(m) => Some(m),
+            Event::ConversionEnded { .. } => panic!("the conversion ended before the refusal"),
+            _ => None,
+        })
+        .unwrap();
+
+    assert_eq!(refused, "Converting now.");
+    setup.engine.send(Command::CancelConversion(id));
+    wait(&setup.events, |e| {
+        matches!(e, Event::ConversionEnded { .. })
+    });
+}
+
+#[test]
 fn the_game_data_a_conversion_reads_stays_until_it_ends() {
     let address = serve_game_data();
     let setup = setup(&address);
@@ -827,4 +856,30 @@ fn a_conversion_uses_the_templates_in_the_folder_now_not_at_save() {
     let spell = templates.path().join("spell2md.txt").display().to_string();
     let spell = spell.replace('\\', "/");
     assert_eq!(used, [&format!("Template spell: {spell}")]);
+}
+
+#[test]
+fn a_refused_conversion_leaves_the_profile_file_as_it_was() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let templates = tempfile::tempdir().unwrap();
+    std::fs::write(templates.path().join("monster2md.txt"), "{name}").unwrap();
+    let mut profile = setup.engine.profiles()[0].clone();
+    profile.templates = Some(templates.path().to_path_buf());
+    profile.config.sources.book.clear();
+    setup.engine.send(Command::SaveProfile(profile.clone()));
+    wait(&setup.events, |e| matches!(e, Event::ProfileSaved(_)));
+    std::fs::write(templates.path().join("spell2md.txt"), "{name}").unwrap();
+    let file = setup.engine.profile_file(&profile.id);
+    let before = std::fs::read(&file).unwrap();
+
+    setup.engine.send(Command::Convert(profile.id.clone()));
+
+    assert!(
+        setup
+            .events
+            .try_iter()
+            .any(|e| matches!(&e, Event::Failed(m) if m == "Choose at least one book first."))
+    );
+    assert_eq!(std::fs::read(&file).unwrap(), before);
 }
