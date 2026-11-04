@@ -449,20 +449,17 @@ fn field(
 ) -> egui::Response {
     let p = palette(ui);
     ui.scope(|ui| {
-        let v = ui.visuals_mut();
-        // The edge stays as it is while focused; `focus_ring` marks the focus.
-        v.selection.stroke = Stroke::new(1.0, p.border);
-        for state in [
-            &mut v.widgets.inactive,
-            &mut v.widgets.hovered,
-            &mut v.widgets.active,
-        ] {
-            state.bg_stroke = Stroke::new(1.0, p.border);
-            state.corner_radius = corners;
-        }
+        // The edge stays as it is while focused; `focus_ring` marks the focus. It is set on the
+        // frame, not through `selection.stroke`, which also colours the selected letters.
+        let edge = Stroke::new(1.0, p.border);
+        let frame = egui::Frame::new()
+            .fill(ui.visuals().text_edit_bg_color())
+            .stroke(edge)
+            .corner_radius(corners)
+            .inner_margin(Margin::symmetric(11, ((height - 22.0) / 2.0) as i8));
         let field = ui.add(
-            edit.desired_width(f32::INFINITY)
-                .margin(egui::vec2(12.0, (height - 20.0) / 2.0))
+            edit.frame(frame)
+                .desired_width(f32::INFINITY)
                 .min_size(egui::vec2(0.0, height))
                 .align(egui::Align2::LEFT_CENTER),
         );
@@ -774,4 +771,63 @@ pub fn code(ui: &mut egui::Ui, text: &str) {
 pub fn text_button(ui: &mut egui::Ui, text: &str) -> bool {
     let text = medium(text).color(palette(ui).accent);
     ui.add(egui::Button::new(text).frame(false)).clicked()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    /// The colour of every glyph vertex in painted "Hello", searched through nested shapes.
+    fn glyph_colours(shape: &egui::Shape, out: &mut Vec<Color32>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| glyph_colours(s, out)),
+            egui::Shape::Text(text) if text.galley.text() == "Hello" => {
+                for row in &text.galley.rows {
+                    let range = row.visuals.glyph_vertex_range.clone();
+                    out.extend(row.visuals.mesh.vertices[range].iter().map(|v| v.color));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn selected_text_in_every_shared_field_is_drawn_in_ink_in_both_appearances() {
+        type Field = fn(&mut egui::Ui, egui::TextEdit<'_>) -> egui::Response;
+        let fields: [(&str, Field); 3] = [
+            ("input", input),
+            ("small_input", small_input),
+            ("pathline", |ui, edit| pathline(ui, edit, "Browse", true).0),
+        ];
+        for (theme, palette) in [(Theme::Dark, &DARK), (Theme::Light, &LIGHT)] {
+            for (name, field) in fields {
+                let mut harness = Harness::builder().with_theme(theme).build_ui_state(
+                    |ui, text: &mut String| {
+                        let label = ui.label("Address");
+                        field(ui, egui::TextEdit::singleline(text)).labelled_by(label.id);
+                    },
+                    "Hello".to_owned(),
+                );
+                install(&harness.ctx);
+                harness.ctx.set_theme(theme);
+                harness.run();
+                harness.get_by_label("Address").focus();
+                harness.run();
+                harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+                harness.run();
+
+                let mut colours = Vec::new();
+                for clipped in &harness.output().shapes {
+                    glyph_colours(&clipped.shape, &mut colours);
+                }
+                assert!(!colours.is_empty(), "{name} in {theme:?} painted no text");
+                for colour in colours {
+                    assert_ne!(colour, palette.active, "{name} in {theme:?}: text vanishes");
+                    assert_eq!(colour, palette.text, "{name} in {theme:?}");
+                }
+            }
+        }
+    }
 }
