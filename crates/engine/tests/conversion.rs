@@ -364,6 +364,31 @@ fn a_second_conversion_is_refused_while_one_runs() {
 }
 
 #[test]
+fn converting_the_same_profile_again_is_refused_while_it_runs() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    choose(&setup, &id, &["HANG"]);
+
+    setup.engine.send(Command::Convert(id.clone()));
+    wait(
+        &setup.events,
+        |e| matches!(e, Event::ConversionLog { line, .. } if line == "Waiting"),
+    );
+    setup.engine.send(Command::Convert(id.clone()));
+    let refused = setup.events.recv_timeout(Duration::from_secs(30)).unwrap();
+
+    assert!(
+        matches!(&refused, Event::Failed(m) if m == "Converting now."),
+        "{refused:?}"
+    );
+    setup.engine.send(Command::CancelConversion(id));
+    wait(&setup.events, |e| {
+        matches!(e, Event::ConversionEnded { .. })
+    });
+}
+
+#[test]
 fn the_game_data_a_conversion_reads_stays_until_it_ends() {
     let address = serve_game_data();
     let setup = setup(&address);
