@@ -238,9 +238,17 @@ fn folders(profile: &Profile) -> Result<Vec<String>, String> {
     };
     let compendium = inside(&profile.config.paths.compendium, "compendium")?;
     let rules = inside(&profile.config.paths.rules, "rules")?;
-    Ok(if Path::new(&rules).starts_with(&compendium) {
+    // Compared the way the vault's disk names folders: `Compendium/` and `compendium/rules/` are
+    // one folder on Windows and macOS.
+    // ponytail: by platform, not by disk; probe the vault if case-sensitive volumes matter.
+    let key = |folder: &str| match cfg!(any(windows, target_os = "macos")) {
+        true => folder.to_lowercase(),
+        false => folder.to_owned(),
+    };
+    let (outer, inner) = (key(&compendium), key(&rules));
+    Ok(if Path::new(&inner).starts_with(&outer) {
         vec![compendium]
-    } else if Path::new(&compendium).starts_with(&rules) {
+    } else if Path::new(&outer).starts_with(&inner) {
         vec![rules]
     } else {
         vec![compendium, rules]
@@ -260,7 +268,7 @@ fn written(holding: &Path, folders: &[String]) -> Vec<(String, usize)> {
         {
             let path = entry.path();
             let (mut notes, mut newest) = (0, SystemTime::UNIX_EPOCH);
-            let name = if path.is_dir() {
+            let name = if entry.file_type().is_ok_and(|k| k.is_dir()) {
                 walk(&path, &mut notes, &mut newest);
                 format!("{own}/{}", entry.file_name().to_string_lossy())
             } else {
@@ -287,7 +295,8 @@ fn by_name(written: &[(String, usize)]) -> Vec<(String, usize)> {
 fn walk(dir: &Path, notes: &mut usize, newest: &mut SystemTime) {
     for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
         let path = entry.path();
-        if path.is_dir() {
+        // The entry's own type, so a link counts as a note and is never followed.
+        if entry.file_type().is_ok_and(|k| k.is_dir()) {
             walk(&path, notes, newest);
         } else {
             *notes += 1;

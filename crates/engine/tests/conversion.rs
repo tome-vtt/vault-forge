@@ -604,6 +604,48 @@ fn nested_folders_are_converted_again_over_their_own_notes() {
     }
 }
 
+#[test]
+fn folders_differing_only_in_letter_case_keep_every_new_note() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    // One folder on Windows and macOS, two on Linux; the notes stay either way.
+    for (compendium, rules) in [("Compendium/", "compendium/"), ("Notes/", "notes/Rules/")] {
+        let mut profile = choose(&setup, &id, &["XPHB"]);
+        profile.config.paths.compendium = compendium.into();
+        profile.config.paths.rules = rules.into();
+        setup.engine.send(Command::SaveProfile(profile));
+
+        for run in ["first", "second"] {
+            let (_, converted, message) = convert(&setup, &id);
+            assert!(converted, "{compendium} {run}: {message}");
+            assert!(
+                setup.vault.join(compendium).join("XPHB.md").is_file(),
+                "{compendium} {run}"
+            );
+            assert!(
+                setup.vault.join(rules).join("conditions.md").is_file(),
+                "{rules} {run}"
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn counting_converted_notes_does_not_follow_a_symlink_loop() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    convert(&setup, &id);
+    let compendium = setup.vault.join("compendium");
+    std::os::unix::fs::symlink(&compendium, compendium.join("loop")).unwrap();
+
+    let notes = setup.engine.converted_notes(&id).unwrap();
+
+    assert_eq!(notes.notes, 3, "two notes and the link, not followed");
+}
+
 /// The notes in the vault's compendium and rules folders.
 fn notes_in_vault(vault: &Path) -> usize {
     let all = files(vault);
