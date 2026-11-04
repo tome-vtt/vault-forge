@@ -643,7 +643,7 @@ fn counting_converted_notes_does_not_follow_a_symlink_loop() {
 
     let notes = setup.engine.converted_notes(&id).unwrap();
 
-    assert_eq!(notes.notes, 2);
+    assert_eq!(notes.notes, 3, "two notes and the link, not followed");
 }
 
 /// The notes in the vault's compendium and rules folders.

@@ -295,11 +295,10 @@ fn by_name(written: &[(String, usize)]) -> Vec<(String, usize)> {
 fn walk(dir: &Path, notes: &mut usize, newest: &mut SystemTime) {
     for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
         let path = entry.path();
-        // The entry's own type, so a link (even one looping back) is never followed.
-        let kind = entry.file_type();
-        if kind.as_ref().is_ok_and(|k| k.is_dir()) {
+        // The entry's own type, so a link counts as a note and is never followed.
+        if entry.file_type().is_ok_and(|k| k.is_dir()) {
             walk(&path, notes, newest);
-        } else if kind.is_ok_and(|k| k.is_file()) {
+        } else {
             *notes += 1;
             let written = entry.metadata().and_then(|m| m.modified());
             *newest = (*newest).max(written.unwrap_or(SystemTime::UNIX_EPOCH));
