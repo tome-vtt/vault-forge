@@ -1,5 +1,6 @@
 # Checks the converter folder holds the converter, its LICENSE and the examples, then runs the real
-# bundled converter once on the tiny sample in smoke/ and fails unless it exits 0 and writes notes. Usage: pwsh installer/smoke-test.ps1 <folder holding the app and converter/>
+# bundled converter once on the tiny sample in smoke/ and fails unless it exits 0 and writes notes.
+# Usage: pwsh installer/smoke-test.ps1 <folder holding the app and converter/>
 param([Parameter(Mandatory)] [string] $AppFolder)
 $ErrorActionPreference = 'Stop'
 
