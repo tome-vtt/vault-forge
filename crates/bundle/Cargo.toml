@@ -8,7 +8,7 @@ repository.workspace = true
 [dependencies]
 ring = "0.17.14"
 ureq = "3.5.0"
-vault-forge-engine = { version = "0.1.0", path = "../engine" }
+vault-forge-engine = { version = "0.1.1", path = "../engine" }
 zip = { version = "9.1.3", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]

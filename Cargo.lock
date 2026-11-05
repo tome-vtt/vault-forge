@@ -3684,7 +3684,7 @@ dependencies = [
 
 [[package]]
 name = "vault-forge"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "directories",
@@ -3700,7 +3700,7 @@ dependencies = [
 
 [[package]]
 name = "vault-forge-bundle"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ring",
  "tempfile",
@@ -3711,7 +3711,7 @@ dependencies = [
 
 [[package]]
 name = "vault-forge-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
