@@ -590,6 +590,63 @@ fn old_notes_a_swap_could_not_put_back_are_kept() {
 }
 
 #[test]
+fn old_notes_left_by_a_crash_mid_swap_are_not_deleted() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    fill(&setup.vault);
+    let id = setup.engine.profiles()[0].id.clone();
+    // The app died after moving the old compendium into the holding folder, before the new one
+    // went in.
+    let holding = setup.vault.join(".vault-forge-holding");
+    std::fs::create_dir(&holding).unwrap();
+    std::fs::rename(
+        setup.vault.join("compendium"),
+        holding.join(".replaced-0-compendium"),
+    )
+    .unwrap();
+    let before = files(&setup.vault);
+
+    setup.engine.send(Command::Convert(id));
+
+    let refused = setup.events.try_iter().find_map(|e| match e {
+        Event::Failed(m) => Some(m),
+        _ => None,
+    });
+    let refused = refused.expect("Convert is refused");
+    assert!(refused.contains("could not be put back"), "{refused}");
+    assert!(
+        refused.contains(&holding.display().to_string()),
+        "{refused}"
+    );
+    assert_eq!(files(&setup.vault), before);
+}
+
+#[test]
+fn a_swap_that_fails_partway_puts_every_folder_back_on_every_system() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    fill(&setup.vault);
+    let id = setup.engine.profiles()[0].id.clone();
+    // A file where the rules folder's parent should be, so the swap fails after the compendium
+    // is swapped in, on every system.
+    std::fs::write(setup.vault.join("x"), "a file").unwrap();
+    let mut profile = choose(&setup, &id, &["XPHB"]);
+    profile.config.paths.rules = "x/rules/".into();
+    setup.engine.send(Command::SaveProfile(profile));
+    let before = files(&setup.vault);
+
+    let (_, converted, message) = convert(&setup, &id);
+
+    assert!(!converted);
+    assert!(
+        message.starts_with("Could not put the notes into the vault (")
+            && message.ends_with("), so it was not changed."),
+        "{message}"
+    );
+    assert_eq!(files(&setup.vault), before);
+}
+
+#[test]
 fn the_notes_written_so_far_are_reported_by_folder() {
     let address = serve_game_data();
     let setup = setup(&address);
