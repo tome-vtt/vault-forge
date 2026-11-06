@@ -3700,11 +3700,11 @@ dependencies = [
  "eframe",
  "egui_kittest",
  "rfd",
- "serde_json",
  "tempfile",
  "vault-forge-engine",
  "winresource",
  "zbus",
+ "zip",
 ]
 
 [[package]]

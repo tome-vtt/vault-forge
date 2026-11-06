@@ -3,8 +3,8 @@
 //! stdout and stderr, and writes a note per chosen book into the config's compendium folder and
 //! one into its rules folder; a book named with a slash (`bestiary/MM`) goes into a folder of the
 //! compendium. It prints `Template <type>: <path>` for each template the config names. A chosen
-//! book named EXIT1 or EXIT2 makes it end with that exit code once its notes are written; HANG
-//! makes it wait until it is killed.
+//! book named EXIT1 or EXIT2 makes it end with that exit code once its notes are written; EARLY2
+//! makes it end with exit code 2 before writing any; HANG makes it wait until it is killed.
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::{env, fs, process, thread, time::Duration};
@@ -45,6 +45,10 @@ fn main() {
     println!("Reading {data}");
     if !Path::new(&data).join("books.json").is_file() {
         eprintln!("Error: unable to find books.json in {data}");
+        process::exit(2);
+    }
+    if books.iter().any(|b| b == "EARLY2") {
+        eprintln!("Error: stopping early with exit code 2");
         process::exit(2);
     }
     let compendium = PathBuf::from(&output).join(text("compendium"));
