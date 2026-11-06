@@ -614,6 +614,10 @@ fn old_notes_left_by_a_crash_mid_swap_are_not_deleted() {
     });
     let refused = refused.expect("Convert is refused");
     assert!(refused.contains("could not be put back"), "{refused}");
+    assert!(
+        refused.contains(&holding.display().to_string()),
+        "{refused}"
+    );
     assert_eq!(files(&setup.vault), before);
 }
 

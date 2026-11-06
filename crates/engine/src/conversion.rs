@@ -137,20 +137,21 @@ impl Conversion {
                 .unwrap()
                 .as_ref()
                 .is_some_and(|r| r.cancelled);
-            let mut discard = true;
+            let mut keep = false;
             let (converted, mut message, fix) = match code {
                 _ if cancelled => (false, CANCELLED.to_owned(), None),
                 Some(0) => match holding_folder::swap(&holding, &vault, &folders) {
                     Ok(()) => (true, explain(Some(0)), None),
                     Err(failed) => {
-                        discard = false;
+                        // Discarded there only when every old folder was put back.
+                        keep = true;
                         (false, swap_failed(failed, &holding), Some(Fix::Vault))
                     }
                 },
                 Some(2) => (false, explain(code), Some(Fix::DownloadAddress)),
                 code => (false, explain(code), None),
             };
-            if discard {
+            if !keep {
                 let _ = holding_folder::discard(&holding);
             }
             if !cancelled {
