@@ -378,22 +378,30 @@ impl App {
         ui.add_space(8.0 - ui.spacing().item_spacing.y);
         for p in profiles {
             let open = matches!(&self.screen, Screen::Profile(id) if *id == p.id);
-            if theme::nav_row(ui, open, &p.name, rules_tag(p.rules)).clicked() {
+            if theme::nav_row(
+                ui,
+                open,
+                Some(theme::Icon::Folder),
+                &p.name,
+                rules_tag(p.rules),
+            )
+            .clicked()
+            {
                 self.go(Screen::Profile(p.id.clone()));
             }
         }
         let on_new = matches!(self.screen, Screen::NewProfile);
-        if theme::add_row(ui, on_new, "+ New profile").clicked() {
+        if theme::add_row(ui, on_new, "New profile").clicked() {
             self.go(Screen::NewProfile);
         }
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
             // Bottom up: About is the last row, Obsidian setup above it.
             let on_about = matches!(self.screen, Screen::About);
-            if theme::nav_row(ui, on_about, "About", "").clicked() {
+            if theme::nav_row(ui, on_about, None, "About", "").clicked() {
                 self.go(Screen::About);
             }
             let on_setup = matches!(self.screen, Screen::ObsidianSetup);
-            if theme::nav_row(ui, on_setup, "Obsidian setup", "").clicked() {
+            if theme::nav_row(ui, on_setup, None, "Obsidian setup", "").clicked() {
                 self.go(Screen::ObsidianSetup);
             }
             let margin = egui::Margin {
@@ -889,15 +897,31 @@ mod tests {
 
     fn assert_looks(harness: &Harness<'_, App>, theme: Theme) {
         assert_eq!(harness.ctx.theme(), theme);
-        let p = match theme {
-            Theme::Light => &theme::LIGHT,
-            Theme::Dark => &theme::DARK,
-        };
-        let visuals = harness.ctx.global_style().visuals.clone();
-        assert_eq!(visuals.panel_fill, p.ground);
-        assert_eq!(visuals.window_fill, p.surface);
-        assert_eq!(visuals.hyperlink_color, p.accent);
-        assert_eq!(visuals.widgets.noninteractive.fg_stroke.color, p.text);
+        let v = harness.ctx.global_style().visuals.clone();
+        let w = &v.widgets;
+        // The demo's tokens, light then dark, written out here so a changed or swapped palette
+        // entry fails.
+        for (token, drawn, light, dark) in [
+            ("ground", v.panel_fill, 0xf6f8f9, 0x0f1011),
+            ("surface", v.window_fill, 0xffffff, 0x17181a),
+            ("border", v.window_stroke.color, 0xe8eaec, 0x2a2c2e),
+            ("rule", w.noninteractive.bg_stroke.color, 0xf0f1f2, 0x222325),
+            ("panel", v.faint_bg_color, 0xfafafa, 0x1d1e20),
+            ("field", v.extreme_bg_color, 0xffffff, 0x141517),
+            ("raised", v.code_bg_color, 0xf4f6f8, 0x202123),
+            ("active", v.selection.bg_fill, 0xe6e9eb, 0x2a2c2e),
+            ("control", w.inactive.bg_stroke.color, 0xcdced1, 0x45474a),
+            ("text", w.noninteractive.fg_stroke.color, 0x131416, 0xf2f3f4),
+            ("text2", w.inactive.fg_stroke.color, 0x3b3d3f, 0xd0d2d4),
+            ("muted", v.weak_text_color.unwrap(), 0x5d5f60, 0xb0b3b6),
+            ("accent", v.hyperlink_color, 0x1b6c80, 0x5fb8cc),
+            ("warning", v.warn_fg_color, 0x92400e, 0xe8b45a),
+            ("negative", v.error_fg_color, 0xc4242a, 0xef6b6b),
+        ] {
+            let rgb = u32::from_be_bytes([0, drawn.r(), drawn.g(), drawn.b()]);
+            let want = if theme == Theme::Light { light } else { dark };
+            assert_eq!(rgb, want, "{token} in {theme:?}");
+        }
     }
 
     #[test]
@@ -1943,6 +1967,91 @@ mod tests {
         assert!((gap - 2.0).abs() < 0.5, "nav rows {gap} apart");
     }
 
+    /// The painted shapes, nested ones flattened.
+    fn painted(harness: &Harness<'_, App>) -> Vec<egui::Shape> {
+        fn flatten(shape: &egui::Shape, out: &mut Vec<egui::Shape>) {
+            match shape {
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| flatten(s, out)),
+                shape => out.push(shape.clone()),
+            }
+        }
+        let mut out = Vec::new();
+        for clipped in &harness.output().shapes {
+            flatten(&clipped.shape, &mut out);
+        }
+        out
+    }
+
+    #[test]
+    fn profile_rows_start_with_a_folder_and_new_profile_with_a_plus_as_the_demo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
+        // A hovered row keeps its layout, so its text does not jump.
+        for (theme, hover) in [
+            (Theme::Light, false),
+            (Theme::Dark, false),
+            (Theme::Dark, true),
+        ] {
+            harness.ctx.set_theme(theme);
+            for (label, text, plus) in [
+                ("Thursday 5e", "Thursday", false),
+                ("New profile", "New profile", true),
+            ] {
+                if hover {
+                    harness.get_by_label(label).hover();
+                }
+                harness.run();
+                let shapes = painted(&harness);
+                let row = harness.get_by_label(label).rect();
+                // 10px padding, the 16px icon and a 10px gap, as the demo's .nav row.
+                let left = shapes
+                    .iter()
+                    .find_map(|s| match s {
+                        egui::Shape::Text(t) if t.galley.text() == text && row.contains(t.pos) => {
+                            Some(t.pos.x - row.left())
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("no {text} in its row"));
+                assert!((left - 36.0).abs() < 0.5, "{label} text at {left}");
+                // The demo's icon: a 1.5px #5d5f60 stroke in the 16px square after the padding.
+                let icon = egui::Rect::from_min_size(
+                    egui::pos2(row.left() + 10.0, row.center().y - 8.0),
+                    egui::vec2(16.0, 16.0),
+                )
+                .expand(0.5);
+                let grey = egui::Color32::from_rgb(0x5d, 0x5f, 0x60);
+                let (mut lines, mut paths) = (0, 0);
+                for shape in &shapes {
+                    match shape {
+                        egui::Shape::LineSegment { points, stroke }
+                            if points.iter().all(|p| icon.contains(*p))
+                                && stroke.width == 1.5
+                                && stroke.color == grey =>
+                        {
+                            lines += 1
+                        }
+                        egui::Shape::Path(path)
+                            if path.closed
+                                && path.points.iter().all(|p| icon.contains(*p))
+                                && path.stroke.width == 1.5
+                                && path.stroke.color == egui::epaint::ColorMode::Solid(grey) =>
+                        {
+                            paths += 1
+                        }
+                        // The demo's rows have no border, hovered or not.
+                        egui::Shape::Rect(frame) if frame.rect.intersects(row.shrink(1.0)) => {
+                            assert_eq!(frame.stroke.width, 0.0, "{label} border in {theme:?}");
+                        }
+                        _ => {}
+                    }
+                }
+                let drawn = if plus { (2, 0) } else { (0, 1) };
+                assert_eq!((lines, paths), drawn, "{label} in {theme:?}");
+            }
+        }
+    }
+
     #[test]
     fn the_narrow_top_bar_has_16_after_the_menu_button() {
         let dir = tempfile::tempdir().unwrap();
@@ -2559,8 +2668,8 @@ mod tests {
             .unwrap()
             .click();
         harness.run();
-        // The top bar's breadcrumb and the screen's title.
-        assert_eq!(harness.get_all_by_label("New profile").count(), 2);
+        // The sidebar row, the top bar's breadcrumb and the screen's title.
+        assert_eq!(harness.get_all_by_label("New profile").count(), 3);
         assert!(harness.state().engine.profiles().is_empty());
     }
 
@@ -2597,14 +2706,15 @@ mod tests {
         harness.get_by_label("See what's new");
     }
 
-    /// The top bar at `width` after the release check found 1.1.0.
+    /// The top bar at `width` after the release check found 1.1.0, at a page the version alone
+    /// could not spell, so only the event's own page matches it.
     fn top_bar_with_notice(dir: &std::path::Path, width: f32) -> Harness<'static, App> {
         let (engine, _) = Engine::start(dir.to_path_buf(), dir.join("local")).unwrap();
         let (events, received) = std::sync::mpsc::channel();
         events
             .send(Event::NewerRelease {
                 version: "1.1.0".into(),
-                page: "https://github.com/tome-vtt/vault-forge/releases/tag/v1.1.0".into(),
+                page: "https://github.com/tome-vtt/vault-forge/releases/tag/notes-for-1.1.0".into(),
                 released: "2026-10-27".into(),
             })
             .unwrap();
@@ -2758,7 +2868,7 @@ mod tests {
         harness.step();
         assert_eq!(
             opened_url(&harness).as_deref(),
-            Some("https://github.com/tome-vtt/vault-forge/releases/tag/v1.1.0")
+            Some("https://github.com/tome-vtt/vault-forge/releases/tag/notes-for-1.1.0")
         );
     }
 }

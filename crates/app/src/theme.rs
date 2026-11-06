@@ -520,30 +520,101 @@ fn ring_corners(response: &egui::Response, corners: CornerRadius) {
         .data_mut(|d| d.insert_temp(response.id, corners));
 }
 
-/// A sidebar row: full width, with an optional tag such as the profile's rules on the right.
-pub fn nav_row(ui: &mut egui::Ui, selected: bool, text: &str, tag: &str) -> egui::Response {
+/// The demo's 16px sidebar icons.
+#[derive(Clone, Copy)]
+pub enum Icon {
+    Folder,
+    Plus,
+}
+
+/// The demo paints its sidebar icons in this grey in both appearances.
+const ICON_GREY: Color32 = hex(0x5d5f60);
+
+impl Icon {
+    /// The icon as a 16px atom, stroked 1.5px as the demo's SVGs are.
+    fn atom(self) -> egui::Atom<'static> {
+        egui::Atom::paint(egui::vec2(16.0, 16.0), move |ui, args| {
+            let stroke = Stroke::new(1.5, ICON_GREY);
+            // Points in the demo's 16px viewBox.
+            let at = |x: f32, y: f32| args.rect.min + egui::vec2(x, y);
+            let painter = ui.painter();
+            match self {
+                Icon::Plus => {
+                    painter.line_segment([at(8.0, 3.0), at(8.0, 13.0)], stroke);
+                    painter.line_segment([at(3.0, 8.0), at(13.0, 8.0)], stroke);
+                }
+                // The 1px corner arcs are cut straight; at 16px they look the same.
+                Icon::Folder => {
+                    let points = [
+                        (2.5, 4.5),
+                        (3.5, 3.5),
+                        (6.5, 3.5),
+                        (8.0, 5.0),
+                        (12.5, 5.0),
+                        (13.5, 6.0),
+                        (13.5, 12.0),
+                        (12.5, 13.0),
+                        (3.5, 13.0),
+                        (2.5, 12.0),
+                    ];
+                    painter.add(egui::Shape::closed_line(
+                        points.map(|(x, y)| at(x, y)).to_vec(),
+                        stroke,
+                    ));
+                }
+            }
+        })
+    }
+}
+
+/// A sidebar row: full width, with an optional icon before the text and an optional tag such as
+/// the profile's rules on the right.
+pub fn nav_row(
+    ui: &mut egui::Ui,
+    selected: bool,
+    icon: Option<Icon>,
+    text: &str,
+    tag: &str,
+) -> egui::Response {
     let p = palette(ui);
     let ink = if selected { p.text } else { p.text2 };
-    row(ui, selected, egui::RichText::new(text).color(ink), tag)
+    let text = egui::RichText::new(text).color(ink);
+    row(ui, selected, icon, text, tag)
 }
 
-/// The sidebar's quieter row that adds something, such as "+ New profile".
+/// The sidebar's quieter row that adds something, such as New profile, after a plus.
 pub fn add_row(ui: &mut egui::Ui, selected: bool, text: &str) -> egui::Response {
     let p = palette(ui);
-    row(ui, selected, egui::RichText::new(text).color(p.muted), "")
+    let text = egui::RichText::new(text).color(p.muted);
+    row(ui, selected, Some(Icon::Plus), text, "")
 }
 
-fn row(ui: &mut egui::Ui, selected: bool, text: egui::RichText, tag: &str) -> egui::Response {
+fn row(
+    ui: &mut egui::Ui,
+    selected: bool,
+    icon: Option<Icon>,
+    text: egui::RichText,
+    tag: &str,
+) -> egui::Response {
     let p = palette(ui);
     ui.scope(|ui| {
         ui.spacing_mut().button_padding.x = 10.0;
-        let hovered = &mut ui.visuals_mut().widgets.hovered;
-        hovered.weak_bg_fill = p.hover;
-        hovered.bg_fill = p.hover;
-        let button = egui::Button::selectable(selected, text)
-            .stroke(Stroke::NONE)
-            .corner_radius(8)
-            .min_size(egui::vec2(ui.available_width(), 32.0));
+        let w = &mut ui.visuals_mut().widgets;
+        // No border in the style itself: egui takes a styled border's width off the padding,
+        // even when the button overrides the border away.
+        for state in [&mut w.inactive, &mut w.hovered, &mut w.active] {
+            state.bg_stroke = Stroke::NONE;
+        }
+        w.hovered.weak_bg_fill = p.hover;
+        w.hovered.bg_fill = p.hover;
+        let button = match icon {
+            Some(icon) => egui::Button::selectable(selected, (icon.atom(), text)),
+            None => egui::Button::selectable(selected, text),
+        }
+        // The demo's 10px gap after the icon.
+        .gap(10.0)
+        .corner_radius(8)
+        .min_size(egui::vec2(ui.available_width(), 32.0));
         // The tag is part of the row's name for screen readers, so an empty one is left out.
         let row = ui.add(match tag {
             "" => button.right_text(egui::Atom::grow()),
