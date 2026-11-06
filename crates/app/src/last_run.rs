@@ -479,6 +479,33 @@ mod tests {
     }
 
     #[test]
+    fn the_subtitle_names_when_the_run_started() {
+        let mut run = LastRun {
+            started: SystemTime::from(Local.with_ymd_and_hms(2020, 3, 14, 12, 0, 0).unwrap()),
+            seconds: 1,
+            converted: true,
+            exit_code: Some(0),
+            message: String::new(),
+            fix: None,
+            books: 0,
+            homebrew: 0,
+            folders: Vec::new(),
+            warnings: Vec::new(),
+            log: Vec::new(),
+        };
+        let now = SystemTime::now();
+        assert_eq!(
+            subtitle(Some(&run), now),
+            "last converted 14 Mar 2020, 12:00"
+        );
+        run.converted = false;
+        assert_eq!(
+            subtitle(Some(&run), now),
+            "last attempt failed 14 Mar 2020, 12:00"
+        );
+    }
+
+    #[test]
     fn the_strip_reads_a_run_of_3725_seconds_as_62_m_5_s() {
         // Built in memory: a real stand-in run lasts under a second, so never shows minutes.
         let run = LastRun {
