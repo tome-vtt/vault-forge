@@ -265,10 +265,12 @@ pub fn dialog_width(ctx: &egui::Context) -> f32 {
     (ctx.content_rect().width() - 32.0).min(480.0) - 48.0
 }
 
-/// The dialog's heading: 18px SemiBold with 8px below.
+/// The dialog's heading: 18px SemiBold on a 26px line, with 8px below.
 pub fn dialog_title(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let title = ui.label(
-        egui::RichText::new(text).font(FontId::new(18.0, FontFamily::Name("semibold".into()))),
+        egui::RichText::new(text)
+            .font(FontId::new(18.0, FontFamily::Name("semibold".into())))
+            .line_height(Some(26.0)),
     );
     ui.add_space(8.0 - ui.spacing().item_spacing.y);
     title
@@ -280,15 +282,22 @@ pub fn dialog_actions(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     ui.add_space(20.0 - ui.spacing().item_spacing.y);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        // Pushed right by the buttons' width from the frame before; a modal's first frame is an
-        // unseen sizing pass, so it never shows them unaligned.
+        // Pushed right by the buttons' width from the pass before, or not at all before it is
+        // known. A pass that measures a new width is discarded and redrawn within the same
+        // frame, so the first frame shown has them in place. A modal sizes itself from what it
+        // drew before, so buttons pushed past its edge would move the whole dialog: the caller
+        // gives each kind of dialog its own modal, and so its own stored width.
         let id = ui.scope_id().with("actions_width");
-        let width = ui.data(|d| d.get_temp::<f32>(id)).unwrap_or(0.0);
-        ui.add_space((ui.available_width() - width).max(0.0));
+        let stored = ui.data(|d| d.get_temp::<f32>(id));
+        let push = stored.map_or(0.0, |width| ui.available_width() - width);
+        ui.add_space(push.max(0.0));
         let start = ui.cursor().min.x;
         add(ui);
         let width = ui.cursor().min.x - start - ui.spacing().item_spacing.x;
-        ui.data_mut(|d| d.insert_temp(id, width));
+        if stored != Some(width) {
+            ui.data_mut(|d| d.insert_temp(id, width));
+            ui.ctx().request_discard("dialog buttons measured");
+        }
     });
 }
 
@@ -320,8 +329,12 @@ pub fn primary_button(ui: &mut egui::Ui, enabled: bool, text: &str) -> egui::Res
     .inner
 }
 
-/// The app's mark and name at the head of the sidebar and the menu.
+/// The app's mark and name at the head of the sidebar and the menu, in a row of its own: 36
+/// tall, 8px in, the name 10px after the mark.
 pub fn brand(ui: &mut egui::Ui) {
+    ui.set_min_height(36.0);
+    ui.add_space(8.0);
+    ui.spacing_mut().item_spacing.x = 10.0;
     let (mark, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
     let painter = ui.painter();
     // The demo's mark is the same teal in both palettes.
@@ -384,7 +397,7 @@ pub fn section_with(
         if narrow {
             ui.add_space(12.0 - ui.spacing().item_spacing.y);
         } else {
-            ui.add_space(24.0);
+            ui.add_space(24.0 - ui.spacing().item_spacing.x);
         }
         egui::Frame::new()
             .fill(ui.visuals().faint_bg_color)

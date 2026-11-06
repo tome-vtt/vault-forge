@@ -221,7 +221,9 @@ impl GameDataSection {
             ..profile.clone()
         };
         let can_press = !self.images_address.trim().is_empty();
+        // A fixed id keeps focus when the line gains or loses its button as the GM types.
         let edit = egui::TextEdit::singleline(&mut self.images_address)
+            .id(ui.scope_id().with("images-address"))
             .hint_text(egui::RichText::new("https://…/images.zip").monospace())
             .font(egui::TextStyle::Monospace);
         let (field, pressed) = match label {
