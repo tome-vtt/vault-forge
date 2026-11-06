@@ -7,13 +7,21 @@ use vault_forge_engine::{Command, Engine, Event, VERSION};
 /// Serves one latest-release answer naming `tag` and its release `page`, to every request;
 /// returns its address.
 fn release_at(tag: &str, page: &str) -> String {
+    serve("200 OK", release_body(tag, page))
+}
+
+fn release_body(tag: &str, page: &str) -> String {
+    format!(
+        r#"{{"tag_name":"{tag}","html_url":"{page}","name":"Vault Forge {tag}","published_at":"2026-10-27T09:14:05Z"}}"#
+    )
+}
+
+/// Answers every request with `status` and `body`; returns the latest-release address.
+fn serve(status: &'static str, body: String) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!(
         "http://{}/repos/tome-vtt/vault-forge/releases/latest",
         listener.local_addr().unwrap()
-    );
-    let body = format!(
-        r#"{{"tag_name":"{tag}","html_url":"{page}","name":"Vault Forge {tag}","published_at":"2026-10-27T09:14:05Z"}}"#
     );
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
@@ -25,7 +33,7 @@ fn release_at(tag: &str, page: &str) -> String {
             let mut out = stream;
             let _ = write!(
                 out,
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             );
         }
@@ -96,5 +104,19 @@ fn an_older_release_sends_nothing() {
 fn an_unreachable_server_sends_nothing_and_no_error() {
     // Nothing listens on port 1.
     let events = check("http://127.0.0.1:1/repos/tome-vtt/vault-forge/releases/latest");
+    assert!(events.is_empty(), "{events:?}");
+}
+
+#[test]
+fn a_not_found_answer_sends_nothing_and_no_error() {
+    // The body names a newer release, so only the 404 itself keeps the check silent.
+    let page = "https://github.com/tome-vtt/vault-forge/releases/tag/v99.0.0";
+    let events = check(&serve("404 Not Found", release_body("v99.0.0", page)));
+    assert!(events.is_empty(), "{events:?}");
+}
+
+#[test]
+fn an_answer_that_is_not_json_sends_nothing_and_no_error() {
+    let events = check(&serve("200 OK", "<html>Not a release</html>".into()));
     assert!(events.is_empty(), "{events:?}");
 }
