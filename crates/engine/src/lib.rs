@@ -381,7 +381,8 @@ pub enum Event {
         converted: bool,
         message: String,
     },
-    /// A command could not be carried out; the message is for the user.
+    /// A command could not be carried out, or a save went ahead with a problem to tell the user
+    /// (its template folder could not be read); the message is for the user.
     Failed(String),
 }
 
@@ -535,8 +536,9 @@ impl Engine {
             Command::CreateProfile(draft) => profiles.create(draft).map(|id| {
                 let _ = self.events.send(Event::ProfileCreated(id));
             }),
-            Command::RenameProfile { id, name } => profiles.rename(&id, &name).map(|()| {
+            Command::RenameProfile { id, name } => profiles.rename(&id, &name).map(|warning| {
                 let _ = self.events.send(Event::ProfileSaved(id));
+                self.warn(warning);
             }),
             Command::DeleteProfile(id) if self.conversion.converting() == Some(id.clone()) => {
                 Err(WAIT_FOR_CONVERSION.into())
@@ -602,7 +604,7 @@ impl Engine {
             return Err(WAIT_FOR_CONVERSION.into());
         }
         let id = profile.id.clone();
-        profiles.save(profile)?;
+        let warning = profiles.save(profile)?;
         let new = profiles.get(&id)?.clone();
         // A changed address or images switch is checked at once, so its state and the images'
         // size show before anything downloads.
@@ -612,8 +614,16 @@ impl Engine {
             }
         }
         let _ = self.events.send(Event::ProfileSaved(id));
+        self.warn(warning);
         self.release_unused(profiles, &old)?;
         Ok(new)
+    }
+
+    /// Tells the user about a change that was saved all the same.
+    fn warn(&self, warning: Option<String>) {
+        if let Some(message) = warning {
+            let _ = self.events.send(Event::Failed(message));
+        }
     }
 
     /// Whether the running conversion reads the address's game data, which nothing may replace

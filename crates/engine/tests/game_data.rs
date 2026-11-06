@@ -763,6 +763,7 @@ fn an_address_is_refused_for_book_images_when_it_is_game_data_and_the_other_way_
     assert_eq!(engine.profiles()[0].images_address, "");
 
     engine.send(Command::SaveProfile(Profile {
+        images: true,
         images_address: images.clone(),
         ..thursday
     }));
