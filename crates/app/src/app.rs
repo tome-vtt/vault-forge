@@ -2029,7 +2029,11 @@ mod tests {
         harness.run();
 
         // The Supplements heading comes first, above the Adventures one.
-        harness.get_all_by_label("Choose all").next().unwrap().click();
+        harness
+            .get_all_by_label("Choose all")
+            .next()
+            .unwrap()
+            .click();
         harness.run();
         let sources = &harness.state().engine.profiles()[0].config.sources;
         assert_eq!(sources.book, ["XGE", "TCE"]);
@@ -2055,7 +2059,11 @@ mod tests {
         harness.get_by_label("Chosen").click();
         harness.run();
         harness.get_by_label("Player's Handbook");
-        assert!(harness.query_by_label("Xanathar's Guide to Everything").is_none());
+        assert!(
+            harness
+                .query_by_label("Xanathar's Guide to Everything")
+                .is_none()
+        );
         assert!(harness.query_by_label("Curse of Strahd").is_none());
 
         harness.get_by_label("All").click();

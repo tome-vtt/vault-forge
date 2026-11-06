@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use eframe::egui;
-use vault_forge_engine::{Book, Command, DataState, Engine, Group, Profile, Rules, typed_codes};
+use vault_forge_engine::{Book, Command, DataState, Engine, Group, Profile, Rules};
 
 use crate::theme;
 
@@ -180,27 +180,25 @@ impl BooksSection {
              books and adventures you own, separated by commas."
         });
         ui.add_space(12.0);
-        for (label, text, adventures) in [
-            ("Book codes", &mut self.book_codes, false),
-            ("Adventure codes", &mut self.adventure_codes, true),
+        for (label, text, group) in [
+            ("Book codes", &mut self.book_codes, Group::CoreRules),
+            (
+                "Adventure codes",
+                &mut self.adventure_codes,
+                Group::Adventures,
+            ),
         ] {
-            let saved = if adventures {
-                &profile.config.sources.adventure
-            } else {
-                &profile.config.sources.book
-            };
+            let saved = profile.codes(group);
             let title = ui.label(theme::medium(label));
             let edit = egui::TextEdit::singleline(text).font(egui::TextStyle::Monospace);
             let field = theme::input(ui, edit).labelled_by(title.id);
             // Saved as typed, so nothing is lost when the field goes before it loses focus.
-            let codes = typed_codes(text);
-            if field.changed() && codes != *saved {
+            let typed = field.changed().then(|| {
                 let mut typed = profile.clone();
-                if adventures {
-                    typed.config.sources.adventure = codes;
-                } else {
-                    typed.config.sources.book = codes;
-                }
+                typed.type_codes(group, text);
+                typed
+            });
+            if let Some(typed) = typed.filter(|typed| typed.codes(group) != saved) {
                 engine.send(Command::SaveProfile(typed));
             } else if !field.has_focus() {
                 // Books ticked in the list while the field was away show here too.
