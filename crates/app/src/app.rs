@@ -2039,6 +2039,10 @@ mod tests {
                         {
                             paths += 1
                         }
+                        // The demo's rows have no border, hovered or not.
+                        egui::Shape::Rect(frame) if frame.rect.intersects(row.shrink(1.0)) => {
+                            assert_eq!(frame.stroke.width, 0.0, "{label} border in {theme:?}");
+                        }
                         _ => {}
                     }
                 }
