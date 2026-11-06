@@ -578,13 +578,8 @@ pub fn nav_row(
 ) -> egui::Response {
     let p = palette(ui);
     let ink = if selected { p.text } else { p.text2 };
-    row(
-        ui,
-        selected,
-        icon,
-        egui::RichText::new(text).color(ink),
-        tag,
-    )
+    let text = egui::RichText::new(text).color(ink);
+    row(ui, selected, icon, text, tag)
 }
 
 /// The sidebar's quieter row that adds something, such as New profile, after a plus.
