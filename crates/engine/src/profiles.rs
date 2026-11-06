@@ -324,8 +324,8 @@ impl Profiles {
     }
 }
 
-/// The profile's book images address, if it has one. Switched off, it still counts: the cache
-/// keeps its downloaded copy, which must not be read as game data.
+/// The profile's book images address, if it has one. Switched off, it still counts: switching
+/// them back on downloads that address as book images, never as game data.
 fn images(profile: &Profile) -> Option<&str> {
     let address = profile.images_address.as_str();
     (!address.is_empty()).then_some(address)

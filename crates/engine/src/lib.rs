@@ -156,10 +156,6 @@ impl Profile {
         downloads
     }
 
-    fn uses(&self, address: &str) -> bool {
-        self.address == address || self.images_address == address
-    }
-
     /// How many books are chosen, adventures included.
     pub fn book_count(&self) -> usize {
         self.config.sources.book.len() + self.config.sources.adventure.len()
@@ -634,15 +630,15 @@ impl Engine {
     }
 
     /// Stops each of `old`'s downloads that no profile downloads any more (images switched
-    /// off), and removes the cached copy of each of its addresses that no profile uses.
+    /// off included), and removes its cached copy.
     fn release_unused(&self, profiles: &Profiles, old: &Profile) -> Result<(), String> {
         for address in [&old.address, &old.images_address] {
             let downloads = |p: &Profile| p.downloads().iter().any(|(a, _)| a == address);
             if !profiles.list().iter().any(downloads) {
                 self.game_data.stop(address);
-            }
-            if !address.is_empty() && !profiles.list().iter().any(|p| p.uses(address)) {
-                self.game_data.release(address)?;
+                if !address.is_empty() {
+                    self.game_data.release(address)?;
+                }
             }
         }
         Ok(())
