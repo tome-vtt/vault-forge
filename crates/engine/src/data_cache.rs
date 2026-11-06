@@ -71,18 +71,61 @@ impl DataCache {
         File::create(self.path(address, ".part"))
     }
 
-    /// Unpacks the downloaded archive beside the current copy and returns where. A file that is
-    /// not a zip archive fails with [`io::ErrorKind::InvalidData`].
-    pub(crate) fn unpack(&self, address: &str) -> io::Result<PathBuf> {
+    /// Unpacks the downloaded archive beside the current copy, entry by entry, and returns where.
+    /// A file that is not a zip archive fails with [`io::ErrorKind::InvalidData`], one whose entries
+    /// declare more than `cap` bytes in all with [`io::ErrorKind::FileTooLarge`] before anything
+    /// is written (the reader fails an entry that unpacks to more than it declares), and one
+    /// `cancelled` stops with [`io::ErrorKind::Interrupted`].
+    pub(crate) fn unpack(
+        &self,
+        address: &str,
+        cap: u64,
+        cancelled: impl Fn() -> bool,
+    ) -> io::Result<PathBuf> {
         let into = self.path(address, ".new");
         remove_dir(&into)?;
         let archive = File::open(self.path(address, ".part"))?;
-        zip::ZipArchive::new(archive)
-            .and_then(|mut zip| zip.extract(&into))
-            .map_err(|e| match e {
-                zip::result::ZipError::Io(e) => e,
-                e => io::Error::new(io::ErrorKind::InvalidData, e),
+        let mut zip = zip::ZipArchive::new(archive).map_err(zip_error)?;
+        let mut declared = 0_u64;
+        for i in 0..zip.len() {
+            let size = zip.by_index_raw(i).map_err(zip_error)?.size();
+            declared = declared.saturating_add(size);
+        }
+        if declared > cap {
+            return Err(io::ErrorKind::FileTooLarge.into());
+        }
+        let mut buf = vec![0; 64 * 1024];
+        for i in 0..zip.len() {
+            let mut entry = zip.by_index(i).map_err(zip_error)?;
+            // The library's own path check: no entry writes outside the folder.
+            let path = entry.enclosed_name().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "an entry's path leaves the folder",
+                )
             })?;
+            let path = into.join(path);
+            if entry.is_dir() {
+                fs::create_dir_all(path)?;
+                continue;
+            }
+            if entry.is_symlink() {
+                continue; // Game data has none, and one could point outside the folder.
+            }
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut out = File::create(path)?;
+            loop {
+                if cancelled() {
+                    return Err(io::ErrorKind::Interrupted.into());
+                }
+                match io::Read::read(&mut entry, &mut buf)? {
+                    0 => break,
+                    n => io::Write::write_all(&mut out, &buf[..n])?,
+                }
+            }
+        }
         Ok(into)
     }
 
@@ -135,6 +178,13 @@ impl DataCache {
         fs::rename(current, &doomed)?;
         std::thread::spawn(move || remove_dir(&doomed));
         Ok(())
+    }
+}
+
+fn zip_error(e: zip::result::ZipError) -> io::Error {
+    match e {
+        zip::result::ZipError::Io(e) => e,
+        e => io::Error::new(io::ErrorKind::InvalidData, e),
     }
 }
 

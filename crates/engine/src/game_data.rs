@@ -22,6 +22,10 @@ pub(crate) enum Kind {
     Images,
 }
 
+/// The most one download may unpack (Bart, VF-S10-T1): far above any real game data or book
+/// images, so only an archive built to fill the disk reaches it.
+const UNPACK_CAP: u64 = 64 * 1024 * 1024 * 1024;
+
 /// How often a running download reports its progress.
 const PROGRESS_STEP: u64 = 1024 * 1024;
 
@@ -233,10 +237,16 @@ fn fetch(
     let bytes = file.metadata().map_err(failed)?.len();
     drop(file);
     report(DataState::Unpacking);
-    let unpacked = cache.unpack(address).map_err(|e| match e.kind() {
-        std::io::ErrorKind::InvalidData => Stop::NotGameData,
-        _ => failed(e),
-    })?;
+    let unpacked = cache
+        .unpack(address, UNPACK_CAP, || cancel.load(Ordering::Relaxed))
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::InvalidData => Stop::NotGameData,
+            std::io::ErrorKind::Interrupted => Stop::Cancelled,
+            std::io::ErrorKind::FileTooLarge => {
+                Stop::Failed("it unpacks to more than 64 GB".into())
+            }
+            _ => failed(e),
+        })?;
     if kind == Kind::GameData && read_books(&unpacked).is_none() {
         return Err(Stop::NotGameData);
     }
@@ -312,14 +322,20 @@ struct Entry {
     published: String,
 }
 
+/// Entries are parsed one by one, so an odd one is skipped rather than losing the whole list.
 #[derive(Deserialize)]
 struct BooksList {
-    book: Vec<Entry>,
+    book: Vec<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
 struct AdventuresList {
-    adventure: Vec<Entry>,
+    adventure: Vec<serde_json::Value>,
+}
+
+fn entries(list: Vec<serde_json::Value>) -> impl Iterator<Item = Entry> {
+    list.into_iter()
+        .filter_map(|e| serde_json::from_value(e).ok())
 }
 
 /// The books and adventures, core rules first, then supplements, then adventures, each in the
@@ -336,8 +352,8 @@ fn read_books(unpacked: &Path) -> Option<Vec<Book>> {
         "core" => Group::CoreRules,
         _ => Group::Supplements,
     };
-    let books = books.book.into_iter().map(|e| (group(&e), e));
-    let adventures = adventures.into_iter().map(|e| (Group::Adventures, e));
+    let books = entries(books.book).map(|e| (group(&e), e));
+    let adventures = entries(adventures).map(|e| (Group::Adventures, e));
     let mut all: Vec<Book> = books
         .chain(adventures)
         .map(|(group, e)| Book {
