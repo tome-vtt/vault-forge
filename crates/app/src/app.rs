@@ -312,6 +312,7 @@ impl App {
                         if menu.clicked() {
                             self.menu_open = true;
                         }
+                        ui.add_space(16.0 - ui.spacing().item_spacing.x);
                     }
                     let title = match (open, &self.screen) {
                         (Some(profile), _) => {
@@ -366,7 +367,9 @@ impl App {
 
     /// The profile list, then the Appearance switch at the foot.
     fn sidebar(&mut self, ui: &mut egui::Ui, profiles: &[Profile]) {
-        ui.add_space(28.0);
+        ui.add_space(28.0 - ui.spacing().item_spacing.y);
+        // The demo's nav rows sit 2px apart.
+        ui.spacing_mut().item_spacing.y = 2.0;
         egui::Frame::new()
             .inner_margin(egui::Margin::symmetric(10, 0))
             .show(ui, |ui| {
@@ -677,7 +680,12 @@ impl App {
         };
         let mut cancel = false;
         let mut command = None;
-        let modal = egui::Modal::new(egui::Id::unique("profile_dialog")).frame(theme::dialog(ctx));
+        // One id per kind of dialog: egui keeps a modal's size between openings, so each kind's
+        // first opening gets its own unseen sizing pass and never reuses another kind's layout.
+        let kind = std::mem::discriminant(&*dialog);
+        let modal = egui::Modal::new(egui::Id::unique("profile_dialog").with(kind))
+            .frame(theme::dialog(ctx))
+            .backdrop_color(egui::Color32::from_rgba_unmultiplied(19, 20, 22, 92));
         modal.show(ctx, |ui| {
             ui.set_width(theme::dialog_width(ctx));
             match dialog {
@@ -1825,6 +1833,130 @@ mod tests {
     }
 
     #[test]
+    fn the_images_address_keeps_focus_while_typing_once_images_are_ready() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        let profile = harness.state().engine.profiles().remove(0);
+        let images_address = "http://127.0.0.1:1/img.zip".to_string();
+        harness.state().engine.send(Command::SaveProfile(Profile {
+            images: true,
+            images_address: images_address.clone(),
+            ..profile
+        }));
+        // Reopened, so the screen's address field starts with the saved address.
+        harness.state_mut().game_data = None;
+        game_data(&events, ready());
+        events
+            .send(Event::GameData {
+                address: images_address.clone(),
+                state: ready(),
+            })
+            .unwrap();
+        harness.run();
+        let field = |harness: &Harness<'static, App>, value: &str| {
+            let input = egui::accesskit::Role::TextInput;
+            harness
+                .query_all_by_value(value)
+                .find(|n| n.accesskit_node().role() == input)
+                .map(|n| n.accesskit_node().is_focused())
+        };
+        let input = egui::accesskit::Role::TextInput;
+        harness
+            .get_all_by_value(&images_address)
+            .find(|n| n.accesskit_node().role() == input)
+            .unwrap()
+            .focus();
+        harness.run();
+        for typed in ["a", "b"] {
+            harness.event(egui::Event::Text(typed.into()));
+            harness.run();
+        }
+        let typed = format!("{images_address}ab");
+        let focused = field(&harness, &typed).expect("both letters typed");
+        assert!(focused, "still focused");
+    }
+
+    #[test]
+    fn a_dialog_opened_after_the_other_kind_has_its_buttons_at_the_right_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        harness.get_by_label("Rename profile").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Rename profile").click();
+        harness.run();
+        harness.get_by_label("Cancel").click();
+        harness.run();
+        harness.get_by_label("Delete profile").click();
+        harness.run_steps(1);
+        let cancel = harness.get_by_label("Cancel").rect();
+        let delete = harness
+            .get_all_by_label("Delete profile")
+            .map(|n| n.rect())
+            .find(|r| (r.left() - cancel.right() - 8.0).abs() < 1.0)
+            .unwrap();
+        // The 480 dialog sits centred, its content 24px inside it.
+        let right = 1280.0 / 2.0 + 240.0 - 24.0;
+        assert!(
+            (delete.right() - right).abs() < 1.0,
+            "Delete ends at {}, not {right}",
+            delete.right()
+        );
+    }
+
+    #[test]
+    fn the_dialog_title_is_26_tall() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        harness.get_by_label("Rename profile").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Rename profile").click();
+        harness.run();
+        let title = harness
+            .get_all_by_role(egui::accesskit::Role::Label)
+            .find(|n| n.accesskit_node().value().as_deref() == Some("Rename profile"))
+            .unwrap()
+            .rect();
+        assert!((title.height() - 26.0).abs() < 0.5, "{}", title.height());
+    }
+
+    #[test]
+    fn the_sidebar_brand_row_and_nav_rows_are_spaced_as_the_demo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        // The name is centred in the 36px brand row, then the nav group starts 28px below it.
+        let name = harness.get_by_label("Vault Forge").rect();
+        let profiles = harness.get_by_label("Profiles").rect();
+        let below = profiles.top() - name.center().y;
+        assert!((below - 18.0 - 28.0).abs() < 1.0, "{below}");
+        // 8px brand padding, the 22px mark and a 10px gap, from the rows' left edge.
+        let row = harness.get_by_label("Thursday 5e").rect();
+        let inset = name.left() - row.left();
+        assert!((inset - 40.0).abs() < 1.0, "{inset}");
+        let setup = harness.get_by_label("Obsidian setup").rect();
+        let about = harness.get_by_label("About").rect();
+        let gap = about.top() - setup.bottom();
+        assert!((gap - 2.0).abs() < 0.5, "nav rows {gap} apart");
+    }
+
+    #[test]
+    fn the_narrow_top_bar_has_16_after_the_menu_button() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 600.0);
+        harness.run();
+        let menu = harness.get_by_label("Open menu").rect();
+        let title = harness
+            .get_all_by_label("Thursday")
+            .map(|n| n.rect())
+            .min_by(|a, b| a.top().total_cmp(&b.top()))
+            .unwrap();
+        let gap = title.left() - menu.right();
+        assert!((gap - 16.0).abs() < 1.0, "gap is {gap}");
+    }
+
+    #[test]
     fn a_narrow_window_stacks_the_game_data_description_above_its_panel() {
         let dir = tempfile::tempdir().unwrap();
         let rect = |harness: &Harness<'_, App>, label| harness.get_by_label(label).rect();
@@ -1839,10 +1971,9 @@ mod tests {
         let (mut harness, _events) = harness_on_profile(dir.path(), 901.0);
         harness.run();
         let (title, panel) = (rect(&harness, "Game data"), rect(&harness, "Game rules"));
-        assert!(
-            panel.left() >= title.left() + 340.0,
-            "panel beside the description"
-        );
+        // The 340 column, the demo's 24px gap, then the panel's 16px padding.
+        let gap = panel.left() - title.left() - 340.0 - 16.0;
+        assert!((gap - 24.0).abs() <= 1.0, "gap is {gap}");
     }
 
     #[test]
