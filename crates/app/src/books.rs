@@ -180,6 +180,7 @@ impl BooksSection {
              books and adventures you own, separated by commas."
         });
         ui.add_space(12.0);
+        // Every group but Adventures is kept under the same key, so Core rules stands for them all.
         for (label, text, group) in [
             ("Book codes", &mut self.book_codes, Group::CoreRules),
             (

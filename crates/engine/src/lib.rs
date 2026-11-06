@@ -227,7 +227,13 @@ impl Profile {
     /// Replaces a group's codes with those typed where the game data has no books list to tick:
     /// separated by commas or spaces, each kept once.
     pub fn type_codes(&mut self, group: Group, text: &str) {
-        *self.codes_mut(group) = typed_codes(text);
+        let codes = self.codes_mut(group);
+        codes.clear();
+        for code in text.split(|c: char| c == ',' || c.is_whitespace()) {
+            if !code.is_empty() && !codes.iter().any(|c| c == code) {
+                codes.push(code.to_owned());
+            }
+        }
     }
 
     /// Whether any of the profile's downloads is running, counting images switched off until
@@ -296,18 +302,6 @@ pub enum Appearance {
     System,
     Light,
     Dark,
-}
-
-/// The book codes typed where the game data has no books list to tick: separated by commas or
-/// spaces, each once.
-fn typed_codes(text: &str) -> Vec<String> {
-    let mut codes: Vec<String> = Vec::new();
-    for code in text.split(|c: char| c == ',' || c.is_whitespace()) {
-        if !code.is_empty() && !codes.iter().any(|c| c == code) {
-            codes.push(code.to_owned());
-        }
-    }
-    codes
 }
 
 #[derive(Debug)]

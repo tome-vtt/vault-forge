@@ -2045,6 +2045,17 @@ mod tests {
         let sources = &harness.state().engine.profiles()[0].config.sources;
         assert!(sources.book.is_empty() && sources.adventure.is_empty());
         harness.get_by_label("Supplements · 0 of 2");
+
+        // The Adventures heading's own Choose all fills the adventures alone.
+        harness
+            .get_all_by_label("Choose all")
+            .nth(1)
+            .unwrap()
+            .click();
+        harness.run();
+        let sources = &harness.state().engine.profiles()[0].config.sources;
+        assert_eq!(sources.adventure, ["CoS"]);
+        assert!(sources.book.is_empty());
     }
 
     #[test]
