@@ -1986,14 +1986,22 @@ mod tests {
     fn profile_rows_start_with_a_folder_and_new_profile_with_a_plus_as_the_demo() {
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
-        for theme in [Theme::Light, Theme::Dark] {
+        // A hovered row keeps its layout, so its text does not jump.
+        for (theme, hover) in [
+            (Theme::Light, false),
+            (Theme::Dark, false),
+            (Theme::Dark, true),
+        ] {
             harness.ctx.set_theme(theme);
-            harness.run();
-            let shapes = painted(&harness);
             for (label, text, plus) in [
                 ("Thursday 5e", "Thursday", false),
                 ("New profile", "New profile", true),
             ] {
+                if hover {
+                    harness.get_by_label(label).hover();
+                }
+                harness.run();
+                let shapes = painted(&harness);
                 let row = harness.get_by_label(label).rect();
                 // 10px padding, the 16px icon and a 10px gap, as the demo's .nav row.
                 let left = shapes
