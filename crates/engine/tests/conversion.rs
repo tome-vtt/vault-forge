@@ -883,3 +883,34 @@ fn a_refused_conversion_leaves_the_profile_file_as_it_was() {
     );
     assert_eq!(std::fs::read(&file).unwrap(), before);
 }
+
+#[test]
+fn a_conversion_is_refused_while_the_template_folder_is_missing() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let templates = tempfile::tempdir().unwrap();
+    let mut profile = setup.engine.profiles()[0].clone();
+    profile.templates = Some(templates.path().to_path_buf());
+    setup.engine.send(Command::SaveProfile(profile.clone()));
+    wait(&setup.events, |e| matches!(e, Event::ProfileSaved(_)));
+    templates.close().unwrap();
+    fill(&setup.vault);
+    let before = files(&setup.vault);
+
+    setup.engine.send(Command::Convert(profile.id.clone()));
+
+    let sent: Vec<Event> = setup.events.try_iter().collect();
+    assert!(
+        sent.iter().any(
+            |e| matches!(e, Event::Failed(m) if m.starts_with("Could not read the template folder"))
+        ),
+        "{sent:?}"
+    );
+    assert!(
+        !sent
+            .iter()
+            .any(|e| matches!(e, Event::ConversionStarted(_))),
+        "{sent:?}"
+    );
+    assert_eq!(files(&setup.vault), before);
+}

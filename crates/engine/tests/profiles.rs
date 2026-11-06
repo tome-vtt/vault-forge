@@ -437,7 +437,7 @@ fn a_profile_file_with_an_empty_address_does_not_block_the_others() {
 }
 
 #[test]
-fn book_images_switched_off_do_not_reserve_their_address() {
+fn book_images_switched_off_still_reserve_their_address() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, events) = start(dir.path());
     let thursday = create(&engine, &events, "Thursday");
@@ -445,27 +445,20 @@ fn book_images_switched_off_do_not_reserve_their_address() {
     engine.send(Command::SaveProfile(Profile {
         images: false,
         images_address: spare.clone(),
-        ..thursday.clone()
-    }));
-
-    engine.send(Command::CreateProfile(ProfileDraft {
-        address: spare.clone(),
-        ..draft("Friday")
-    }));
-    assert_eq!(failed(&events), Vec::<String>::new());
-    assert_eq!(engine.profiles().len(), 2);
-
-    // Switching them on now is a real clash with Friday's game data.
-    engine.send(Command::SaveProfile(Profile {
-        images: true,
-        images_address: spare,
         ..thursday
     }));
+    assert_eq!(failed(&events), Vec::<String>::new());
+
+    engine.send(Command::CreateProfile(ProfileDraft {
+        address: spare,
+        ..draft("Friday")
+    }));
+
     assert_eq!(
         failed(&events),
-        ["That address is used for game data, so it can't be book images."]
+        ["That address is used for book images, so it can't be game data."]
     );
-    assert!(!engine.profiles()[1].images);
+    assert_eq!(engine.profiles().len(), 1);
 }
 
 #[test]
@@ -481,6 +474,8 @@ fn profiles_that_already_clash_can_still_be_renamed() {
     // Saved before the rule: Friday's book images are Thursday's game data.
     hand_edit(dir.path(), "friday", "images", "true");
     hand_edit(dir.path(), "friday", "images_address", &thursday.address);
+    // And Thursday's own book images are its own game data.
+    hand_edit(dir.path(), "thursday", "images_address", &thursday.address);
 
     let (engine, events) = start(dir.path());
     for (id, name) in [("thursday", "Thu"), ("friday", "Fri")] {

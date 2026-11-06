@@ -324,10 +324,11 @@ impl Profiles {
     }
 }
 
-/// The address the profile downloads book images from, when they are switched on.
+/// The profile's book images address, if it has one. Switched off, it still counts: the cache
+/// keeps its downloaded copy, which must not be read as game data.
 fn images(profile: &Profile) -> Option<&str> {
     let address = profile.images_address.as_str();
-    (profile.images && !address.is_empty()).then_some(address)
+    (!address.is_empty()).then_some(address)
 }
 
 /// A file path as the converter config wants it: Windows paths written with `/`, as its docs ask.
