@@ -52,9 +52,8 @@ fn reduce_motion() -> bool {
     };
     let mut on: windows_sys::core::BOOL = 1;
     // SAFETY: this action writes one BOOL through the pointer, which points at `on`.
-    let read = unsafe {
-        SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, (&raw mut on).cast(), 0)
-    };
+    let read =
+        unsafe { SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, (&raw mut on).cast(), 0) };
     read != 0 && on == 0
 }
 

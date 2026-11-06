@@ -3699,10 +3699,12 @@ dependencies = [
  "directories",
  "eframe",
  "egui_kittest",
+ "objc2-app-kit 0.3.2",
  "rfd",
  "serde_json",
  "tempfile",
  "vault-forge-engine",
+ "windows-sys 0.61.2",
  "winresource",
  "zbus",
 ]

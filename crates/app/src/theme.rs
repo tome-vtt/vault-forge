@@ -678,7 +678,7 @@ const REDUCE_MOTION: &str = "reduce motion";
 
 /// Records whether the OS asks for reduced motion, which stills the progress track.
 pub fn set_reduce_motion(ctx: &egui::Context, reduce: bool) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new(REDUCE_MOTION), reduce));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(REDUCE_MOTION), reduce));
 }
 
 /// The demo's progress track: an accent bar sliding along a thin grey track, for work whose
@@ -689,7 +689,7 @@ pub fn track(ui: &mut egui::Ui) {
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 3, p.active);
-    if ui.data(|d| d.get_temp(egui::Id::new(REDUCE_MOTION))) == Some(true) {
+    if ui.data(|d| d.get_temp(egui::Id::unique(REDUCE_MOTION))) == Some(true) {
         painter.rect_filled(rect, 3, p.accent.gamma_multiply(0.35));
         return;
     }
@@ -731,7 +731,7 @@ pub fn pill(ui: &mut egui::Ui, kind: Pill, text: &str) {
         .corner_radius(10.0)
         .inner_margin(egui::vec2(8.0, 2.0))
         .show(ui, |ui| {
-            ui.label(egui::RichText::new(text).size(12.0).strong().color(hex(fg)));
+            ui.label(medium(text).size(12.0).color(hex(fg)));
         });
 }
 
@@ -827,7 +827,7 @@ mod tests {
                 install(ctx);
                 set_reduce_motion(ctx, reduce);
             })
-            .build_ui(|ui| track(ui));
+            .build_ui(track);
         harness.step();
         let mut track_rect = egui::Rect::NOTHING;
         let mut bars = Vec::new();
@@ -841,6 +841,34 @@ mod tests {
             }
         }
         (track_rect, bars)
+    }
+
+    #[test]
+    fn a_pill_is_20_tall_and_fully_rounded_in_12px_medium_type() {
+        let mut harness = Harness::builder()
+            .with_theme(Theme::Light)
+            .with_size([400.0, 100.0])
+            .with_context_setup(install)
+            .build_ui(|ui| pill(ui, Pill::Ok, "Ready"));
+        harness.step();
+        let mut background = None;
+        let mut font = None;
+        for clipped in &harness.output().shapes {
+            match &clipped.shape {
+                egui::Shape::Rect(r) if r.fill == hex(0xdcfae5) => background = Some(r.clone()),
+                egui::Shape::Text(t) => {
+                    font = Some(t.galley.job.sections[0].format.font_id.clone())
+                }
+                _ => {}
+            }
+        }
+        let background = background.expect("the pill's pale green");
+        assert_eq!(background.rect.height(), 20.0);
+        assert_eq!(background.corner_radius, CornerRadius::same(10));
+        assert_eq!(
+            font,
+            Some(FontId::new(12.0, FontFamily::Name("medium".into())))
+        );
     }
 
     #[test]
