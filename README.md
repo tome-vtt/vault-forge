@@ -45,8 +45,8 @@ on Windows and in development builds, in `Contents/Resources/converter` inside t
 ttrpg-convert-cli release for your platform, checks its sha256 and puts the converter, its licence
 and the release's examples in a `converter` folder in the folder you name. A checksum that differs
 from the pin fails the step. The version and checksums are pinned in `crates/engine/src/lib.rs`.
-CI runs the bundle step for `windows-x86_64`, `osx-aarch_64` and `linux-x86_64` on every push and
-pull request, so a changed download fails the build.
+CI runs the bundle step for `windows-x86_64`, `osx-aarch_64` and `linux-x86_64` on every pull
+request and every push to `development` and `master`, so a changed download fails the build.
 
 ```sh
 cargo run -p vault-forge-bundle -- target/debug
