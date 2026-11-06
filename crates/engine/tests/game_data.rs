@@ -1134,3 +1134,40 @@ fn an_archive_entry_that_climbs_out_of_its_folder_is_refused() {
     assert!(!dir.path().join("local").join("escaped.txt").exists());
     assert!(cache_entries(dir.path()).is_empty());
 }
+
+#[test]
+fn switching_images_off_removes_their_copy_unless_another_profile_has_them_on() {
+    let server = Server::start();
+    let address = server.put("/data.zip", game_data(1, 0));
+    let images = server.put("/img.zip", zip(&[("img/a.webp", "x".into())]));
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let on = |profile: Profile| Profile {
+        images: true,
+        images_address: images.clone(),
+        ..profile
+    };
+    let thursday = on(create(&engine, &events, "Thursday", &address));
+    let friday = on(create(&engine, &events, "Friday", &address));
+    engine.send(Command::SaveProfile(friday.clone()));
+    engine.send(Command::DownloadImages(thursday.clone()));
+    wait(&events, &images, ready);
+    let copies = cache_entries(dir.path());
+    assert_eq!(copies.len(), 1, "only the images are downloaded");
+
+    engine.send(Command::SaveProfile(Profile {
+        images: false,
+        ..thursday
+    }));
+    assert_eq!(
+        cache_entries(dir.path()),
+        copies,
+        "Friday still has them on"
+    );
+    engine.send(Command::SaveProfile(Profile {
+        images: false,
+        ..friday
+    }));
+
+    assert!(cache_entries(dir.path()).is_empty());
+}

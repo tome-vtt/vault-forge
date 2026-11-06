@@ -156,8 +156,10 @@ impl Profile {
         downloads
     }
 
+    /// Whether the profile keeps the address's copy: its game data, and its images while switched
+    /// on, so switching images off frees their copy.
     fn uses(&self, address: &str) -> bool {
-        self.address == address || self.images_address == address
+        self.address == address || (self.images && self.images_address == address)
     }
 
     /// How many books are chosen, adventures included.
