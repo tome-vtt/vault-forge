@@ -1853,7 +1853,8 @@ mod tests {
             })
             .unwrap();
         harness.run();
-        let field = |harness: &Harness<'static, App>, value: &str| {
+        // Whether the field holding this value has focus; another node carries the value too.
+        let focused = |harness: &Harness<'static, App>, value: &str| {
             let input = egui::accesskit::Role::TextInput;
             harness
                 .query_all_by_value(value)
@@ -1867,12 +1868,13 @@ mod tests {
             .unwrap()
             .focus();
         harness.run();
+        assert_eq!(focused(&harness, &images_address), Some(true));
         for typed in ["a", "b"] {
             harness.event(egui::Event::Text(typed.into()));
             harness.run();
         }
         let typed = format!("{images_address}ab");
-        let focused = field(&harness, &typed).expect("both letters typed");
+        let focused = focused(&harness, &typed).expect("both letters typed");
         assert!(focused, "still focused");
     }
 
