@@ -63,11 +63,6 @@ fn reduce_motion() -> bool {
     objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
 }
 
-#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
-fn reduce_motion() -> bool {
-    false
-}
-
 #[cfg(target_os = "linux")]
 mod portal {
     use eframe::egui::Theme;
@@ -127,20 +122,20 @@ mod portal {
             send(theme);
         }
         for change in changes {
-            let Ok((namespace, key, scheme)) =
+            let Ok((namespace, key, value)) =
                 change.body().deserialize::<(String, String, OwnedValue)>()
             else {
                 continue;
             };
             if namespace == NAMESPACE
                 && key == KEY
-                && let Some(theme) = theme(&scheme)
+                && let Some(theme) = theme(&value)
             {
                 send(theme);
             }
             if namespace == MOTION_NAMESPACE
                 && key == MOTION_KEY
-                && let Some(reduce) = reduce_motion(&scheme)
+                && let Some(reduce) = reduce_motion(&value)
             {
                 send_motion(reduce);
             }
