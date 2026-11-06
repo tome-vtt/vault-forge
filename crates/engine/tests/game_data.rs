@@ -1106,3 +1106,31 @@ fn a_malformed_entry_in_the_adventures_list_is_skipped_and_the_rest_kept() {
         ]
     );
 }
+
+#[test]
+fn an_archive_entry_that_climbs_out_of_its_folder_is_refused() {
+    let server = Server::start();
+    let books = list(
+        "book",
+        &[("PHB", "Player's Handbook", "core", "2014-08-19")],
+    );
+    let address = server.put(
+        "/data.zip",
+        zip(&[
+            ("5etools-src/data/books.json", books),
+            ("../../escaped.txt", "out".into()),
+        ]),
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Thursday", &address);
+
+    engine.send(Command::DownloadGameData(profile));
+
+    let state = wait(&events, &address, |s| {
+        !matches!(s, DataState::Downloading { .. } | DataState::Unpacking)
+    });
+    assert_eq!(state, DataState::NotGameData);
+    assert!(!dir.path().join("local").join("escaped.txt").exists());
+    assert!(cache_entries(dir.path()).is_empty());
+}

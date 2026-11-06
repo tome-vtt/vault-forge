@@ -240,11 +240,8 @@ fn fetch(
     let unpacked = cache
         .unpack(address, UNPACK_CAP, || cancel.load(Ordering::Relaxed))
         .map_err(|e| match e.kind() {
+            _ if cancel.load(Ordering::Relaxed) => Stop::Cancelled,
             std::io::ErrorKind::InvalidData => Stop::NotGameData,
-            std::io::ErrorKind::Interrupted => Stop::Cancelled,
-            std::io::ErrorKind::FileTooLarge => {
-                Stop::Failed("it unpacks to more than 64 GB".into())
-            }
             _ => failed(e),
         })?;
     if kind == Kind::GameData && read_books(&unpacked).is_none() {

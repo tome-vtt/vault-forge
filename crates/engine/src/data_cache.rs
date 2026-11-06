@@ -72,10 +72,9 @@ impl DataCache {
     }
 
     /// Unpacks the downloaded archive beside the current copy, entry by entry, and returns where.
-    /// A file that is not a zip archive fails with [`io::ErrorKind::InvalidData`], one whose entries
-    /// declare more than `cap` bytes in all with [`io::ErrorKind::FileTooLarge`] before anything
-    /// is written (the reader fails an entry that unpacks to more than it declares), and one
-    /// `cancelled` stops with [`io::ErrorKind::Interrupted`].
+    /// A file that is not a zip archive fails with [`io::ErrorKind::InvalidData`]; one whose entries
+    /// declare more than `cap` bytes in all fails before anything is written (the reader fails an
+    /// entry that unpacks to more than it declares); `cancelled` stops it partway.
     pub(crate) fn unpack(
         &self,
         address: &str,
@@ -92,7 +91,8 @@ impl DataCache {
             declared = declared.saturating_add(size);
         }
         if declared > cap {
-            return Err(io::ErrorKind::FileTooLarge.into());
+            let gb = cap >> 30;
+            return Err(io::Error::other(format!("it unpacks to more than {gb} GB")));
         }
         let mut buf = vec![0; 64 * 1024];
         for i in 0..zip.len() {
@@ -118,7 +118,7 @@ impl DataCache {
             let mut out = File::create(path)?;
             loop {
                 if cancelled() {
-                    return Err(io::ErrorKind::Interrupted.into());
+                    return Err(io::Error::other("cancelled"));
                 }
                 match io::Read::read(&mut entry, &mut buf)? {
                     0 => break,
