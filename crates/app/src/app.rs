@@ -841,7 +841,6 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
 
-    use chrono::TimeZone;
     use eframe::egui::Theme;
     use egui_kittest::Harness;
     use std::sync::mpsc::Sender;
@@ -1334,25 +1333,112 @@ mod tests {
         }
     }
 
-    /// Saves `run` as the open profile's last run, as the Engine would, and reports its end so
-    /// the app reads it.
-    fn last_run_saved(
+    /// Serves one game data archive, holding only its books list, at every path.
+    fn serve_game_data() -> String {
+        use std::io::{BufRead, BufReader, Write};
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let stored = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("5etools-src/data/books.json", stored)
+            .unwrap();
+        zip.write_all(br#"{"book": []}"#).unwrap();
+        let body = zip.finish().unwrap().into_inner();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/data.zip", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let get = line.starts_with("GET");
+                while reader.read_line(&mut line).unwrap() > 2 {
+                    line.clear();
+                }
+                let mut out = stream;
+                let _ = write!(
+                    out,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nETag: \"v1\"\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                if get {
+                    let _ = out.write_all(&body);
+                }
+            }
+        });
+        url
+    }
+
+    /// The Engine's stand-in converter (crates/engine/tests/stand_in), which the workspace's
+    /// `cargo test` builds beside this test program for the Engine's own tests.
+    fn stand_in_converter() -> std::path::PathBuf {
+        let exe = std::env::current_exe().unwrap();
+        let name = format!("stand-in-converter{}", std::env::consts::EXE_SUFFIX);
+        let path = exe.parent().unwrap().parent().unwrap().join(name);
+        assert!(
+            path.is_file(),
+            "{} is missing: run the whole workspace's cargo test, which builds it",
+            path.display()
+        );
+        path
+    }
+
+    /// The app on one profile the Engine has just converted: the stand-in converter run on
+    /// `books` (and one homebrew file), on game data from a local web server. As
+    /// `harness_on_profile_heard`, the test passes the Engine's events on to the app.
+    fn harness_after_run(
         dir: &std::path::Path,
-        harness: &mut Harness<'_, App>,
-        events: &Sender<Event>,
-        run: &LastRun,
-    ) {
-        let id = harness.state().engine.profiles()[0].id.clone();
-        let file = dir.join("profiles").join(format!("{id}.last-run.json"));
-        std::fs::write(file, serde_json::to_string(run).unwrap()).unwrap();
-        let (converted, message) = (run.converted, run.message.clone());
-        let ended = Event::ConversionEnded {
-            id,
-            converted,
-            message,
+        width: f32,
+        books: &[&str],
+    ) -> (Harness<'static, App>, Sender<Event>, Receiver<Event>) {
+        let vault = dir.join("vault");
+        std::fs::create_dir(&vault).unwrap();
+        let converter = stand_in_converter();
+        let (engine, heard) =
+            Engine::start_with_converter(dir.to_path_buf(), dir.join("local"), converter).unwrap();
+        engine.send(Command::CreateProfile(ProfileDraft {
+            name: "Thursday".into(),
+            rules: Rules::Dnd5e,
+            address: serve_game_data(),
+            vault: vault.display().to_string(),
+        }));
+        let mut profile = engine.profiles().remove(0);
+        profile.config.sources.book = books.iter().map(|b| b.to_string()).collect();
+        profile.config.sources.homebrew = vec!["homebrew.json".into()];
+        engine.send(Command::SaveProfile(profile.clone()));
+        engine.send(Command::DownloadGameData(profile.clone()));
+        let (events, received) = std::sync::mpsc::channel();
+        let mut harness = Harness::builder()
+            .with_size([width, 820.0])
+            .with_context_setup(theme::install)
+            // ponytail: the log's fonts have no emoji, so the converter's "🔸 WARN|" draws a box;
+            // drop this once they do.
+            .allow_missing_glyphs()
+            .build_ui_state(
+                |ui, app: &mut App| app.ui(ui),
+                App::new(engine, received, mpsc::channel().1),
+            );
+        let forward = |wanted: fn(&Event) -> bool| loop {
+            let event = heard.recv_timeout(Duration::from_secs(30)).unwrap();
+            let done = wanted(&event);
+            events.send(event).unwrap();
+            if done {
+                break;
+            }
         };
-        events.send(ended).unwrap();
+        forward(|e| {
+            matches!(
+                e,
+                Event::GameData {
+                    state: DataState::Ready { .. },
+                    ..
+                }
+            )
+        });
         harness.run();
+        harness.state().engine.send(Command::Convert(profile.id));
+        forward(|e| matches!(e, Event::ConversionEnded { .. }));
+        harness.run();
+        (harness, events, heard)
     }
 
     fn open_last_run(harness: &mut Harness<'_, App>) {
@@ -1362,45 +1448,18 @@ mod tests {
         harness.run();
     }
 
-    fn converted_run() -> LastRun {
-        let folders = [
-            ("compendium/bestiary", 1408),
-            ("compendium/items", 1127),
-            ("compendium/spells", 512),
-            ("compendium/backgrounds", 76),
-            ("rules/variant-rules", 40),
-            ("compendium/feats", 33),
-            ("compendium/races", 21),
-            ("rules", 9),
-        ];
-        // Long past, so the subtitle reads its date whatever the clock says.
-        let started = chrono::Local
-            .with_ymd_and_hms(2020, 3, 14, 12, 0, 0)
-            .unwrap();
-        LastRun {
-            started: started.into(),
-            seconds: 102,
-            converted: true,
-            exit_code: Some(0),
-            message: "The books were converted into your vault.".into(),
-            fix: None,
-            books: 4,
-            homebrew: 1,
-            folders: folders.map(|(f, n)| (f.to_owned(), n)).to_vec(),
-            warnings: vec![vault_forge_engine::Warning {
-                text: "no image file for img/bestiary/Vrock.webp".into(),
-                step: "Writing compendium/bestiary".into(),
-            }],
-            log: [
-                "Reading data",
-                "Writing compendium/bestiary",
-                "Warning: no image file for img/bestiary/Vrock.webp",
-                "Done",
-            ]
-            .map(String::from)
-            .to_vec(),
-        }
-    }
+    /// Nine books the stand-in writes into six compendium folders, beside its one rules note.
+    const CONVERTED: [&str; 9] = [
+        "bestiary/MM",
+        "bestiary/VGM",
+        "bestiary/MTF",
+        "items/DMG",
+        "items/XDMG",
+        "spells/PHB",
+        "backgrounds/SCAG",
+        "feats/TCE",
+        "races/VRGR",
+    ];
 
     #[test]
     fn a_profile_never_converted_says_so_on_its_last_run_tab() {
@@ -1418,57 +1477,75 @@ mod tests {
     #[test]
     fn a_converted_run_shows_its_figures_folders_warnings_and_log() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
-        harness.run();
-        last_run_saved(dir.path(), &mut harness, &events, &converted_run());
-        harness.get_by_label("D&D 5e · 0 books · last converted 14 Mar 2020, 12:00");
+        let (mut harness, _events, _) = harness_after_run(dir.path(), 1280.0, &CONVERTED);
+        harness.get_by_label_contains("D&D 5e · 9 books · last converted ");
         harness.get_by_label("Converted");
         open_last_run(&mut harness);
 
-        // The strip: 3,226 notes in all, 4 books + 1 homebrew, 1 warning, 1 m 42 s.
-        harness.get_by_label("3,226");
-        harness.get_by_label("4 + 1 homebrew");
-        harness.get_by_label("1 m 42 s");
-        harness.get_by_label("8 folders");
+        // The strip: 10 notes in all, 9 books + 1 homebrew, under a minute.
+        harness.get_by_label("10");
+        harness.get_by_label("9 + 1 homebrew");
+        harness.get_by_label_contains("0 m ");
+        harness.get_by_label("7 folders");
         harness.get_by_label("compendium/bestiary");
-        harness.get_by_label("1,408");
-        harness.get_by_label("compendium/feats");
-        assert!(
-            harness.query_by_label("compendium/races").is_none(),
-            "top six"
-        );
-        harness.get_by_label("Show all 8 folders").click();
+        harness.get_by_label("3");
+        harness.get_by_label("compendium/spells");
+        assert!(harness.query_by_label("rules").is_none(), "top six");
+        harness.get_by_label("Show all 7 folders").click();
         harness.run();
-        harness.get_by_label("compendium/races");
         harness.get_by_label("rules");
         harness.get_by_label("Show fewer").click();
         harness.run();
-        assert!(harness.query_by_label("compendium/races").is_none());
+        assert!(harness.query_by_label("rules").is_none());
 
         harness.get_by_label("The notes were still written");
         harness.get_by_label("no image file for img/bestiary/Vrock.webp");
-        let step = "Writing compendium/bestiary";
-        assert_eq!(
-            harness.get_all_by_label(step).count(),
-            2,
-            "the warning's step and the log"
-        );
+        harness.get_by_label("Unresolved link to Strahd zombie");
+        // Each warning's card names its step, above the log. The converter's two streams can
+        // arrive in either order, so the steps are the Engine's.
+        let id = harness.state().engine.profiles()[0].id.clone();
+        let run = harness.state().engine.last_run(&id).unwrap();
+        assert_eq!(run.warnings.len(), 2);
+        let log = harness.get_by_label("Log").rect().top();
+        for warning in &run.warnings {
+            let on_cards = harness
+                .get_all_by_label(&warning.step)
+                .filter(|n| n.rect().top() < log)
+                .count();
+            let cards = run.warnings.iter().filter(|w| w.step == warning.step);
+            assert_eq!(on_cards, cards.count(), "{}", warning.step);
+        }
         harness.get_by_label("Open vault in Obsidian");
         harness.get_by_label("Show folder");
         harness.get_by_label("Save log…");
-        harness.get_by_label("Reading data");
+        // The log, from its first line to its last once scrolled.
+        harness.get_by_label("Save log…").scroll_to_me();
+        harness.run();
+        let first = harness.get_by_label(&run.log[0]).rect().center();
+        wheel(&harness, first, -1000.0);
+        harness.run();
         harness.get_by_label("Done");
     }
 
     #[test]
     fn the_warnings_filter_shows_only_the_logs_warning_lines() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
-        harness.run();
-        last_run_saved(dir.path(), &mut harness, &events, &converted_run());
+        let (mut harness, _events, _) = harness_after_run(dir.path(), 1280.0, &CONVERTED);
         open_last_run(&mut harness);
+        // The log's first plain line, which no warning card names as its step.
+        let id = harness.state().engine.profiles()[0].id.clone();
+        let run = harness.state().engine.last_run(&id).unwrap();
+        let steps: Vec<&str> = run.warnings.iter().map(|w| w.step.as_str()).collect();
+        let quiet = run
+            .log
+            .iter()
+            .find(|l| {
+                vault_forge_engine::log_level(l) == vault_forge_engine::LogLevel::Info
+                    && !steps.contains(&l.as_str())
+            })
+            .unwrap();
+        harness.get_by_label(quiet);
         let warning = "Warning: no image file for img/bestiary/Vrock.webp";
-        harness.get_by_label(warning);
         // Not the strip's or the card's "Warnings", which are labels.
         let filter = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Warnings");
         filter.scroll_to_me();
@@ -1478,48 +1555,37 @@ mod tests {
             .click();
         harness.run();
         harness.get_by_label(warning);
-        assert!(harness.query_by_label("Reading data").is_none());
-        assert!(harness.query_by_label("Done").is_none());
+        harness.get_by_label("🔸 WARN| Unresolved link to Strahd zombie");
+        assert!(harness.query_by_label(quiet).is_none());
         harness.get_by_label("All lines").click();
         harness.run();
-        harness.get_by_label("Reading data");
+        harness.get_by_label(quiet);
     }
 
     const FAILED: &str = "The converter could not read the game data or the profile's settings \
                           (exit code 2), so your vault was not changed.";
 
-    fn failed_run() -> LastRun {
-        LastRun {
-            converted: false,
-            exit_code: Some(2),
-            message: FAILED.into(),
-            fix: Some(Fix::DownloadAddress),
-            folders: Vec::new(),
-            warnings: Vec::new(),
-            log: vec!["Error: unable to find books.json".into()],
-            ..converted_run()
-        }
-    }
+    /// The stand-in writes its notes, then ends with exit code 2, when the book EXIT2 is chosen.
+    const FAILING: [&str; 1] = ["EXIT2"];
 
     #[test]
     fn a_failed_run_shows_why_with_its_exit_code_and_a_fix() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
-        harness.run();
-        last_run_saved(dir.path(), &mut harness, &events, &failed_run());
-        harness.get_by_label("D&D 5e · 0 books · last attempt failed 14 Mar 2020, 12:00");
+        let (mut harness, _events, _) = harness_after_run(dir.path(), 1280.0, &FAILING);
+        harness.get_by_label_contains("D&D 5e · 1 book · last attempt failed ");
         harness.get_by_label("Failed");
         open_last_run(&mut harness);
 
-        harness.get_by_label("The converter stopped before writing anything");
+        harness.get_by_label("The converter stopped partway");
         harness.get_by_label(FAILED);
-        harness.get_by_label("Error: unable to find books.json");
+        harness.get_by_label("Error: stopping with exit code 2");
         assert!(harness.query_by_label("Save log…").is_none());
         harness.get_by_label("Check the download address").click();
         harness.run();
         harness.get_by_label("Game rules");
+        let served = harness.state().engine.profiles()[0].address.clone();
         let address = harness
-            .get_all_by_value("http://127.0.0.1:1/data.zip")
+            .get_all_by_value(&served)
             .find(|n| n.accesskit_node().role() == egui::accesskit::Role::TextInput)
             .unwrap();
         assert!(address.accesskit_node().is_focused());
@@ -1528,9 +1594,7 @@ mod tests {
     #[test]
     fn on_a_phone_a_failed_runs_fix_sits_under_its_message() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut harness, events) = harness_on_profile(dir.path(), 400.0);
-        harness.run();
-        last_run_saved(dir.path(), &mut harness, &events, &failed_run());
+        let (mut harness, _events, _) = harness_after_run(dir.path(), 400.0, &FAILING);
         open_last_run(&mut harness);
         let bounds = |label| {
             harness
@@ -1539,10 +1603,7 @@ mod tests {
                 .raw_bounds()
                 .unwrap()
         };
-        let (headline, message) = (
-            bounds("The converter stopped before writing anything"),
-            bounds(FAILED),
-        );
+        let (headline, message) = (bounds("The converter stopped partway"), bounds(FAILED));
         let fix = bounds("Check the download address");
         assert!(fix.y0 > message.y1, "below the message");
         assert_eq!(fix.x0, headline.x0, "lined up with the text");
@@ -1551,9 +1612,7 @@ mod tests {
     #[test]
     fn a_profile_made_again_after_a_delete_has_no_last_run() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut harness, events, heard) = harness_on_profile_heard(dir.path(), 1280.0);
-        harness.run();
-        last_run_saved(dir.path(), &mut harness, &events, &converted_run());
+        let (mut harness, events, heard) = harness_after_run(dir.path(), 1280.0, &CONVERTED);
         harness.get_by_label("Converted");
         // Passes the Engine's events on to the app, up to the one wanted.
         let forward = |wanted: fn(&Event) -> bool| loop {
@@ -2488,12 +2547,15 @@ mod tests {
     fn the_obsidian_setup_screen_names_the_folder_of_the_profile_last_open_not_the_first() {
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, _) = harness_on_profile(dir.path(), 1280.0);
-        harness.state().engine.send(Command::CreateProfile(ProfileDraft {
-            name: "Wednesday".into(),
-            rules: Rules::Dnd5e,
-            address: "http://127.0.0.1:1/data.zip".into(),
-            vault: "/vault".into(),
-        }));
+        harness
+            .state()
+            .engine
+            .send(Command::CreateProfile(ProfileDraft {
+                name: "Wednesday".into(),
+                rules: Rules::Dnd5e,
+                address: "http://127.0.0.1:1/data.zip".into(),
+                vault: "/vault".into(),
+            }));
         let mut second = harness.state().engine.profiles()[1].clone();
         assert_eq!(second.name, "Wednesday", "Thursday is the first profile");
         second.config.paths.compendium = "lore/".into();
