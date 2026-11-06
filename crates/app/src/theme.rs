@@ -674,14 +674,25 @@ pub fn segmented<T: PartialEq + Copy>(
         });
 }
 
+const REDUCE_MOTION: &str = "reduce motion";
+
+/// Records whether the OS asks for reduced motion, which stills the progress track.
+pub fn set_reduce_motion(ctx: &egui::Context, reduce: bool) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(REDUCE_MOTION), reduce));
+}
+
 /// The demo's progress track: an accent bar sliding along a thin grey track, for work whose
-/// length is not known.
+/// length is not known. With reduced motion it is a still, faint full bar, as the demo's is.
 pub fn track(ui: &mut egui::Ui) {
     let p = palette(ui);
     let size = egui::vec2(ui.available_width(), 6.0);
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 3, p.active);
+    if ui.data(|d| d.get_temp(egui::Id::new(REDUCE_MOTION))) == Some(true) {
+        painter.rect_filled(rect, 3, p.accent.gamma_multiply(0.35));
+        return;
+    }
     // The demo's slide: 28% wide, from -100% to 360% of its width, ease-in-out over 1.4 s.
     let width = rect.width() * 0.28;
     let t = (ui.input(|i| i.time) / 1.4).fract() as f32;
@@ -805,6 +816,45 @@ mod tests {
             }
             _ => {}
         }
+    }
+
+    /// The track's accent bars, as painted with the OS's reduced motion `reduce`d or not.
+    fn track_bars(reduce: bool) -> (egui::Rect, Vec<(egui::Rect, Color32)>) {
+        let mut harness = Harness::builder()
+            .with_theme(Theme::Light)
+            .with_size([400.0, 100.0])
+            .with_context_setup(move |ctx| {
+                install(ctx);
+                set_reduce_motion(ctx, reduce);
+            })
+            .build_ui(|ui| track(ui));
+        harness.step();
+        let mut track_rect = egui::Rect::NOTHING;
+        let mut bars = Vec::new();
+        for clipped in &harness.output().shapes {
+            if let egui::Shape::Rect(r) = &clipped.shape {
+                if r.fill == LIGHT.active {
+                    track_rect = r.rect;
+                } else if r.fill == LIGHT.accent || r.fill == LIGHT.accent.gamma_multiply(0.35) {
+                    bars.push((r.rect, r.fill));
+                }
+            }
+        }
+        (track_rect, bars)
+    }
+
+    #[test]
+    fn with_reduced_motion_the_track_is_a_still_faint_full_bar() {
+        let (track_rect, bars) = track_bars(true);
+        assert_eq!(bars, [(track_rect, LIGHT.accent.gamma_multiply(0.35))]);
+    }
+
+    #[test]
+    fn without_reduced_motion_the_track_slides_a_bar_28_percent_wide() {
+        let (track_rect, bars) = track_bars(false);
+        assert_eq!(bars.len(), 1);
+        assert_eq!(bars[0].1, LIGHT.accent);
+        assert_eq!(bars[0].0.width(), track_rect.width() * 0.28);
     }
 
     #[test]
