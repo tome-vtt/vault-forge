@@ -5,8 +5,28 @@ use std::path::Path;
 use std::process::Command;
 
 /// Shows `file` in Explorer or Finder, selected; elsewhere opens the folder holding it.
+#[cfg(not(test))]
 pub(crate) fn show(file: &Path) -> io::Result<()> {
     spawn(open(file))
+}
+
+/// In tests, notes the file instead of opening the file manager on it.
+#[cfg(test)]
+pub(crate) fn show(file: &Path) -> io::Result<()> {
+    let _ = open(file);
+    SHOWN.with_borrow_mut(|shown| shown.push(file.to_path_buf()));
+    Ok(())
+}
+
+#[cfg(test)]
+thread_local! {
+    static SHOWN: std::cell::RefCell<Vec<std::path::PathBuf>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The files this test's thread has shown so far, oldest first.
+#[cfg(test)]
+pub(crate) fn shown() -> Vec<std::path::PathBuf> {
+    SHOWN.with_borrow(Clone::clone)
 }
 
 /// Opens the link in the app the OS has for its scheme.
