@@ -2485,6 +2485,51 @@ mod tests {
     }
 
     #[test]
+    fn the_obsidian_setup_screen_names_the_folder_of_the_profile_last_open_not_the_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _) = harness_on_profile(dir.path(), 1280.0);
+        harness.state().engine.send(Command::CreateProfile(ProfileDraft {
+            name: "Wednesday".into(),
+            rules: Rules::Dnd5e,
+            address: "http://127.0.0.1:1/data.zip".into(),
+            vault: "/vault".into(),
+        }));
+        let mut second = harness.state().engine.profiles()[1].clone();
+        assert_eq!(second.name, "Wednesday", "Thursday is the first profile");
+        second.config.paths.compendium = "lore/".into();
+        harness.state().engine.send(Command::SaveProfile(second));
+        harness.run();
+        harness.get_by_label("Wednesday 5e").click();
+        harness.run();
+
+        harness.get_by_label("Obsidian setup").click();
+        harness.run();
+
+        harness.get_by_label("lore/bestiary");
+        assert!(harness.query_by_label("compendium/bestiary").is_none());
+    }
+
+    #[test]
+    fn each_show_button_on_obsidian_setup_shows_its_own_bundled_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut harness = harness(dir.path());
+        harness.get_by_label("Obsidian setup").click();
+        harness.run();
+        let engine = &harness.state().engine;
+        let (styles, snippet) = (
+            engine.bundled_file(vault_forge_engine::ADMONITIONS_STYLES),
+            engine.bundled_file(vault_forge_engine::CSS_SNIPPET),
+        );
+
+        harness.get_by_label("Show the file").click();
+        harness.run();
+        harness.get_by_label("Show the files").click();
+        harness.run();
+
+        assert_eq!(crate::file_manager::shown(), [styles, snippet]);
+    }
+
+    #[test]
     fn with_no_profile_the_obsidian_setup_screen_shows_the_usual_bestiary_folder() {
         let dir = tempfile::tempdir().unwrap();
         let mut harness = harness(dir.path());
