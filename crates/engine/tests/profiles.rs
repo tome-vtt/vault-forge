@@ -2,7 +2,7 @@
 use std::path::Path;
 use std::sync::mpsc::Receiver;
 
-use vault_forge_engine::{Command, Engine, Event, Profile, ProfileDraft, Rules};
+use vault_forge_engine::{Command, Engine, Event, Group, Profile, ProfileDraft, Rules};
 
 fn draft(name: &str) -> ProfileDraft {
     ProfileDraft {
@@ -344,4 +344,21 @@ fn a_bundled_file_is_named_inside_the_converters_folder() {
             .to_str(),
         expected.to_str()
     );
+}
+
+#[test]
+fn typed_codes_are_saved_under_their_own_key_each_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let mut typed = create(&engine, &events, "Thursday");
+
+    typed.type_codes(Group::CoreRules, "XPHB, PS-Z XPHB");
+    typed.type_codes(Group::Adventures, "CoS,,CoS");
+    engine.send(Command::SaveProfile(typed));
+
+    drop(engine);
+    let (engine, _) = start(dir.path());
+    let reopened = &engine.profiles()[0];
+    assert_eq!(reopened.config.sources.book, ["XPHB", "PS-Z"]);
+    assert_eq!(reopened.config.sources.adventure, ["CoS"]);
 }
