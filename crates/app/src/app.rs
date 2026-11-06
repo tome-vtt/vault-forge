@@ -1074,6 +1074,18 @@ mod tests {
         (harness, events, heard)
     }
 
+    /// Passes the Engine's events `heard` on to the app's `events`, up to the one wanted.
+    fn forward(heard: &Receiver<Event>, events: &Sender<Event>, wanted: fn(&Event) -> bool) {
+        loop {
+            let event = heard.recv_timeout(Duration::from_secs(30)).unwrap();
+            let done = wanted(&event);
+            events.send(event).unwrap();
+            if done {
+                break;
+            }
+        }
+    }
+
     /// Turns the mouse wheel `dy` points with the pointer at `at`.
     fn wheel(harness: &Harness<'_, App>, at: egui::Pos2, dy: f32) {
         harness.hover_at(at);
@@ -1388,7 +1400,7 @@ mod tests {
     fn harness_after_run(
         dir: &std::path::Path,
         width: f32,
-        books: &[&str],
+        books: &[String],
     ) -> (Harness<'static, App>, Sender<Event>, Receiver<Event>) {
         let vault = dir.join("vault");
         std::fs::create_dir(&vault).unwrap();
@@ -1402,7 +1414,7 @@ mod tests {
             vault: vault.display().to_string(),
         }));
         let mut profile = engine.profiles().remove(0);
-        profile.config.sources.book = books.iter().map(|b| b.to_string()).collect();
+        profile.config.sources.book = books.to_vec();
         profile.config.sources.homebrew = vec!["homebrew.json".into()];
         engine.send(Command::SaveProfile(profile.clone()));
         engine.send(Command::DownloadGameData(profile.clone()));
@@ -1417,15 +1429,7 @@ mod tests {
                 |ui, app: &mut App| app.ui(ui),
                 App::new(engine, received, mpsc::channel().1),
             );
-        let forward = |wanted: fn(&Event) -> bool| loop {
-            let event = heard.recv_timeout(Duration::from_secs(30)).unwrap();
-            let done = wanted(&event);
-            events.send(event).unwrap();
-            if done {
-                break;
-            }
-        };
-        forward(|e| {
+        forward(&heard, &events, |e| {
             matches!(
                 e,
                 Event::GameData {
@@ -1436,7 +1440,9 @@ mod tests {
         });
         harness.run();
         harness.state().engine.send(Command::Convert(profile.id));
-        forward(|e| matches!(e, Event::ConversionEnded { .. }));
+        forward(&heard, &events, |e| {
+            matches!(e, Event::ConversionEnded { .. })
+        });
         harness.run();
         (harness, events, heard)
     }
@@ -1448,7 +1454,8 @@ mod tests {
         harness.run();
     }
 
-    /// Nine books the stand-in writes into six compendium folders, beside its one rules note.
+    /// Nine books the stand-in writes into six compendium folders, beside its one rules note;
+    /// `converted_books` adds a thousand more to the bestiary.
     const CONVERTED: [&str; 9] = [
         "bestiary/MM",
         "bestiary/VGM",
@@ -1460,6 +1467,15 @@ mod tests {
         "feats/TCE",
         "races/VRGR",
     ];
+
+    fn converted_books() -> Vec<String> {
+        let more = (1..=1000).map(|n| format!("bestiary/B{n}"));
+        CONVERTED
+            .iter()
+            .map(|b| b.to_string())
+            .chain(more)
+            .collect()
+    }
 
     #[test]
     fn a_profile_never_converted_says_so_on_its_last_run_tab() {
@@ -1477,18 +1493,21 @@ mod tests {
     #[test]
     fn a_converted_run_shows_its_figures_folders_warnings_and_log() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut harness, _events, _) = harness_after_run(dir.path(), 1280.0, &CONVERTED);
-        harness.get_by_label_contains("D&D 5e · 9 books · last converted ");
+        let (mut harness, _events, _) = harness_after_run(dir.path(), 1280.0, &converted_books());
+        harness.get_by_label_contains("D&D 5e · 1009 books · last converted ");
         harness.get_by_label("Converted");
         open_last_run(&mut harness);
 
-        // The strip: 10 notes in all, 9 books + 1 homebrew, under a minute.
-        harness.get_by_label("10");
-        harness.get_by_label("9 + 1 homebrew");
-        harness.get_by_label_contains("0 m ");
+        // The strip: 1,010 notes in all, 1009 books + 1 homebrew, and the run's own time.
+        let id = harness.state().engine.profiles()[0].id.clone();
+        let run = harness.state().engine.last_run(&id).unwrap();
+        harness.get_by_label("1,010");
+        harness.get_by_label("1009 + 1 homebrew");
+        let (m, s) = (run.seconds / 60, run.seconds % 60);
+        harness.get_by_label(&format!("{m} m {s} s"));
         harness.get_by_label("7 folders");
         harness.get_by_label("compendium/bestiary");
-        harness.get_by_label("3");
+        harness.get_by_label("1,003");
         harness.get_by_label("compendium/spells");
         assert!(harness.query_by_label("rules").is_none(), "top six");
         harness.get_by_label("Show all 7 folders").click();
@@ -1503,8 +1522,6 @@ mod tests {
         harness.get_by_label("Unresolved link to Strahd zombie");
         // Each warning's card names its step, above the log. The converter's two streams can
         // arrive in either order, so the steps are the Engine's.
-        let id = harness.state().engine.profiles()[0].id.clone();
-        let run = harness.state().engine.last_run(&id).unwrap();
         assert_eq!(run.warnings.len(), 2);
         let log = harness.get_by_label("Log").rect().top();
         for warning in &run.warnings {
@@ -1522,15 +1539,15 @@ mod tests {
         harness.get_by_label("Save log…").scroll_to_me();
         harness.run();
         let first = harness.get_by_label(&run.log[0]).rect().center();
-        wheel(&harness, first, -1000.0);
-        harness.run();
+        wheel(&harness, first, -100_000.0);
+        harness.run_steps(8);
         harness.get_by_label("Done");
     }
 
     #[test]
     fn the_warnings_filter_shows_only_the_logs_warning_lines() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut harness, _events, _) = harness_after_run(dir.path(), 1280.0, &CONVERTED);
+        let (mut harness, _events, _) = harness_after_run(dir.path(), 1280.0, &converted_books());
         open_last_run(&mut harness);
         // The log's first plain line, which no warning card names as its step.
         let id = harness.state().engine.profiles()[0].id.clone();
@@ -1565,20 +1582,22 @@ mod tests {
     const FAILED: &str = "The converter could not read the game data or the profile's settings \
                           (exit code 2), so your vault was not changed.";
 
-    /// The stand-in writes its notes, then ends with exit code 2, when the book EXIT2 is chosen.
-    const FAILING: [&str; 1] = ["EXIT2"];
+    /// The stand-in ends with exit code 2 before writing a note when the book EARLY2 is chosen.
+    fn failing() -> Vec<String> {
+        vec!["EARLY2".into()]
+    }
 
     #[test]
     fn a_failed_run_shows_why_with_its_exit_code_and_a_fix() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut harness, _events, _) = harness_after_run(dir.path(), 1280.0, &FAILING);
+        let (mut harness, _events, _) = harness_after_run(dir.path(), 1280.0, &failing());
         harness.get_by_label_contains("D&D 5e · 1 book · last attempt failed ");
         harness.get_by_label("Failed");
         open_last_run(&mut harness);
 
-        harness.get_by_label("The converter stopped partway");
+        harness.get_by_label("The converter stopped before writing anything");
         harness.get_by_label(FAILED);
-        harness.get_by_label("Error: stopping with exit code 2");
+        harness.get_by_label("Error: stopping early with exit code 2");
         assert!(harness.query_by_label("Save log…").is_none());
         harness.get_by_label("Check the download address").click();
         harness.run();
@@ -1594,7 +1613,7 @@ mod tests {
     #[test]
     fn on_a_phone_a_failed_runs_fix_sits_under_its_message() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut harness, _events, _) = harness_after_run(dir.path(), 400.0, &FAILING);
+        let (mut harness, _events, _) = harness_after_run(dir.path(), 400.0, &failing());
         open_last_run(&mut harness);
         let bounds = |label| {
             harness
@@ -1603,7 +1622,10 @@ mod tests {
                 .raw_bounds()
                 .unwrap()
         };
-        let (headline, message) = (bounds("The converter stopped partway"), bounds(FAILED));
+        let (headline, message) = (
+            bounds("The converter stopped before writing anything"),
+            bounds(FAILED),
+        );
         let fix = bounds("Check the download address");
         assert!(fix.y0 > message.y1, "below the message");
         assert_eq!(fix.x0, headline.x0, "lined up with the text");
@@ -1612,21 +1634,12 @@ mod tests {
     #[test]
     fn a_profile_made_again_after_a_delete_has_no_last_run() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut harness, events, heard) = harness_after_run(dir.path(), 1280.0, &CONVERTED);
+        let (mut harness, events, heard) = harness_after_run(dir.path(), 1280.0, &["XPHB".into()]);
         harness.get_by_label("Converted");
-        // Passes the Engine's events on to the app, up to the one wanted.
-        let forward = |wanted: fn(&Event) -> bool| loop {
-            let event = heard.recv_timeout(Duration::from_secs(10)).unwrap();
-            let done = wanted(&event);
-            events.send(event).unwrap();
-            if done {
-                break;
-            }
-        };
 
         let id = harness.state().engine.profiles()[0].id.clone();
         harness.state().engine.send(Command::DeleteProfile(id));
-        forward(|e| matches!(e, Event::ProfileDeleted(_)));
+        forward(&heard, &events, |e| matches!(e, Event::ProfileDeleted(_)));
         harness.run();
         harness
             .state()
@@ -1637,7 +1650,7 @@ mod tests {
                 address: "http://127.0.0.1:1/data.zip".into(),
                 vault: "/vault".into(),
             }));
-        forward(|e| matches!(e, Event::ProfileCreated(_)));
+        forward(&heard, &events, |e| matches!(e, Event::ProfileCreated(_)));
         harness.run();
 
         harness.get_by_label("D&D 5e · 0 books · not converted yet");
@@ -1660,20 +1673,12 @@ mod tests {
         harness.run();
         harness.get_by_label(cancelled);
         harness.state_mut().books.as_mut().unwrap().search = "strahd".into();
-        let forward = |wanted: fn(&Event) -> bool| loop {
-            let event = heard.recv_timeout(Duration::from_secs(10)).unwrap();
-            let done = wanted(&event);
-            events.send(event).unwrap();
-            if done {
-                break;
-            }
-        };
 
         harness
             .state()
             .engine
             .send(Command::DeleteProfile(id.clone()));
-        forward(|e| matches!(e, Event::ProfileDeleted(_)));
+        forward(&heard, &events, |e| matches!(e, Event::ProfileDeleted(_)));
         harness.run();
         harness
             .state()
@@ -1684,7 +1689,7 @@ mod tests {
                 address: "http://127.0.0.1:1/other.zip".into(),
                 vault: "/other".into(),
             }));
-        forward(|e| matches!(e, Event::ProfileCreated(_)));
+        forward(&heard, &events, |e| matches!(e, Event::ProfileCreated(_)));
         harness.run();
 
         assert_eq!(
