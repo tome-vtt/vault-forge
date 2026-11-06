@@ -30,7 +30,7 @@ The optional second download a profile can switch on, holding the books' portrai
 _Avoid_: assets, media, img
 
 **Book**:
-One source in the game data (a rulebook, supplement or adventure), named by its source code such as XPHB.
+One source in the game data (a rulebook, supplement or adventure), named by its source code such as XPHB. Adventures are Books, but the converter keeps their codes apart from the others', so the screens name them apart too, as "books and adventures".
 _Avoid_: source, module
 
 **Homebrew**:

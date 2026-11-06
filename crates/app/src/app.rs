@@ -2125,6 +2125,97 @@ mod tests {
     }
 
     #[test]
+    fn typed_adventure_codes_are_saved_as_adventures_each_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        codes_field(&harness, "Adventure codes").focus();
+        harness.run();
+        codes_field(&harness, "Adventure codes").type_text("CoS, CoS");
+        harness.run();
+        let sources = &harness.state().engine.profiles()[0].config.sources;
+        assert_eq!(sources.adventure, ["CoS"]);
+        assert!(sources.book.is_empty());
+    }
+
+    #[test]
+    fn choose_all_chooses_every_book_of_its_group_and_clear_all_clears_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        let book = |code: &str, name: &str, group| Book {
+            code: code.into(),
+            name: name.into(),
+            year: "2017".into(),
+            group,
+        };
+        let data = DataState::Ready {
+            books: vec![
+                book("XGE", "Xanathar's Guide to Everything", Group::Supplements),
+                book("TCE", "Tasha's Cauldron of Everything", Group::Supplements),
+                book("CoS", "Curse of Strahd", Group::Adventures),
+            ],
+            bytes: 1,
+            downloaded: UNIX_EPOCH,
+            newer: false,
+        };
+        game_data(&events, data);
+        harness.run();
+
+        // The Supplements heading comes first, above the Adventures one.
+        harness
+            .get_all_by_label("Choose all")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        let sources = &harness.state().engine.profiles()[0].config.sources;
+        assert_eq!(sources.book, ["XGE", "TCE"]);
+        assert!(sources.adventure.is_empty());
+        harness.get_by_label("Supplements · 2 of 2");
+
+        harness.get_by_label("Clear all").click();
+        harness.run();
+        let sources = &harness.state().engine.profiles()[0].config.sources;
+        assert!(sources.book.is_empty() && sources.adventure.is_empty());
+        harness.get_by_label("Supplements · 0 of 2");
+
+        // The Adventures heading's own Choose all fills the adventures alone.
+        harness
+            .get_all_by_label("Choose all")
+            .nth(1)
+            .unwrap()
+            .click();
+        harness.run();
+        let sources = &harness.state().engine.profiles()[0].config.sources;
+        assert_eq!(sources.adventure, ["CoS"]);
+        assert!(sources.book.is_empty());
+    }
+
+    #[test]
+    fn the_chosen_filter_shows_only_the_ticked_books() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        game_data(&events, three_books());
+        harness.run();
+        harness.get_by_label("Player's Handbook").click();
+        harness.run();
+
+        harness.get_by_label("Chosen").click();
+        harness.run();
+        harness.get_by_label("Player's Handbook");
+        assert!(
+            harness
+                .query_by_label("Xanathar's Guide to Everything")
+                .is_none()
+        );
+        assert!(harness.query_by_label("Curse of Strahd").is_none());
+
+        harness.get_by_label("All").click();
+        harness.run();
+        harness.get_by_label("Curse of Strahd");
+    }
+
+    #[test]
     fn the_books_bar_uses_the_small_switch() {
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
