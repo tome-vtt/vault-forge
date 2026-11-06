@@ -13,18 +13,19 @@ pub(crate) const NAME: &str = ".vault-forge-holding";
 /// tell which old folder is which.
 const REPLACED: &str = ".replaced-";
 
-/// An empty holding folder in the vault, clearing any a stopped app left behind, unless it still
-/// holds old folders a swap could not put back.
+/// Whether the vault's holding folder still holds old vault folders, which a swap that failed or
+/// was cut short did not put back.
+pub(crate) fn holds_old_folders(vault: &Path) -> bool {
+    let mut entries = fs::read_dir(vault.join(NAME))
+        .into_iter()
+        .flatten()
+        .flatten();
+    entries.any(|e| e.file_name().to_string_lossy().starts_with(REPLACED))
+}
+
+/// An empty holding folder in the vault, clearing any a stopped app left behind.
 pub(crate) fn create(vault: &Path) -> io::Result<PathBuf> {
     let holding = vault.join(NAME);
-    let mut entries = fs::read_dir(&holding).into_iter().flatten().flatten();
-    if entries.any(|e| e.file_name().to_string_lossy().starts_with(REPLACED)) {
-        return Err(io::Error::other(format!(
-            "{} still holds old notes that could not be put back; move them back into the vault \
-             first",
-            holding.display()
-        )));
-    }
     discard(&holding)?;
     fs::create_dir_all(&holding)?;
     Ok(holding)

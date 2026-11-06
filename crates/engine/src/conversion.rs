@@ -71,6 +71,13 @@ impl Conversion {
         profiles.refresh_templates(id)?;
         let (profile, config) = (profiles.get(id)?, profiles.file(id));
         let folders = folders(profile)?;
+        if holding_folder::holds_old_folders(&profile.vault) {
+            return Err(format!(
+                "Could not make the holding folder in the vault: {} still holds old notes that \
+                 could not be put back; move them back into the vault first",
+                profile.vault.join(holding_folder::NAME).display()
+            ));
+        }
         let holding = holding_folder::create(&profile.vault)
             .map_err(|e| format!("Could not make the holding folder in the vault: {e}"))?;
         let started = converter::start(&self.converter, &config, profile.rules, &data, &holding);
@@ -130,35 +137,20 @@ impl Conversion {
                 .unwrap()
                 .as_ref()
                 .is_some_and(|r| r.cancelled);
-            let mut keep = false;
+            let mut discard = true;
             let (converted, mut message, fix) = match code {
                 _ if cancelled => (false, CANCELLED.to_owned(), None),
                 Some(0) => match holding_folder::swap(&holding, &vault, &folders) {
                     Ok(()) => (true, explain(Some(0)), None),
-                    Err(failed) if failed.put_back => (
-                        false,
-                        format!(
-                            "Could not put the notes into the vault ({}), so it was not changed.",
-                            failed.error
-                        ),
-                        Some(Fix::Vault),
-                    ),
-                    // The old notes are still in the holding folder, so it must stay.
                     Err(failed) => {
-                        keep = true;
-                        let message = format!(
-                            "Could not put the notes into the vault ({}), and some of your old \
-                             notes could not be put back: they are in {}.",
-                            failed.error,
-                            holding.display()
-                        );
-                        (false, message, Some(Fix::Vault))
+                        discard = false;
+                        (false, swap_failed(failed, &holding), Some(Fix::Vault))
                     }
                 },
                 Some(2) => (false, explain(code), Some(Fix::DownloadAddress)),
                 code => (false, explain(code), None),
             };
-            if !keep {
+            if discard {
                 let _ = holding_folder::discard(&holding);
             }
             if !cancelled {
@@ -214,6 +206,24 @@ impl Drop for Conversion {
 }
 
 const CANCELLED: &str = "Conversion cancelled, so your vault was not changed.";
+
+/// The sentence for a swap that failed. The holding folder is discarded only when every old
+/// folder was put back; otherwise it still holds the old notes, so it stays and is named.
+fn swap_failed(failed: holding_folder::SwapFailed, holding: &Path) -> String {
+    if failed.put_back {
+        let _ = holding_folder::discard(holding);
+        return format!(
+            "Could not put the notes into the vault ({}), so it was not changed.",
+            failed.error
+        );
+    }
+    format!(
+        "Could not put the notes into the vault ({}), and some of your old notes could not be \
+         put back: they are in {}.",
+        failed.error,
+        holding.display()
+    )
+}
 
 /// The converter's exit code as one plain sentence; `None` when it was stopped from outside.
 fn explain(code: Option<i32>) -> String {
@@ -332,4 +342,61 @@ pub(crate) fn converted_notes(profile: &Profile) -> Option<ConvertedNotes> {
         written,
         folders,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use holding_folder::SwapFailed;
+
+    // No real swap fails to put a folder back on demand, so the failure is made here.
+    #[test]
+    fn a_swap_that_cannot_put_old_notes_back_keeps_them_and_says_where() {
+        let dir = tempfile::tempdir().unwrap();
+        let holding = dir.path().join(holding_folder::NAME);
+        let kept = holding.join(".replaced-0-compendium/old.md");
+        fs::create_dir_all(kept.parent().unwrap()).unwrap();
+        fs::write(&kept, "old compendium note").unwrap();
+        let error = std::io::Error::other("denied");
+
+        let message = swap_failed(
+            SwapFailed {
+                error,
+                put_back: false,
+            },
+            &holding,
+        );
+
+        assert_eq!(fs::read_to_string(&kept).unwrap(), "old compendium note");
+        assert_eq!(
+            message,
+            format!(
+                "Could not put the notes into the vault (denied), and some of your old notes \
+                 could not be put back: they are in {}.",
+                holding.display()
+            )
+        );
+    }
+
+    #[test]
+    fn a_swap_that_put_everything_back_discards_the_holding_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let holding = dir.path().join(holding_folder::NAME);
+        fs::create_dir_all(holding.join("compendium")).unwrap();
+        let error = std::io::Error::other("denied");
+
+        let message = swap_failed(
+            SwapFailed {
+                error,
+                put_back: true,
+            },
+            &holding,
+        );
+
+        assert!(!holding.exists());
+        assert_eq!(
+            message,
+            "Could not put the notes into the vault (denied), so it was not changed."
+        );
+    }
 }
