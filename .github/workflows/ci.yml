@@ -26,3 +26,5 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      - name: Bundle the pinned converter and check its sha256
+        run: cargo run -p vault-forge-bundle -- target/bundle
