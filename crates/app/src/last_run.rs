@@ -493,7 +493,8 @@ mod tests {
             warnings: Vec::new(),
             log: Vec::new(),
         };
-        let now = SystemTime::now();
+        // Built in memory: an Engine-made run started today, so always reads "today, …".
+        let now = run.started + Duration::from_secs(3 * 86_400);
         assert_eq!(
             subtitle(Some(&run), now),
             "last converted 14 Mar 2020, 12:00"
