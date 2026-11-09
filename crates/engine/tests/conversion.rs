@@ -732,6 +732,33 @@ fn counting_converted_notes_does_not_follow_a_symlink_loop() {
     assert_eq!(notes.notes, 3, "two notes and the link, not followed");
 }
 
+#[cfg(unix)]
+#[test]
+fn the_progress_count_does_not_follow_a_symlink_loop_in_the_holding_folder() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    choose(&setup, &id, &["XPHB", "HANG"]);
+    setup.engine.send(Command::Convert(id.clone()));
+    let counted = |compendium: usize| {
+        move |e: &Event| {
+            matches!(e, Event::ConversionProgress { written, .. }
+                if *written == [("compendium".to_owned(), compendium), ("rules".to_owned(), 1)])
+        }
+    };
+    wait(&setup.events, counted(2));
+
+    let compendium = setup.vault.join(".vault-forge-holding/compendium");
+    std::os::unix::fs::symlink(&compendium, compendium.join("loop")).unwrap();
+
+    // Two notes and the link, which is not followed into a folder of its own.
+    wait(&setup.events, counted(3));
+    setup.engine.send(Command::CancelConversion(id));
+    wait(&setup.events, |e| {
+        matches!(e, Event::ConversionEnded { .. })
+    });
+}
+
 /// The notes in the vault's compendium and rules folders.
 fn notes_in_vault(vault: &Path) -> usize {
     let all = files(vault);

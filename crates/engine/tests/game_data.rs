@@ -435,6 +435,34 @@ fn convert_waits_for_switched_off_images_to_stop_downloading() {
 }
 
 #[test]
+fn convert_is_refused_while_the_profiles_game_data_is_downloading() {
+    let server = Server::start();
+    let address = format!("{}/stalled.zip", server.url);
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Thursday", &address);
+    engine.send(Command::DownloadGameData(profile.clone()));
+    wait(&events, &address, |s| {
+        matches!(s, DataState::Downloading { .. })
+    });
+
+    engine.send(Command::Convert(profile.id));
+
+    let after: Vec<Event> = events.try_iter().collect();
+    let refused = after.iter().find_map(|e| match e {
+        Event::Failed(message) => Some(message.as_str()),
+        _ => None,
+    });
+    assert_eq!(refused, Some("Wait for the download to finish."));
+    assert!(
+        !after
+            .iter()
+            .any(|e| matches!(e, Event::ConversionStarted(_))),
+        "no conversion starts"
+    );
+}
+
+#[test]
 fn another_profiles_cancelled_images_download_does_not_hold_back_convert() {
     let server = Server::start();
     let images = format!("{}/stalled.zip", server.url);
