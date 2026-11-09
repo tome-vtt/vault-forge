@@ -695,7 +695,8 @@ fn folders_differing_only_in_letter_case_keep_every_new_note() {
     let address = serve_game_data();
     let setup = setup(&address);
     let id = setup.engine.profiles()[0].id.clone();
-    // One folder on Windows and macOS, two on Linux; the notes stay either way.
+    // One folder on a disk that ignores letter case, two on one that does not; the notes stay
+    // either way.
     for (compendium, rules) in [("Compendium/", "compendium/"), ("Notes/", "notes/Rules/")] {
         let mut profile = choose(&setup, &id, &["XPHB"]);
         profile.config.paths.compendium = compendium.into();

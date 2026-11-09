@@ -270,9 +270,9 @@ fn folders(profile: &Profile) -> Result<Vec<String>, String> {
     let compendium = inside(&profile.config.paths.compendium, "compendium")?;
     let rules = inside(&profile.config.paths.rules, "rules")?;
     // Compared the way the vault's disk names folders: `Compendium/` and `compendium/rules/` are
-    // one folder on Windows and macOS.
-    // ponytail: by platform, not by disk; probe the vault if case-sensitive volumes matter.
-    let key = |folder: &str| match cfg!(any(windows, target_os = "macos")) {
+    // one folder on a disk that ignores letter case.
+    let case_blind = case_blind(&profile.vault);
+    let key = |folder: &str| match case_blind {
         true => folder.to_lowercase(),
         false => folder.to_owned(),
     };
@@ -284,6 +284,36 @@ fn folders(profile: &Profile) -> Result<Vec<String>, String> {
     } else {
         vec![compendium, rules]
     })
+}
+
+/// Whether the vault's disk ignores letter case in names, as most Windows and macOS disks do and
+/// a FAT, exFAT or NTFS disk does under Linux: an entry of the vault, or else the vault itself, is
+/// found under its name in other letter case. With nothing to try, it goes by the platform.
+// ponytail: probes the vault's own folder; a disk mounted inside the vault is not probed.
+fn case_blind(vault: &Path) -> bool {
+    let found_otherwise = |path: PathBuf| {
+        let name = path.file_name()?.to_str()?;
+        let other: String = name
+            .chars()
+            .map(|c| match c.is_ascii_uppercase() {
+                true => c.to_ascii_lowercase(),
+                false => c.to_ascii_uppercase(),
+            })
+            .collect();
+        let parent = path.parent()?;
+        let mut names = fs::read_dir(parent).ok()?.flatten();
+        // Both names listed are two entries, which tells nothing.
+        match other == name || names.any(|e| e.file_name() == other.as_str()) {
+            true => None,
+            false => Some(parent.join(other).exists()),
+        }
+    };
+    let entries = fs::read_dir(vault).into_iter().flatten().flatten();
+    let tried = entries.map(|e| e.path()).chain([vault.to_path_buf()]);
+    tried
+        .filter_map(found_otherwise)
+        .next()
+        .unwrap_or(cfg!(any(windows, target_os = "macos")))
 }
 
 /// The notes in the holding folder's `folders` so far, by vault folder (`compendium/bestiary`);
