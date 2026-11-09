@@ -137,20 +137,8 @@ impl Conversion {
                 .unwrap()
                 .as_ref()
                 .is_some_and(|r| r.cancelled);
-            let mut keep = false;
-            let (converted, mut message, fix) = match code {
-                _ if cancelled => (false, CANCELLED.to_owned(), None),
-                Some(0) => match holding_folder::swap(&holding, &vault, &folders) {
-                    Ok(()) => (true, explain(Some(0)), None),
-                    Err(failed) => {
-                        // Discarded there only when every old folder was put back.
-                        keep = true;
-                        (false, swap_failed(failed, &holding), Some(Fix::Vault))
-                    }
-                },
-                Some(2) => (false, explain(code), Some(Fix::DownloadAddress)),
-                code => (false, explain(code), None),
-            };
+            let swap = || holding_folder::swap(&holding, &vault, &folders);
+            let (converted, mut message, fix, keep) = ended(code, cancelled, &holding, swap);
             if !keep {
                 let _ = holding_folder::discard(&holding);
             }
@@ -208,22 +196,43 @@ impl Drop for Conversion {
 
 const CANCELLED: &str = "Conversion cancelled, so your vault was not changed.";
 
-/// The sentence for a swap that failed. The holding folder is discarded only when every old
-/// folder was put back; otherwise it still holds the old notes, so it stays and is named.
-fn swap_failed(failed: holding_folder::SwapFailed, holding: &Path) -> String {
-    if failed.put_back {
-        let _ = holding_folder::discard(holding);
-        return format!(
-            "Could not put the notes into the vault ({}), so it was not changed.",
-            failed.error
-        );
+/// How a conversion that ran to its end turned out: whether it converted, its sentence, the fix it
+/// points to, and whether the holding folder stays. It stays only when a swap that failed could
+/// not put every old folder back, since it then holds the old notes; the sentence names it.
+fn ended(
+    code: Option<i32>,
+    cancelled: bool,
+    holding: &Path,
+    swap: impl FnOnce() -> Result<(), holding_folder::SwapFailed>,
+) -> (bool, String, Option<Fix>, bool) {
+    match code {
+        _ if cancelled => (false, CANCELLED.to_owned(), None, false),
+        Some(0) => match swap() {
+            Ok(()) => (true, explain(Some(0)), None, false),
+            Err(failed) if failed.put_back => (
+                false,
+                format!(
+                    "Could not put the notes into the vault ({}), so it was not changed.",
+                    failed.error
+                ),
+                Some(Fix::Vault),
+                false,
+            ),
+            Err(failed) => (
+                false,
+                format!(
+                    "Could not put the notes into the vault ({}), and some of your old notes \
+                     could not be put back: they are in {}.",
+                    failed.error,
+                    holding.display()
+                ),
+                Some(Fix::Vault),
+                true,
+            ),
+        },
+        Some(2) => (false, explain(code), Some(Fix::DownloadAddress), false),
+        code => (false, explain(code), None, false),
     }
-    format!(
-        "Could not put the notes into the vault ({}), and some of your old notes could not be \
-         put back: they are in {}.",
-        failed.error,
-        holding.display()
-    )
 }
 
 /// The converter's exit code as one plain sentence; `None` when it was stopped from outside.
@@ -351,53 +360,50 @@ mod tests {
     use holding_folder::SwapFailed;
 
     // No real swap fails to put a folder back on demand, so the failure is made here.
+    fn swap_failing(put_back: bool) -> impl FnOnce() -> Result<(), SwapFailed> {
+        move || {
+            Err(SwapFailed {
+                error: std::io::Error::other("denied"),
+                put_back,
+            })
+        }
+    }
+
     #[test]
     fn a_swap_that_cannot_put_old_notes_back_keeps_them_and_says_where() {
-        let dir = tempfile::tempdir().unwrap();
-        let holding = dir.path().join(holding_folder::NAME);
-        let kept = holding.join(".replaced-0-compendium/old.md");
-        fs::create_dir_all(kept.parent().unwrap()).unwrap();
-        fs::write(&kept, "old compendium note").unwrap();
-        let error = std::io::Error::other("denied");
+        let holding = Path::new("vault").join(holding_folder::NAME);
 
-        let message = swap_failed(
-            SwapFailed {
-                error,
-                put_back: false,
-            },
-            &holding,
-        );
+        let ended = ended(Some(0), false, &holding, swap_failing(false));
 
-        assert_eq!(fs::read_to_string(&kept).unwrap(), "old compendium note");
         assert_eq!(
-            message,
-            format!(
-                "Could not put the notes into the vault (denied), and some of your old notes \
-                 could not be put back: they are in {}.",
-                holding.display()
+            ended,
+            (
+                false,
+                format!(
+                    "Could not put the notes into the vault (denied), and some of your old notes \
+                     could not be put back: they are in {}.",
+                    holding.display()
+                ),
+                Some(Fix::Vault),
+                true
             )
         );
     }
 
     #[test]
     fn a_swap_that_put_everything_back_discards_the_holding_folder() {
-        let dir = tempfile::tempdir().unwrap();
-        let holding = dir.path().join(holding_folder::NAME);
-        fs::create_dir_all(holding.join("compendium")).unwrap();
-        let error = std::io::Error::other("denied");
+        let holding = Path::new("vault").join(holding_folder::NAME);
 
-        let message = swap_failed(
-            SwapFailed {
-                error,
-                put_back: true,
-            },
-            &holding,
-        );
+        let ended = ended(Some(0), false, &holding, swap_failing(true));
 
-        assert!(!holding.exists());
         assert_eq!(
-            message,
-            "Could not put the notes into the vault (denied), so it was not changed."
+            ended,
+            (
+                false,
+                "Could not put the notes into the vault (denied), so it was not changed.".into(),
+                Some(Fix::Vault),
+                false
+            )
         );
     }
 }
