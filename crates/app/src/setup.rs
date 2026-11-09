@@ -121,31 +121,55 @@ impl SetupSections {
             },
         );
         ui.add_space(16.0);
-        ui.columns(2, |columns| {
-            let [left, right] = columns else {
-                return;
-            };
-            let folders: [(_, _, _, Field<Paths, String>); 2] = [
-                (left, "Compendium folder", &mut self.compendium, |p| {
-                    &mut p.compendium
-                }),
-                (right, "Rules folder", &mut self.rules, |p| &mut p.rules),
-            ];
-            for (ui, label, text, folder) in folders {
-                let label = ui.label(label).id;
-                let field = theme::input(
-                    ui,
-                    egui::TextEdit::singleline(text).font(egui::TextStyle::Monospace),
-                )
-                .labelled_by(label);
-                let mut changed = profile.clone();
-                let saved = folder(&mut changed.config.paths);
-                if field.lost_focus() && text.trim() != folder_name(saved) {
-                    *saved = text.clone();
-                    save(changed);
-                }
-            }
-        });
+        let compendium = |ui: &mut egui::Ui, text: &mut String| {
+            folder(
+                ui,
+                "Compendium folder",
+                text,
+                |p| &mut p.compendium,
+                profile,
+                save,
+            );
+        };
+        let rules = |ui: &mut egui::Ui, text: &mut String| {
+            folder(ui, "Rules folder", text, |p| &mut p.rules, profile, save);
+        };
+        if ui.ctx().content_rect().width() <= theme::PHONE {
+            compendium(ui, &mut self.compendium);
+            ui.add_space(16.0);
+            rules(ui, &mut self.rules);
+        } else {
+            ui.columns(2, |columns| {
+                let [left, right] = columns else {
+                    return;
+                };
+                compendium(left, &mut self.compendium);
+                rules(right, &mut self.rules);
+            });
+        }
+    }
+}
+
+/// One of the two vault folder fields, saved when it loses focus.
+fn folder(
+    ui: &mut egui::Ui,
+    label: &str,
+    text: &mut String,
+    folder: Field<Paths, String>,
+    profile: &Profile,
+    save: &impl Fn(Profile),
+) {
+    let label = ui.label(label).id;
+    let field = theme::input(
+        ui,
+        egui::TextEdit::singleline(text).font(egui::TextStyle::Monospace),
+    )
+    .labelled_by(label);
+    let mut changed = profile.clone();
+    let saved = folder(&mut changed.config.paths);
+    if field.lost_focus() && text.trim() != folder_name(saved) {
+        *saved = text.clone();
+        save(changed);
     }
 }
 

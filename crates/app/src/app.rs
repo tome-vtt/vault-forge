@@ -1311,6 +1311,28 @@ mod tests {
     }
 
     #[test]
+    fn the_compendium_and_rules_folders_stack_at_phone_width_as_the_demo() {
+        let dir = tempfile::tempdir().unwrap();
+        for (width, stacked) in [(600.0, true), (601.0, false), (1280.0, false)] {
+            let (mut harness, _events) =
+                harness_on_profile(dir.path().join(width.to_string()).as_path(), width);
+            harness.run();
+            let compendium = harness.get_by_label("Compendium folder").rect();
+            let rules = harness.get_by_label("Rules folder").rect();
+            if stacked {
+                assert_eq!(rules.left(), compendium.left(), "{width}: one column");
+                assert!(
+                    rules.top() > compendium.bottom() + 30.0,
+                    "{width}: below its field"
+                );
+            } else {
+                assert_eq!(rules.top(), compendium.top(), "{width}: side by side");
+                assert!(rules.left() > compendium.right(), "{width}: side by side");
+            }
+        }
+    }
+
+    #[test]
     fn a_vault_with_no_converted_notes_converts_without_asking() {
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, events, heard) = harness_on_profile_heard(dir.path(), 1280.0);
