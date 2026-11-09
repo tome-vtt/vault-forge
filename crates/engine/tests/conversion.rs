@@ -718,6 +718,25 @@ fn folders_differing_only_in_letter_case_keep_every_new_note() {
     }
 }
 
+#[test]
+fn folders_differing_only_in_letter_case_keep_every_new_note_in_a_vault_not_made_yet() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    let vault = setup.vault.join("New vault");
+    let mut profile = choose(&setup, &id, &["XPHB"]);
+    profile.vault = vault.clone();
+    profile.config.paths.compendium = "Compendium/".into();
+    profile.config.paths.rules = "compendium/".into();
+    setup.engine.send(Command::SaveProfile(profile));
+
+    let (_, converted, message) = convert(&setup, &id);
+
+    assert!(converted, "{message}");
+    assert!(vault.join("Compendium/XPHB.md").is_file());
+    assert!(vault.join("compendium/conditions.md").is_file());
+}
+
 #[cfg(unix)]
 #[test]
 fn counting_converted_notes_does_not_follow_a_symlink_loop() {
