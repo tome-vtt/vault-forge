@@ -3,15 +3,18 @@
 use std::path::PathBuf;
 
 use eframe::egui;
-use vault_forge_engine::{Command, ConverterConfig, Engine, Paths, Profile};
+use vault_forge_engine::{Command, ConvertedNotes, ConverterConfig, Engine, Paths, Profile};
 
-use crate::theme;
+use crate::{app::thousands, theme};
 
 /// The sections for one open profile, holding the folder names while they are being typed.
 pub struct SetupSections {
     pub vault: String,
     pub compendium: String,
     pub rules: String,
+    /// The notes an earlier conversion left, as read for this vault and these folders; `None`
+    /// until read, and again once a conversion ends.
+    pub notes: Option<((PathBuf, Paths), Option<ConvertedNotes>)>,
 }
 
 /// Picks one of the profile's settings out of its converter config, to change it.
@@ -28,6 +31,7 @@ impl SetupSections {
             vault: profile.vault.to_string_lossy().into_owned(),
             compendium: folder_name(&profile.config.paths.compendium),
             rules: folder_name(&profile.config.paths.rules),
+            notes: None,
         }
     }
 
@@ -37,7 +41,7 @@ impl SetupSections {
             ui,
             "Vault",
             "The Obsidian vault the notes go into. Only the two folders below are written.",
-            |ui| self.vault(ui, profile, &save),
+            |ui| self.vault(ui, engine, profile, &save),
         );
         ui.add_space(24.0);
         theme::section(
@@ -63,7 +67,13 @@ impl SetupSections {
         );
     }
 
-    fn vault(&mut self, ui: &mut egui::Ui, profile: &Profile, save: &impl Fn(Profile)) {
+    fn vault(
+        &mut self,
+        ui: &mut egui::Ui,
+        engine: &Engine,
+        profile: &Profile,
+        save: &impl Fn(Profile),
+    ) {
         let label = ui.label("Vault folder").id;
         let row = egui::vec2(ui.available_width(), 40.0);
         let layout = egui::Layout::right_to_left(egui::Align::Center);
@@ -89,6 +99,27 @@ impl SetupSections {
                 });
             }
         });
+        // Read once per vault and folders, since it walks them.
+        let read_for = (profile.vault.clone(), profile.config.paths.clone());
+        if self.notes.as_ref().is_none_or(|(key, _)| *key != read_for) {
+            self.notes = Some((read_for, engine.converted_notes(&profile.id)));
+        }
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(
+            |ui| match self.notes.as_ref().and_then(|(_, n)| n.as_ref()) {
+                Some(notes) => {
+                    theme::pill(ui, theme::Pill::Warn, "Has notes");
+                    ui.weak(format!(
+                        "{} notes from the last conversion. Converting again replaces them.",
+                        thousands(notes.notes)
+                    ));
+                }
+                None => {
+                    theme::pill(ui, theme::Pill::Neutral, "Empty");
+                    ui.weak("No converted notes in this vault yet.");
+                }
+            },
+        );
         ui.add_space(16.0);
         ui.columns(2, |columns| {
             let [left, right] = columns else {

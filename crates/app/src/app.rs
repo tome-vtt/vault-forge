@@ -216,6 +216,9 @@ impl App {
                     self.running = None;
                     self.ended = Some((id, converted, message));
                     self.last_run = None;
+                    if let Some(setup) = &mut self.setup {
+                        setup.notes = None;
+                    }
                 }
                 Event::NewerRelease {
                     version,
@@ -1264,6 +1267,47 @@ mod tests {
                 .is_none()
         );
         assert!(convert_sent(&heard));
+    }
+
+    #[test]
+    fn the_vault_folder_says_whether_the_vault_has_converted_notes_as_the_demo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        let vault = dir.path().join("vault");
+        let profile = harness.state().engine.profiles().remove(0);
+        let send = |harness: &Harness<'_, App>, vault: std::path::PathBuf| {
+            let profile = Profile {
+                vault,
+                ..profile.clone()
+            };
+            harness.state().engine.send(Command::SaveProfile(profile));
+        };
+        send(&harness, vault.clone());
+        harness.run();
+        harness.get_by_label("Empty");
+        harness.get_by_label("No converted notes in this vault yet.");
+
+        // A conversion that ends is read again.
+        std::fs::create_dir_all(vault.join("compendium")).unwrap();
+        std::fs::create_dir_all(vault.join("rules")).unwrap();
+        std::fs::write(vault.join("compendium/old.md"), "old").unwrap();
+        std::fs::write(vault.join("rules/older.md"), "older").unwrap();
+        let ended = Event::ConversionEnded {
+            id: profile.id.clone(),
+            converted: true,
+            message: "Converted.".into(),
+        };
+        events.send(ended).unwrap();
+        harness.run();
+        harness.get_by_label("Has notes");
+        harness.get_by_label("2 notes from the last conversion. Converting again replaces them.");
+        assert!(harness.query_by_label("Empty").is_none());
+
+        // So is another vault.
+        send(&harness, dir.path().join("other"));
+        harness.run();
+        harness.get_by_label("Empty");
+        assert!(harness.query_by_label("Has notes").is_none());
     }
 
     #[test]
