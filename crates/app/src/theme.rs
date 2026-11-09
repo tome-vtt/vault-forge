@@ -585,7 +585,7 @@ impl Icon {
                     painter.circle_stroke(at(8.0, 8.0), 5.5, stroke);
                     painter.line_segment([at(8.0, 7.2), at(8.0, 11.0)], stroke);
                     // The demo's dot is a round-capped 0.1px line: a 1.5px disc.
-                    painter.circle_filled(at(8.0, 5.05), 0.75, ICON_GREY);
+                    painter.circle_filled(at(8.0, 5.0), 0.75, ICON_GREY);
                 }
             }
         })

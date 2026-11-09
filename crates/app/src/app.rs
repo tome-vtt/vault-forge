@@ -1298,7 +1298,9 @@ mod tests {
         // A conversion that ends is read again.
         std::fs::create_dir_all(vault.join("compendium")).unwrap();
         std::fs::create_dir_all(vault.join("rules")).unwrap();
-        std::fs::write(vault.join("compendium/old.md"), "old").unwrap();
+        for n in 0..1000 {
+            std::fs::write(vault.join(format!("compendium/{n}.md")), "old").unwrap();
+        }
         std::fs::write(vault.join("rules/older.md"), "older").unwrap();
         let ended = Event::ConversionEnded {
             id: profile.id.clone(),
@@ -1308,7 +1310,8 @@ mod tests {
         events.send(ended).unwrap();
         harness.run();
         harness.get_by_label("Has notes");
-        harness.get_by_label("2 notes from the last conversion. Converting again replaces them.");
+        harness
+            .get_by_label("1,001 notes from the last conversion. Converting again replaces them.");
         assert!(harness.query_by_label("Empty").is_none());
 
         // So is another vault.
@@ -1324,15 +1327,26 @@ mod tests {
         for (width, stacked) in [(600.0, true), (601.0, false), (1280.0, false)] {
             let (mut harness, _events) =
                 harness_on_profile(dir.path().join(width.to_string()).as_path(), width);
+            // Tall enough that the folder fields are painted without scrolling.
+            harness.set_size(egui::vec2(width, 1600.0));
             harness.run();
             let compendium = harness.get_by_label("Compendium folder").rect();
             let rules = harness.get_by_label("Rules folder").rect();
             if stacked {
                 assert_eq!(rules.left(), compendium.left(), "{width}: one column");
-                assert!(
-                    rules.top() > compendium.bottom() + 30.0,
-                    "{width}: below its field"
-                );
+                // The demo's 16px between the Compendium field and the Rules label. The fields
+                // carry their labels' names, so the label is found as painted.
+                let label = painted(&harness)
+                    .iter()
+                    .find_map(|s| match s {
+                        egui::Shape::Text(t) if t.galley.text() == "Rules folder" => Some(t.pos.y),
+                        _ => None,
+                    })
+                    .expect("the Rules folder label");
+                // As the other screens space a field from the next label: 16 after egui's own.
+                let spacing = harness.ctx.global_style().spacing.item_spacing.y;
+                let gap = label - compendium.bottom() - spacing;
+                assert!((gap - 16.0).abs() <= 0.5, "{width}: gap is {gap}");
             } else {
                 assert_eq!(rules.top(), compendium.top(), "{width}: side by side");
                 assert!(rules.left() > compendium.right(), "{width}: side by side");
@@ -1488,6 +1502,8 @@ mod tests {
 
     /// The Engine's stand-in converter (crates/engine/tests/stand_in), built once per test run
     /// beside this test program, so a package-only run never finds it missing or out of date.
+    // ponytail: rewrites the binary the Engine's tests run; safe while `cargo test` runs test
+    // programs one at a time, give it its own --target-dir if a parallel runner is adopted.
     fn stand_in_converter() -> std::path::PathBuf {
         static BUILT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
         BUILT
@@ -2162,7 +2178,7 @@ mod tests {
                 "About",
                 &[
                     "circle 1.5 8.0,8.0 r5.5",
-                    "dot 8.0,5.0 r0.8",
+                    "dot 8.0,5.0 r0.75",
                     "line 1.5 8.0,7.2 8.0,11.0",
                 ],
             ),
@@ -2230,7 +2246,7 @@ mod tests {
                             format!("circle {} {} r{}", c.stroke.width, at(&c.center), c.radius)
                         }
                         egui::Shape::Circle(c) if c.fill == grey => {
-                            format!("dot {} r{:.1}", at(&c.center), c.radius)
+                            format!("dot {} r{}", at(&c.center), c.radius)
                         }
                         _ => continue,
                     };

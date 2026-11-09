@@ -121,30 +121,24 @@ impl SetupSections {
             },
         );
         ui.add_space(16.0);
-        let compendium = |ui: &mut egui::Ui, text: &mut String| {
-            folder(
-                ui,
-                "Compendium folder",
-                text,
-                |p| &mut p.compendium,
-                profile,
-                save,
-            );
-        };
-        let rules = |ui: &mut egui::Ui, text: &mut String| {
-            folder(ui, "Rules folder", text, |p| &mut p.rules, profile, save);
-        };
+        let fields: [(_, _, Field<Paths, String>); 2] = [
+            ("Compendium folder", &mut self.compendium, |p| {
+                &mut p.compendium
+            }),
+            ("Rules folder", &mut self.rules, |p| &mut p.rules),
+        ];
         if ui.ctx().content_rect().width() <= theme::PHONE {
-            compendium(ui, &mut self.compendium);
-            ui.add_space(16.0);
-            rules(ui, &mut self.rules);
+            for (i, (label, text, field)) in fields.into_iter().enumerate() {
+                if i > 0 {
+                    ui.add_space(16.0);
+                }
+                folder(ui, label, text, field, profile, save);
+            }
         } else {
             ui.columns(2, |columns| {
-                let [left, right] = columns else {
-                    return;
-                };
-                compendium(left, &mut self.compendium);
-                rules(right, &mut self.rules);
+                for (ui, (label, text, field)) in columns.iter_mut().zip(fields) {
+                    folder(ui, label, text, field, profile, save);
+                }
             });
         }
     }
