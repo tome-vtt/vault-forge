@@ -400,11 +400,19 @@ impl App {
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
             // Bottom up: About is the last row, Obsidian setup above it.
             let on_about = matches!(self.screen, Screen::About);
-            if theme::nav_row(ui, on_about, None, "About", "").clicked() {
+            if theme::nav_row(ui, on_about, Some(theme::Icon::Info), "About", "").clicked() {
                 self.go(Screen::About);
             }
             let on_setup = matches!(self.screen, Screen::ObsidianSetup);
-            if theme::nav_row(ui, on_setup, None, "Obsidian setup", "").clicked() {
+            if theme::nav_row(
+                ui,
+                on_setup,
+                Some(theme::Icon::Checklist),
+                "Obsidian setup",
+                "",
+            )
+            .clicked()
+            {
                 self.go(Screen::ObsidianSetup);
             }
             let margin = egui::Margin {
@@ -2129,26 +2137,63 @@ mod tests {
     }
 
     #[test]
-    fn profile_rows_start_with_a_folder_and_new_profile_with_a_plus_as_the_demo() {
+    fn every_sidebar_row_starts_with_the_demos_icon_rested_hovered_or_pressed() {
+        // The demo's SVGs in its 16px viewBox, 1.5px strokes; its 1px folder corner arcs are cut
+        // straight, and the i's dot is its round-capped 0.1px line.
+        let folder = "closed 1.5 2.5,4.5 3.5,3.5 6.5,3.5 8.0,5.0 12.5,5.0 13.5,6.0 13.5,12.0 \
+                      12.5,13.0 3.5,13.0 2.5,12.0";
+        let rows: [(&str, &str, &[&str]); 4] = [
+            ("Thursday 5e", "Thursday", &[folder]),
+            (
+                "New profile",
+                "New profile",
+                &["line 1.5 3.0,8.0 13.0,8.0", "line 1.5 8.0,3.0 8.0,13.0"],
+            ),
+            (
+                "Obsidian setup",
+                "Obsidian setup",
+                &[
+                    "closed 1.5 3.0,2.5 9.5,2.5 13.0,6.0 13.0,13.5 3.0,13.5",
+                    "open 1.5 5.5,9.0 7.3,10.8 10.5,7.5",
+                ],
+            ),
+            (
+                "About",
+                "About",
+                &[
+                    "circle 1.5 8.0,8.0 r5.5",
+                    "dot 8.0,5.0 r0.8",
+                    "line 1.5 8.0,7.2 8.0,11.0",
+                ],
+            ),
+        ];
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
-        // A hovered row keeps its layout, so its text does not jump.
-        for (theme, hover) in [
-            (Theme::Light, false),
-            (Theme::Dark, false),
-            (Theme::Dark, true),
+        let grey = egui::Color32::from_rgb(0x5d, 0x5f, 0x60);
+        // A hovered or pressed row keeps its layout, so its text does not jump.
+        for (theme, state) in [
+            (Theme::Light, "rested"),
+            (Theme::Dark, "rested"),
+            (Theme::Dark, "hovered"),
+            (Theme::Light, "pressed"),
         ] {
             harness.ctx.set_theme(theme);
-            for (label, text, plus) in [
-                ("Thursday 5e", "Thursday", false),
-                ("New profile", "New profile", true),
-            ] {
-                if hover {
-                    harness.get_by_label(label).hover();
+            for (label, text, icon) in rows {
+                let row = harness.get_by_label(label).rect();
+                let press = |pressed| egui::Event::PointerButton {
+                    pos: row.center(),
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                if state != "rested" {
+                    harness.hover_at(row.center());
+                }
+                if state == "pressed" {
+                    harness.event(press(true));
                 }
                 harness.run();
                 let shapes = painted(&harness);
-                let row = harness.get_by_label(label).rect();
                 // 10px padding, the 16px icon and a 10px gap, as the demo's .nav row.
                 let left = shapes
                     .iter()
@@ -2159,41 +2204,54 @@ mod tests {
                         _ => None,
                     })
                     .unwrap_or_else(|| panic!("no {text} in its row"));
-                assert!((left - 36.0).abs() < 0.5, "{label} text at {left}");
-                // The demo's icon: a 1.5px #5d5f60 stroke in the 16px square after the padding.
-                let icon = egui::Rect::from_min_size(
-                    egui::pos2(row.left() + 10.0, row.center().y - 8.0),
-                    egui::vec2(16.0, 16.0),
-                )
-                .expand(0.5);
-                let grey = egui::Color32::from_rgb(0x5d, 0x5f, 0x60);
-                let (mut lines, mut paths) = (0, 0);
+                assert!((left - 36.0).abs() < 0.5, "{label} {state} text at {left}");
+                // Every grey mark in the 16px square after the padding, in the demo's points.
+                let origin = egui::pos2(row.left() + 10.0, row.center().y - 8.0);
+                let square = egui::Rect::from_min_size(origin, egui::vec2(16.0, 16.0)).expand(1.0);
+                let at = |p: &egui::Pos2| format!("{:.1},{:.1}", p.x - origin.x, p.y - origin.y);
+                let line = |points: &[egui::Pos2]| points.iter().map(at).collect::<Vec<_>>();
+                let mut drawn = Vec::new();
                 for shape in &shapes {
-                    match shape {
-                        egui::Shape::LineSegment { points, stroke }
-                            if points.iter().all(|p| icon.contains(*p))
-                                && stroke.width == 1.5
-                                && stroke.color == grey =>
-                        {
-                            lines += 1
+                    if !square.contains_rect(shape.visual_bounding_rect()) {
+                        continue;
+                    }
+                    let mark = match shape {
+                        egui::Shape::LineSegment { points, stroke } if stroke.color == grey => {
+                            format!("line {} {}", stroke.width, line(points).join(" "))
                         }
                         egui::Shape::Path(path)
-                            if path.closed
-                                && path.points.iter().all(|p| icon.contains(*p))
-                                && path.stroke.width == 1.5
-                                && path.stroke.color == egui::epaint::ColorMode::Solid(grey) =>
+                            if path.stroke.color == egui::epaint::ColorMode::Solid(grey) =>
                         {
-                            paths += 1
+                            let kind = if path.closed { "closed" } else { "open" };
+                            let points = line(&path.points).join(" ");
+                            format!("{kind} {} {points}", path.stroke.width)
                         }
-                        // The demo's rows have no border, hovered or not.
-                        egui::Shape::Rect(frame) if frame.rect.intersects(row.shrink(1.0)) => {
-                            assert_eq!(frame.stroke.width, 0.0, "{label} border in {theme:?}");
+                        egui::Shape::Circle(c) if c.stroke.color == grey => {
+                            format!("circle {} {} r{}", c.stroke.width, at(&c.center), c.radius)
                         }
-                        _ => {}
+                        egui::Shape::Circle(c) if c.fill == grey => {
+                            format!("dot {} r{:.1}", at(&c.center), c.radius)
+                        }
+                        _ => continue,
+                    };
+                    drawn.push(mark);
+                }
+                drawn.sort();
+                assert_eq!(drawn, icon, "{label} {state} in {theme:?}");
+                // The demo's rows have no border, rested, hovered or pressed.
+                for shape in &shapes {
+                    if let egui::Shape::Rect(frame) = shape
+                        && frame.rect.intersects(row.shrink(1.0))
+                    {
+                        assert_eq!(frame.stroke.width, 0.0, "{label} {state} border");
                     }
                 }
-                let drawn = if plus { (2, 0) } else { (0, 1) };
-                assert_eq!((lines, paths), drawn, "{label} in {theme:?}");
+                if state == "pressed" {
+                    // Let go away from the row, so nothing is clicked.
+                    harness.hover_at(egui::pos2(900.0, 700.0));
+                    harness.event(press(false));
+                    harness.run();
+                }
             }
         }
     }
