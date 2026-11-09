@@ -1478,18 +1478,34 @@ mod tests {
         url
     }
 
-    /// The Engine's stand-in converter (crates/engine/tests/stand_in), which the workspace's
-    /// `cargo test` builds beside this test program for the Engine's own tests.
+    /// The Engine's stand-in converter (crates/engine/tests/stand_in), built once per test run
+    /// beside this test program, so a package-only run never finds it missing or out of date.
     fn stand_in_converter() -> std::path::PathBuf {
-        let exe = std::env::current_exe().unwrap();
-        let name = format!("stand-in-converter{}", std::env::consts::EXE_SUFFIX);
-        let path = exe.parent().unwrap().parent().unwrap().join(name);
-        assert!(
-            path.is_file(),
-            "{} is missing: run the whole workspace's cargo test, which builds it",
-            path.display()
-        );
-        path
+        static BUILT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+        BUILT
+            .get_or_init(|| {
+                let exe = std::env::current_exe().unwrap();
+                // target/<profile>/deps/<test program>
+                let dir = exe.parent().unwrap().parent().unwrap();
+                let profile = match dir.file_name().unwrap().to_str().unwrap() {
+                    "debug" => "dev",
+                    other => other,
+                };
+                let build = "build -p vault-forge-engine --bin stand-in-converter";
+                let built = std::process::Command::new(env!("CARGO"))
+                    .args(build.split(' '))
+                    .args(["--quiet", "--profile", profile, "--target-dir"])
+                    .arg(dir.parent().unwrap())
+                    .status()
+                    .is_ok_and(|s| s.success());
+                assert!(
+                    built,
+                    "could not build the stand-in converter: run cargo {build}"
+                );
+                let name = format!("stand-in-converter{}", std::env::consts::EXE_SUFFIX);
+                dir.join(name)
+            })
+            .clone()
     }
 
     /// The app on one profile the Engine has just converted: the stand-in converter run on
