@@ -695,7 +695,8 @@ fn folders_differing_only_in_letter_case_keep_every_new_note() {
     let address = serve_game_data();
     let setup = setup(&address);
     let id = setup.engine.profiles()[0].id.clone();
-    // One folder on Windows and macOS, two on Linux; the notes stay either way.
+    // One folder on a disk that ignores letter case, two on one that does not; the notes stay
+    // either way.
     for (compendium, rules) in [("Compendium/", "compendium/"), ("Notes/", "notes/Rules/")] {
         let mut profile = choose(&setup, &id, &["XPHB"]);
         profile.config.paths.compendium = compendium.into();
@@ -717,6 +718,25 @@ fn folders_differing_only_in_letter_case_keep_every_new_note() {
     }
 }
 
+#[test]
+fn folders_differing_only_in_letter_case_keep_every_new_note_in_a_vault_not_made_yet() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    let vault = setup.vault.join("New vault");
+    let mut profile = choose(&setup, &id, &["XPHB"]);
+    profile.vault = vault.clone();
+    profile.config.paths.compendium = "Compendium/".into();
+    profile.config.paths.rules = "compendium/".into();
+    setup.engine.send(Command::SaveProfile(profile));
+
+    let (_, converted, message) = convert(&setup, &id);
+
+    assert!(converted, "{message}");
+    assert!(vault.join("Compendium/XPHB.md").is_file());
+    assert!(vault.join("compendium/conditions.md").is_file());
+}
+
 #[cfg(unix)]
 #[test]
 fn counting_converted_notes_does_not_follow_a_symlink_loop() {
@@ -730,6 +750,33 @@ fn counting_converted_notes_does_not_follow_a_symlink_loop() {
     let notes = setup.engine.converted_notes(&id).unwrap();
 
     assert_eq!(notes.notes, 3, "two notes and the link, not followed");
+}
+
+#[cfg(unix)]
+#[test]
+fn the_progress_count_does_not_follow_a_symlink_loop_in_the_holding_folder() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    choose(&setup, &id, &["XPHB", "HANG"]);
+    setup.engine.send(Command::Convert(id.clone()));
+    let counted = |compendium: usize| {
+        move |e: &Event| {
+            matches!(e, Event::ConversionProgress { written, .. }
+                if *written == [("compendium".to_owned(), compendium), ("rules".to_owned(), 1)])
+        }
+    };
+    wait(&setup.events, counted(2));
+
+    let compendium = setup.vault.join(".vault-forge-holding/compendium");
+    std::os::unix::fs::symlink(&compendium, compendium.join("loop")).unwrap();
+
+    // Two notes and the link, which is not followed into a folder of its own.
+    wait(&setup.events, counted(3));
+    setup.engine.send(Command::CancelConversion(id));
+    wait(&setup.events, |e| {
+        matches!(e, Event::ConversionEnded { .. })
+    });
 }
 
 /// The notes in the vault's compendium and rules folders.
