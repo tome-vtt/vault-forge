@@ -81,7 +81,7 @@ impl Conversion {
         let holding = holding_folder::create(&profile.vault)
             .map_err(|e| format!("Could not make the holding folder in the vault: {e}"))?;
         // Probed only now: the holding folder is the one entry sure to be on the vault's own disk.
-        let folders = replaced(checked, case_blind(&holding));
+        let folders = replaced(checked, case_blind([holding.clone()]));
         let started = converter::start(&self.converter, &config, profile.rules, &data, &holding);
         let (child, lines) = started.map_err(|e| {
             let _ = holding_folder::discard(&holding);
@@ -286,12 +286,12 @@ fn replaced([compendium, rules]: [String; 2], case_blind: bool) -> Vec<String> {
     }
 }
 
-/// Whether the disk holding `path`, an existing entry, ignores letter case in names, as most
-/// Windows and macOS disks do and a FAT, exFAT or NTFS disk does under Linux: its name in other
-/// letter case is found, and is not listed as an entry of its own. With nothing to try, such as
-/// a name without letters, it goes by the platform.
-fn case_blind(path: &Path) -> bool {
-    let probe = || {
+/// Whether the disk holding `entries`, existing entries listed by their own names, ignores letter
+/// case in names, as most Windows and macOS disks do and a FAT, exFAT or NTFS disk does under
+/// Linux: the first entry whose name has letters is found under its name in other letter case,
+/// which is not listed as an entry of its own. With nothing to try, it goes by the platform.
+fn case_blind(entries: impl IntoIterator<Item = PathBuf>) -> bool {
+    let probe = |path: PathBuf| {
         let name = path.file_name()?.to_str()?;
         let other = match name.to_ascii_lowercase() {
             lower if lower != name => lower,
@@ -300,7 +300,7 @@ fn case_blind(path: &Path) -> bool {
         if other == name {
             return None;
         }
-        fs::symlink_metadata(path).ok()?;
+        fs::symlink_metadata(&path).ok()?;
         let parent = path.parent()?;
         let listed = fs::read_dir(parent)
             .ok()?
@@ -308,7 +308,8 @@ fn case_blind(path: &Path) -> bool {
             .any(|e| e.file_name() == other.as_str());
         Some(!listed && fs::symlink_metadata(parent.join(other)).is_ok())
     };
-    probe().unwrap_or(cfg!(any(windows, target_os = "macos")))
+    let found = entries.into_iter().find_map(probe);
+    found.unwrap_or(cfg!(any(windows, target_os = "macos")))
 }
 
 /// The notes in the holding folder's `folders` so far, by vault folder (`compendium/bestiary`);
@@ -368,12 +369,10 @@ fn walk(dir: &Path, notes: &mut usize, newest: &mut SystemTime) {
 // thousand notes makes Convert pause.
 pub(crate) fn converted_notes(profile: &Profile) -> Option<ConvertedNotes> {
     let checked = checked_folders(profile).ok()?;
-    // With no holding folder between conversions, a folder that is there is probed instead.
-    let there = checked
-        .iter()
-        .map(|f| profile.vault.join(f))
-        .find(|f| f.exists());
-    let folders = replaced(checked, there.is_some_and(|f| case_blind(&f)));
+    // With no holding folder between conversions, the vault's own entries are probed.
+    // ponytail: a disk mounted inside the vault is not probed; only the note count is at stake.
+    let entries = fs::read_dir(&profile.vault).into_iter().flatten().flatten();
+    let folders = replaced(checked, case_blind(entries.map(|e| e.path())));
     let (mut notes, mut written) = (0, SystemTime::UNIX_EPOCH);
     for folder in &folders {
         walk(&profile.vault.join(folder), &mut notes, &mut written);
@@ -408,7 +407,7 @@ mod tests {
 
         // The runners' own disks: case-blind on Windows and macOS, case-sensitive on Linux.
         assert_eq!(
-            case_blind(&holding),
+            case_blind([holding]),
             cfg!(any(windows, target_os = "macos"))
         );
     }
