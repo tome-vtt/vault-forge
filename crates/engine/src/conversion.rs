@@ -209,26 +209,21 @@ fn ended(
         _ if cancelled => (false, CANCELLED.to_owned(), None, false),
         Some(0) => match swap() {
             Ok(()) => (true, explain(Some(0)), None, false),
-            Err(failed) if failed.put_back => (
-                false,
-                format!(
-                    "Could not put the notes into the vault ({}), so it was not changed.",
+            Err(failed) => {
+                let keep = !failed.put_back;
+                let tail = match keep {
+                    true => format!(
+                        "and some of your old notes could not be put back: they are in {}",
+                        holding.display()
+                    ),
+                    false => "so it was not changed".into(),
+                };
+                let message = format!(
+                    "Could not put the notes into the vault ({}), {tail}.",
                     failed.error
-                ),
-                Some(Fix::Vault),
-                false,
-            ),
-            Err(failed) => (
-                false,
-                format!(
-                    "Could not put the notes into the vault ({}), and some of your old notes \
-                     could not be put back: they are in {}.",
-                    failed.error,
-                    holding.display()
-                ),
-                Some(Fix::Vault),
-                true,
-            ),
+                );
+                (false, message, Some(Fix::Vault), keep)
+            }
         },
         Some(2) => (false, explain(code), Some(Fix::DownloadAddress), false),
         code => (false, explain(code), None, false),
@@ -293,19 +288,18 @@ fn folders(profile: &Profile) -> Result<Vec<String>, String> {
 fn case_blind(vault: &Path) -> bool {
     let found_otherwise = |path: PathBuf| {
         let name = path.file_name()?.to_str()?;
-        let other: String = name
-            .chars()
-            .map(|c| match c.is_ascii_uppercase() {
-                true => c.to_ascii_lowercase(),
-                false => c.to_ascii_uppercase(),
-            })
-            .collect();
+        let other = match name.to_ascii_lowercase() {
+            lower if lower != name => lower,
+            _ => name.to_ascii_uppercase(),
+        };
+        // A vault not made yet tells nothing.
+        fs::symlink_metadata(&path).ok()?;
         let parent = path.parent()?;
         let mut names = fs::read_dir(parent).ok()?.flatten();
         // Both names listed are two entries, which tells nothing.
         match other == name || names.any(|e| e.file_name() == other.as_str()) {
             true => None,
-            false => Some(parent.join(other).exists()),
+            false => Some(fs::symlink_metadata(parent.join(other)).is_ok()),
         }
     };
     let entries = fs::read_dir(vault).into_iter().flatten().flatten();
