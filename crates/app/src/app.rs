@@ -216,6 +216,9 @@ impl App {
                     self.running = None;
                     self.ended = Some((id, converted, message));
                     self.last_run = None;
+                    if let Some(setup) = &mut self.setup {
+                        setup.notes = None;
+                    }
                 }
                 Event::NewerRelease {
                     version,
@@ -397,11 +400,19 @@ impl App {
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
             // Bottom up: About is the last row, Obsidian setup above it.
             let on_about = matches!(self.screen, Screen::About);
-            if theme::nav_row(ui, on_about, None, "About", "").clicked() {
+            if theme::nav_row(ui, on_about, Some(theme::Icon::Info), "About", "").clicked() {
                 self.go(Screen::About);
             }
             let on_setup = matches!(self.screen, Screen::ObsidianSetup);
-            if theme::nav_row(ui, on_setup, None, "Obsidian setup", "").clicked() {
+            if theme::nav_row(
+                ui,
+                on_setup,
+                Some(theme::Icon::Checklist),
+                "Obsidian setup",
+                "",
+            )
+            .clicked()
+            {
                 self.go(Screen::ObsidianSetup);
             }
             let margin = egui::Margin {
@@ -1267,6 +1278,83 @@ mod tests {
     }
 
     #[test]
+    fn the_vault_folder_says_whether_the_vault_has_converted_notes_as_the_demo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        let vault = dir.path().join("vault");
+        let profile = harness.state().engine.profiles().remove(0);
+        let send = |harness: &Harness<'_, App>, vault: std::path::PathBuf| {
+            let profile = Profile {
+                vault,
+                ..profile.clone()
+            };
+            harness.state().engine.send(Command::SaveProfile(profile));
+        };
+        send(&harness, vault.clone());
+        harness.run();
+        harness.get_by_label("Empty");
+        harness.get_by_label("No converted notes in this vault yet.");
+
+        // A conversion that ends is read again.
+        std::fs::create_dir_all(vault.join("compendium")).unwrap();
+        std::fs::create_dir_all(vault.join("rules")).unwrap();
+        for n in 0..1000 {
+            std::fs::write(vault.join(format!("compendium/{n}.md")), "old").unwrap();
+        }
+        std::fs::write(vault.join("rules/older.md"), "older").unwrap();
+        let ended = Event::ConversionEnded {
+            id: profile.id.clone(),
+            converted: true,
+            message: "Converted.".into(),
+        };
+        events.send(ended).unwrap();
+        harness.run();
+        harness.get_by_label("Has notes");
+        harness
+            .get_by_label("1,001 notes from the last conversion. Converting again replaces them.");
+        assert!(harness.query_by_label("Empty").is_none());
+
+        // So is another vault.
+        send(&harness, dir.path().join("other"));
+        harness.run();
+        harness.get_by_label("Empty");
+        assert!(harness.query_by_label("Has notes").is_none());
+    }
+
+    #[test]
+    fn the_compendium_and_rules_folders_stack_at_phone_width_as_the_demo() {
+        let dir = tempfile::tempdir().unwrap();
+        for (width, stacked) in [(600.0, true), (601.0, false), (1280.0, false)] {
+            let (mut harness, _events) =
+                harness_on_profile(dir.path().join(width.to_string()).as_path(), width);
+            // Tall enough that the folder fields are painted without scrolling.
+            harness.set_size(egui::vec2(width, 1600.0));
+            harness.run();
+            let compendium = harness.get_by_label("Compendium folder").rect();
+            let rules = harness.get_by_label("Rules folder").rect();
+            if stacked {
+                assert_eq!(rules.left(), compendium.left(), "{width}: one column");
+                // The demo's 16px between the Compendium field and the Rules label. The fields
+                // carry their labels' names, so the label is found as painted.
+                let label = painted(&harness)
+                    .iter()
+                    .find_map(|s| match s {
+                        egui::Shape::Text(t) if t.galley.text() == "Rules folder" => Some(t.pos.y),
+                        _ => None,
+                    })
+                    .expect("the Rules folder label");
+                // As the other screens space a field from the next label: 16 after egui's own.
+                let spacing = harness.ctx.global_style().spacing.item_spacing.y;
+                let gap = label - compendium.bottom() - spacing;
+                assert!((gap - 16.0).abs() <= 0.5, "{width}: gap is {gap}");
+            } else {
+                assert_eq!(rules.top(), compendium.top(), "{width}: side by side");
+                assert!(rules.left() > compendium.right(), "{width}: side by side");
+            }
+        }
+    }
+
+    #[test]
     fn a_vault_with_no_converted_notes_converts_without_asking() {
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, events, heard) = harness_on_profile_heard(dir.path(), 1280.0);
@@ -1412,18 +1500,36 @@ mod tests {
         url
     }
 
-    /// The Engine's stand-in converter (crates/engine/tests/stand_in), which the workspace's
-    /// `cargo test` builds beside this test program for the Engine's own tests.
+    /// The Engine's stand-in converter (crates/engine/tests/stand_in), built once per test run
+    /// beside this test program, so a package-only run never finds it missing or out of date.
+    // ponytail: rewrites the binary the Engine's tests run; safe while `cargo test` runs test
+    // programs one at a time, give it its own --target-dir if a parallel runner is adopted.
     fn stand_in_converter() -> std::path::PathBuf {
-        let exe = std::env::current_exe().unwrap();
-        let name = format!("stand-in-converter{}", std::env::consts::EXE_SUFFIX);
-        let path = exe.parent().unwrap().parent().unwrap().join(name);
-        assert!(
-            path.is_file(),
-            "{} is missing: run the whole workspace's cargo test, which builds it",
-            path.display()
-        );
-        path
+        static BUILT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+        BUILT
+            .get_or_init(|| {
+                let exe = std::env::current_exe().unwrap();
+                // target/<profile>/deps/<test program>
+                let dir = exe.parent().unwrap().parent().unwrap();
+                let profile = match dir.file_name().unwrap().to_str().unwrap() {
+                    "debug" => "dev",
+                    other => other,
+                };
+                let build = "build -p vault-forge-engine --bin stand-in-converter";
+                let built = std::process::Command::new(env!("CARGO"))
+                    .args(build.split(' '))
+                    .args(["--quiet", "--profile", profile, "--target-dir"])
+                    .arg(dir.parent().unwrap())
+                    .status()
+                    .is_ok_and(|s| s.success());
+                assert!(
+                    built,
+                    "could not build the stand-in converter: run cargo {build}"
+                );
+                let name = format!("stand-in-converter{}", std::env::consts::EXE_SUFFIX);
+                dir.join(name)
+            })
+            .clone()
     }
 
     /// The app on one profile the Engine has just converted: the stand-in converter run on
@@ -2047,26 +2153,63 @@ mod tests {
     }
 
     #[test]
-    fn profile_rows_start_with_a_folder_and_new_profile_with_a_plus_as_the_demo() {
+    fn every_sidebar_row_starts_with_the_demos_icon_rested_hovered_or_pressed() {
+        // The demo's SVGs in its 16px viewBox, 1.5px strokes; its 1px folder corner arcs are cut
+        // straight, and the i's dot is its round-capped 0.1px line.
+        let folder = "closed 1.5 2.5,4.5 3.5,3.5 6.5,3.5 8.0,5.0 12.5,5.0 13.5,6.0 13.5,12.0 \
+                      12.5,13.0 3.5,13.0 2.5,12.0";
+        let rows: [(&str, &str, &[&str]); 4] = [
+            ("Thursday 5e", "Thursday", &[folder]),
+            (
+                "New profile",
+                "New profile",
+                &["line 1.5 3.0,8.0 13.0,8.0", "line 1.5 8.0,3.0 8.0,13.0"],
+            ),
+            (
+                "Obsidian setup",
+                "Obsidian setup",
+                &[
+                    "closed 1.5 3.0,2.5 9.5,2.5 13.0,6.0 13.0,13.5 3.0,13.5",
+                    "open 1.5 5.5,9.0 7.3,10.8 10.5,7.5",
+                ],
+            ),
+            (
+                "About",
+                "About",
+                &[
+                    "circle 1.5 8.0,8.0 r5.5",
+                    "dot 8.0,5.0 r0.75",
+                    "line 1.5 8.0,7.2 8.0,11.0",
+                ],
+            ),
+        ];
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
-        // A hovered row keeps its layout, so its text does not jump.
-        for (theme, hover) in [
-            (Theme::Light, false),
-            (Theme::Dark, false),
-            (Theme::Dark, true),
+        let grey = egui::Color32::from_rgb(0x5d, 0x5f, 0x60);
+        // A hovered or pressed row keeps its layout, so its text does not jump.
+        for (theme, state) in [
+            (Theme::Light, "rested"),
+            (Theme::Dark, "rested"),
+            (Theme::Dark, "hovered"),
+            (Theme::Light, "pressed"),
         ] {
             harness.ctx.set_theme(theme);
-            for (label, text, plus) in [
-                ("Thursday 5e", "Thursday", false),
-                ("New profile", "New profile", true),
-            ] {
-                if hover {
-                    harness.get_by_label(label).hover();
+            for (label, text, icon) in rows {
+                let row = harness.get_by_label(label).rect();
+                let press = |pressed| egui::Event::PointerButton {
+                    pos: row.center(),
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                if state != "rested" {
+                    harness.hover_at(row.center());
+                }
+                if state == "pressed" {
+                    harness.event(press(true));
                 }
                 harness.run();
                 let shapes = painted(&harness);
-                let row = harness.get_by_label(label).rect();
                 // 10px padding, the 16px icon and a 10px gap, as the demo's .nav row.
                 let left = shapes
                     .iter()
@@ -2077,41 +2220,54 @@ mod tests {
                         _ => None,
                     })
                     .unwrap_or_else(|| panic!("no {text} in its row"));
-                assert!((left - 36.0).abs() < 0.5, "{label} text at {left}");
-                // The demo's icon: a 1.5px #5d5f60 stroke in the 16px square after the padding.
-                let icon = egui::Rect::from_min_size(
-                    egui::pos2(row.left() + 10.0, row.center().y - 8.0),
-                    egui::vec2(16.0, 16.0),
-                )
-                .expand(0.5);
-                let grey = egui::Color32::from_rgb(0x5d, 0x5f, 0x60);
-                let (mut lines, mut paths) = (0, 0);
+                assert!((left - 36.0).abs() < 0.5, "{label} {state} text at {left}");
+                // Every grey mark in the 16px square after the padding, in the demo's points.
+                let origin = egui::pos2(row.left() + 10.0, row.center().y - 8.0);
+                let square = egui::Rect::from_min_size(origin, egui::vec2(16.0, 16.0)).expand(1.0);
+                let at = |p: &egui::Pos2| format!("{:.1},{:.1}", p.x - origin.x, p.y - origin.y);
+                let line = |points: &[egui::Pos2]| points.iter().map(at).collect::<Vec<_>>();
+                let mut drawn = Vec::new();
                 for shape in &shapes {
-                    match shape {
-                        egui::Shape::LineSegment { points, stroke }
-                            if points.iter().all(|p| icon.contains(*p))
-                                && stroke.width == 1.5
-                                && stroke.color == grey =>
-                        {
-                            lines += 1
+                    if !square.contains_rect(shape.visual_bounding_rect()) {
+                        continue;
+                    }
+                    let mark = match shape {
+                        egui::Shape::LineSegment { points, stroke } if stroke.color == grey => {
+                            format!("line {} {}", stroke.width, line(points).join(" "))
                         }
                         egui::Shape::Path(path)
-                            if path.closed
-                                && path.points.iter().all(|p| icon.contains(*p))
-                                && path.stroke.width == 1.5
-                                && path.stroke.color == egui::epaint::ColorMode::Solid(grey) =>
+                            if path.stroke.color == egui::epaint::ColorMode::Solid(grey) =>
                         {
-                            paths += 1
+                            let kind = if path.closed { "closed" } else { "open" };
+                            let points = line(&path.points).join(" ");
+                            format!("{kind} {} {points}", path.stroke.width)
                         }
-                        // The demo's rows have no border, hovered or not.
-                        egui::Shape::Rect(frame) if frame.rect.intersects(row.shrink(1.0)) => {
-                            assert_eq!(frame.stroke.width, 0.0, "{label} border in {theme:?}");
+                        egui::Shape::Circle(c) if c.stroke.color == grey => {
+                            format!("circle {} {} r{}", c.stroke.width, at(&c.center), c.radius)
                         }
-                        _ => {}
+                        egui::Shape::Circle(c) if c.fill == grey => {
+                            format!("dot {} r{}", at(&c.center), c.radius)
+                        }
+                        _ => continue,
+                    };
+                    drawn.push(mark);
+                }
+                drawn.sort();
+                assert_eq!(drawn, icon, "{label} {state} in {theme:?}");
+                // The demo's rows have no border, rested, hovered or pressed.
+                for shape in &shapes {
+                    if let egui::Shape::Rect(frame) = shape
+                        && frame.rect.intersects(row.shrink(1.0))
+                    {
+                        assert_eq!(frame.stroke.width, 0.0, "{label} {state} border");
                     }
                 }
-                let drawn = if plus { (2, 0) } else { (0, 1) };
-                assert_eq!((lines, paths), drawn, "{label} in {theme:?}");
+                if state == "pressed" {
+                    // Let go away from the row, so nothing is clicked.
+                    harness.hover_at(egui::pos2(900.0, 700.0));
+                    harness.event(press(false));
+                    harness.run();
+                }
             }
         }
     }

@@ -525,6 +525,10 @@ fn ring_corners(response: &egui::Response, corners: CornerRadius) {
 pub enum Icon {
     Folder,
     Plus,
+    /// A page with a tick, for Obsidian setup.
+    Checklist,
+    /// A circled i, for About.
+    Info,
 }
 
 /// The demo paints its sidebar icons in this grey in both appearances.
@@ -561,6 +565,27 @@ impl Icon {
                         points.map(|(x, y)| at(x, y)).to_vec(),
                         stroke,
                     ));
+                }
+                Icon::Checklist => {
+                    let page = [
+                        (3.0, 2.5),
+                        (9.5, 2.5),
+                        (13.0, 6.0),
+                        (13.0, 13.5),
+                        (3.0, 13.5),
+                    ];
+                    painter.add(egui::Shape::closed_line(
+                        page.map(|(x, y)| at(x, y)).to_vec(),
+                        stroke,
+                    ));
+                    let tick = [at(5.5, 9.0), at(7.3, 10.8), at(10.5, 7.5)];
+                    painter.add(egui::Shape::line(tick.to_vec(), stroke));
+                }
+                Icon::Info => {
+                    painter.circle_stroke(at(8.0, 8.0), 5.5, stroke);
+                    painter.line_segment([at(8.0, 7.2), at(8.0, 11.0)], stroke);
+                    // The demo's dot is a round-capped 0.1px line: a 1.5px disc.
+                    painter.circle_filled(at(8.0, 5.0), 0.75, ICON_GREY);
                 }
             }
         })
