@@ -18,7 +18,7 @@ winresource = { version = "0.1.34", default-features = false }
 [dev-dependencies]
 egui_kittest = "0.37.0"
 tempfile = "3.27.0"
-zip = { version = "9.1.3", default-features = false }
+zip = { version = "9.4.1", default-features = false }
 
 # The OS colour scheme on Linux, where the window layer does not report it.
 [target.'cfg(target_os = "linux")'.dependencies]
