@@ -333,7 +333,7 @@ fn images(profile: &Profile) -> Option<&str> {
 
 /// An address as the profile saves it: trimmed, with a GitHub repository page turned into its zip
 /// download, so the download and the one-copy-per-address rule see one form. Others stay as typed.
-fn download_address(address: &str) -> String {
+pub fn download_address(address: &str) -> String {
     let address = address.trim();
     let scheme = if address.starts_with("http://") {
         "http://"

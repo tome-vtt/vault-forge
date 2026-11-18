@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
-use vault_forge_engine::{Command, DataState, Engine, Event, Fix, ProfileDraft, Rules};
+use vault_forge_engine::{Command, DataState, Engine, Event, Fix, Profile, ProfileDraft, Rules};
 
 /// Serves one game data archive at every path.
 fn serve_game_data() -> String {
@@ -413,12 +413,24 @@ fn the_game_data_a_conversion_reads_stays_until_it_ends() {
         );
     };
 
+    // The address is matched as it would be saved, not as typed.
+    refused(Command::DownloadGameData(Profile {
+        address: format!(" {address} "),
+        ..second.clone()
+    }));
     refused(Command::DownloadGameData(second));
     refused(Command::DeleteProfile(first.clone()));
     let profiles = setup.engine.profiles().into_iter();
     let mut moved = profiles.into_iter().find(|p| p.id == first).unwrap();
+    let same = Profile {
+        address: format!(" {address} "),
+        ..moved.clone()
+    };
     moved.address = "http://127.0.0.1:1/other.zip".into();
     refused(Command::SaveProfile(moved));
+    setup.engine.send(Command::SaveProfile(same));
+    let reply = setup.events.recv_timeout(Duration::from_secs(30)).unwrap();
+    assert!(matches!(reply, Event::ProfileSaved(_)), "{reply:?}");
 
     setup.engine.send(Command::CancelConversion(first));
     wait(&setup.events, |e| {

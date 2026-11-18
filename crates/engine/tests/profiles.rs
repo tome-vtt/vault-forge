@@ -531,6 +531,7 @@ fn other_addresses_save_as_typed() {
         "https://github.com/owner/repo/releases",
         "https://github.com/owner",
         "https://github.com/owner/repo#readme",
+        "https://github.com/owner/repo?tab=readme",
         "https://github.com/owner/repo/tree",
         "https://example.com/owner/repo",
         "http://127.0.0.1:1/data.zip",
@@ -570,4 +571,18 @@ fn a_page_link_and_its_zip_link_are_one_address() {
         failed(&events),
         ["That address is used for game data, so it can't be book images."]
     );
+}
+
+#[test]
+fn a_stored_zip_address_loads_as_it_was() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let thursday = create(&engine, &events, "Thursday");
+    drop(engine);
+    let zip = "https://github.com/owner/repo/archive/refs/heads/main.zip";
+    hand_edit(dir.path(), &thursday.id, "address", zip);
+
+    let (engine, _events) = start(dir.path());
+
+    assert_eq!(engine.profiles()[0].address, zip);
 }
