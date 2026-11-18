@@ -435,6 +435,43 @@ fn convert_waits_for_switched_off_images_to_stop_downloading() {
 }
 
 #[test]
+fn convert_is_allowed_again_once_switched_off_images_have_stopped() {
+    let server = Server::start();
+    let address = server.put("/data.zip", game_data(1, 0));
+    let images = format!("{}/endless.zip", server.url);
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Thursday", &address);
+    engine.send(Command::DownloadGameData(profile.clone()));
+    wait(&events, &address, ready);
+    let profile = Profile {
+        images: true,
+        images_address: images.clone(),
+        ..profile
+    };
+    engine.send(Command::DownloadImages(profile.clone()));
+    wait(
+        &events,
+        &images,
+        |s| matches!(s, DataState::Downloading { bytes, .. } if *bytes > 0),
+    );
+    engine.send(Command::SaveProfile(Profile {
+        images: false,
+        ..profile.clone()
+    }));
+    wait(&events, &images, |s| *s == DataState::Stopping);
+    wait(&events, &images, |_| true);
+
+    engine.send(Command::Convert(profile.id));
+
+    let refused = events.try_iter().find_map(|e| match e {
+        Event::Failed(message) => Some(message),
+        _ => None,
+    });
+    assert_ne!(refused.as_deref(), Some("Wait for the download to finish."));
+}
+
+#[test]
 fn convert_is_refused_while_the_profiles_game_data_is_downloading() {
     let server = Server::start();
     let address = format!("{}/stalled.zip", server.url);
