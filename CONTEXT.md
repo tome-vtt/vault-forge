@@ -18,7 +18,7 @@ How the app looks: System, which follows the operating system's light or dark lo
 _Avoid_: theme (for the user's choice), skin, mode
 
 **Game data**:
-The 5eTools or Pf2eTools data a profile reads its books from, downloaded from an address the user pastes.
+The 5eTools or Pf2eTools data a profile reads its books from, downloaded from an address the user pastes: a link to a zip file, or a GitHub repository page, which the profile saves as that repository's zip download.
 _Avoid_: source data, data folder, dataset
 
 **Data cache**:

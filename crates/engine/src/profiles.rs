@@ -167,8 +167,8 @@ impl Profiles {
             return Err("A profile needs a name.".into());
         }
         let mut profile = Profile {
-            address: profile.address.trim().into(),
-            images_address: profile.images_address.trim().into(),
+            address: download_address(&profile.address),
+            images_address: download_address(&profile.images_address),
             vault: profile
                 .vault
                 .to_str()
@@ -327,6 +327,39 @@ impl Profiles {
 fn images(profile: &Profile) -> Option<&str> {
     let address = profile.images_address.as_str();
     (!address.is_empty()).then_some(address)
+}
+
+/// An address as the profile saves it: trimmed, with a GitHub repository page turned into its zip
+/// download, so the download and the one-copy-per-address rule see one form. Others stay as typed.
+pub fn download_address(address: &str) -> String {
+    let address = address.trim();
+    let scheme = if address.starts_with("http://") {
+        "http://"
+    } else {
+        "https://"
+    };
+    let Some(path) = address
+        .strip_prefix(scheme)
+        .and_then(|a| a.strip_prefix("github.com/"))
+    else {
+        return address.into();
+    };
+    if path.contains(['?', '#']) {
+        return address.into();
+    }
+    let path = path.trim_end_matches('/');
+    let mut parts = path.splitn(4, '/');
+    let (owner, repo) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+    let repo = repo.strip_suffix(".git").unwrap_or(repo);
+    let archive = match (parts.next(), parts.next()) {
+        (None, _) => "HEAD".to_string(),
+        (Some("tree"), Some(branch)) if !branch.is_empty() => format!("refs/heads/{branch}"),
+        _ => return address.into(),
+    };
+    if owner.is_empty() || repo.is_empty() {
+        return address.into();
+    }
+    format!("{scheme}github.com/{owner}/{repo}/archive/{archive}.zip")
 }
 
 /// A file path as the converter config wants it: Windows paths written with `/`, as its docs ask.
