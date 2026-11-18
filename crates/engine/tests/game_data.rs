@@ -397,6 +397,13 @@ fn switching_images_off_mid_download_stops_it_and_leaves_no_partial_folder() {
         saved.convert_blocker(&data, None),
         Some("Wait for the download to finish.")
     );
+    // The Engine's own refusal ends too, once the download has stopped.
+    engine.send(Command::Convert(saved.id.clone()));
+    let refused = events.try_iter().find_map(|e| match e {
+        Event::Failed(message) => Some(message),
+        _ => None,
+    });
+    assert_eq!(refused.as_deref(), Some("Choose at least one book first."));
     assert_eq!(cache_entries(dir.path()), copies);
 }
 
