@@ -1030,3 +1030,85 @@ fn a_conversion_is_refused_while_the_template_folder_is_missing() {
     );
     assert_eq!(files(&setup.vault), before);
 }
+
+#[test]
+fn a_template_refresh_keeps_hand_edits_to_the_profile_file() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let templates = tempfile::tempdir().unwrap();
+    let mut profile = setup.engine.profiles()[0].clone();
+    profile.templates = Some(templates.path().to_path_buf());
+    setup.engine.send(Command::SaveProfile(profile.clone()));
+    wait(&setup.events, |e| matches!(e, Event::ProfileSaved(_)));
+    // While the app runs, the user adds a book, and a key the app does not know, by hand.
+    let file = setup.engine.profile_file(&profile.id);
+    let text = std::fs::read_to_string(&file).unwrap();
+    let text = text.replace("- XPHB", "- XPHB\n  - MM");
+    assert!(text.contains("- MM"), "{text}");
+    std::fs::write(&file, format!("{text}tagPrefix: mine\n")).unwrap();
+    std::fs::write(templates.path().join("spell2md.txt"), "{name}").unwrap();
+
+    let (lines, converted, message) = convert(&setup, &profile.id);
+
+    assert!(converted, "{message}");
+    let spell = templates.path().join("spell2md.txt").display().to_string();
+    let spell = spell.replace('\\', "/");
+    assert!(
+        lines.contains(&format!("Template spell: {spell}")),
+        "{lines:?}"
+    );
+    assert!(setup.vault.join("compendium/MM.md").is_file(), "{lines:?}");
+    let config: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(config["tagPrefix"].as_str(), Some("mine"));
+    assert_eq!(config["sources"]["book"][1].as_str(), Some("MM"));
+    assert_eq!(config["template"]["spell"].as_str(), Some(spell.as_str()));
+}
+
+#[test]
+fn a_compendium_folder_edited_by_hand_while_the_app_runs_is_still_checked() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    let file = setup.engine.profile_file(&id);
+    let saved = std::fs::read_to_string(&file).unwrap();
+    let edited = saved.replace("compendium: compendium/", "compendium: ../Documents/");
+    assert_ne!(edited, saved);
+    std::fs::write(&file, edited).unwrap();
+    let before = files(&setup.vault);
+
+    setup.engine.send(Command::Convert(id));
+
+    let sent: Vec<Event> = setup.events.try_iter().collect();
+    assert!(
+        sent.iter().any(|e| matches!(e, Event::Failed(m)
+            if m == "The compendium folder must be a folder inside the vault.")),
+        "{sent:?}"
+    );
+    assert_eq!(files(&setup.vault), before);
+}
+
+#[test]
+fn removing_the_last_template_leaves_the_profile_file_without_templates() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let templates = tempfile::tempdir().unwrap();
+    std::fs::write(templates.path().join("spell2md.txt"), "{name}").unwrap();
+    let mut profile = setup.engine.profiles()[0].clone();
+    profile.templates = Some(templates.path().to_path_buf());
+    setup.engine.send(Command::SaveProfile(profile.clone()));
+    wait(&setup.events, |e| matches!(e, Event::ProfileSaved(_)));
+    std::fs::remove_file(templates.path().join("spell2md.txt")).unwrap();
+
+    let (lines, converted, message) = convert(&setup, &profile.id);
+
+    assert!(converted, "{message}");
+    assert!(
+        !lines.iter().any(|l| l.starts_with("Template ")),
+        "{lines:?}"
+    );
+    let file = setup.engine.profile_file(&profile.id);
+    let config: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert!(config.get("template").is_none(), "{config:?}");
+}

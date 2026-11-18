@@ -490,6 +490,52 @@ fn profiles_that_already_clash_can_still_be_renamed() {
     assert_eq!(names, ["Fri", "Thu"]);
 }
 
+#[test]
+fn game_data_cannot_move_to_the_profiles_own_book_images_address() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let thursday = create(&engine, &events, "Thursday");
+    let images = "http://127.0.0.1:1/images.zip".to_string();
+    engine.send(Command::SaveProfile(Profile {
+        images: true,
+        images_address: images.clone(),
+        ..thursday.clone()
+    }));
+    assert_eq!(failed(&events), Vec::<String>::new());
+    let saved = engine.profiles()[0].clone();
+    let contents = || -> Vec<Vec<u8>> {
+        let profiles = dir.path().join("profiles");
+        let names = yaml_files(dir.path());
+        names
+            .iter()
+            .map(|f| std::fs::read(profiles.join(f)).unwrap())
+            .collect()
+    };
+    let before = contents();
+
+    engine.send(Command::SaveProfile(Profile {
+        address: images.clone(),
+        ..saved
+    }));
+
+    let sent: Vec<Event> = events.try_iter().collect();
+    assert!(
+        !sent.iter().any(|e| matches!(e, Event::ProfileSaved(_))),
+        "{sent:?}"
+    );
+    assert!(
+        sent.iter().any(|e| matches!(e, Event::Failed(m)
+            if m == "That address is used for game data, so it can't be book images.")),
+        "{sent:?}"
+    );
+    let now = engine.profiles().remove(0);
+    assert_eq!(
+        (now.address, now.images_address),
+        (thursday.address, images)
+    );
+    assert_eq!(contents(), before);
+}
+
 /// The address a profile created from `address` saves, after a restart.
 fn saved_address(address: &str) -> String {
     let dir = tempfile::tempdir().unwrap();

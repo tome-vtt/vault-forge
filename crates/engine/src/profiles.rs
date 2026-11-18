@@ -224,8 +224,10 @@ impl Profiles {
     }
 
     /// Rewrites the profile's `template` keys from its template folder as it is now, since the
-    /// user may add or remove templates after saving. Run before each conversion. Not `save`:
-    /// that would quietly fix hand-edited folders the conversion must refuse.
+    /// user may add or remove templates after saving. Run before each conversion. Only that key
+    /// of the file on disk changes: the user may have edited the rest by hand since it was saved,
+    /// and the app's copy takes those edits. Not `save`: that would quietly fix hand-edited
+    /// folders the conversion must refuse.
     pub(crate) fn refresh_templates(&mut self, id: &str) -> Result<(), String> {
         let i = self.list.iter().position(|p| p.id == id);
         let i = i.ok_or("That profile no longer exists.")?;
@@ -233,15 +235,11 @@ impl Profiles {
         if let Some(e) = unread {
             return Err(e);
         }
-        if templates == self.list[i].config.template {
-            return Ok(());
-        }
-        let mut profile = self.list[i].clone();
-        profile.config.template = templates;
-        self.files
-            .save(&profile)
-            .map_err(|e| format!("Could not save the profile: {e}"))?;
-        self.list[i] = profile;
+        let config = self
+            .files
+            .save_templates(id, &self.list[i].config, &templates)
+            .map_err(|e| format!("Could not update the profile file's templates: {e}"))?;
+        self.list[i].config = config;
         Ok(())
     }
 
