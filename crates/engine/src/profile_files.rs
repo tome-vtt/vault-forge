@@ -131,6 +131,8 @@ impl ProfileFiles {
                 serde_yaml_ng::to_value(templates).map_err(io::Error::other)?,
             ),
         };
+        // ponytail: a rewrite keeps keys and values but not YAML comments; edit the text in place
+        // if users keep comments in their profile files.
         let text = serde_yaml_ng::to_string(&file).map_err(io::Error::other)?;
         write_atomic(&path, &text)?;
         Ok(ConverterConfig {

@@ -238,7 +238,7 @@ impl Profiles {
         let config = self
             .files
             .save_templates(id, &self.list[i].config, &templates)
-            .map_err(|e| format!("Could not save the profile: {e}"))?;
+            .map_err(|e| format!("Could not update the profile file's templates: {e}"))?;
         self.list[i].config = config;
         Ok(())
     }

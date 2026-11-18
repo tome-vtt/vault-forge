@@ -1075,3 +1075,28 @@ fn a_compendium_folder_edited_by_hand_while_the_app_runs_is_still_checked() {
     );
     assert_eq!(files(&setup.vault), before);
 }
+
+#[test]
+fn removing_the_last_template_leaves_the_profile_file_without_templates() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let templates = tempfile::tempdir().unwrap();
+    std::fs::write(templates.path().join("spell2md.txt"), "{name}").unwrap();
+    let mut profile = setup.engine.profiles()[0].clone();
+    profile.templates = Some(templates.path().to_path_buf());
+    setup.engine.send(Command::SaveProfile(profile.clone()));
+    wait(&setup.events, |e| matches!(e, Event::ProfileSaved(_)));
+    std::fs::remove_file(templates.path().join("spell2md.txt")).unwrap();
+
+    let (lines, converted, message) = convert(&setup, &profile.id);
+
+    assert!(converted, "{message}");
+    assert!(
+        !lines.iter().any(|l| l.starts_with("Template ")),
+        "{lines:?}"
+    );
+    let file = setup.engine.profile_file(&profile.id);
+    let config: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert!(config.get("template").is_none(), "{config:?}");
+}
