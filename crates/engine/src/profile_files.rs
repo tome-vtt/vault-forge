@@ -1,10 +1,13 @@
 //! Profile files adapter: reads and writes the files on disk and holds no rules.
 //! A profile is `<id>.yaml` (a converter config) beside `<id>.forge.yaml` (what the converter
 //! does not read), and its last run beside them in `<id>.last-run.json`.
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::{LastRun, Profile};
+use serde_yaml_ng::Value;
+
+use crate::{ConverterConfig, LastRun, Profile};
 
 pub(crate) struct ProfileFiles {
     dir: PathBuf,
@@ -90,6 +93,50 @@ impl ProfileFiles {
         let beside = serde_yaml_ng::to_string(p).map_err(io::Error::other)?;
         write_atomic(&self.config_path(&p.id), &config)?;
         write_atomic(&self.beside_path(&p.id), &beside)
+    }
+
+    /// Sets only the `template` key of the profile's config file as it is on disk, so hand edits
+    /// to the rest are kept, and returns the config it now holds. The file is rewritten only
+    /// when its templates change; a missing one is written from `fallback`.
+    pub(crate) fn save_templates(
+        &self,
+        id: &str,
+        fallback: &ConverterConfig,
+        templates: &BTreeMap<String, PathBuf>,
+    ) -> io::Result<ConverterConfig> {
+        let path = self.config_path(id);
+        let (mut file, missing): (Value, bool) = match std::fs::read_to_string(&path) {
+            Ok(text) => (
+                serde_yaml_ng::from_str(&text).map_err(io::Error::other)?,
+                false,
+            ),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                let file = serde_yaml_ng::to_value(fallback).map_err(io::Error::other)?;
+                (file, true)
+            }
+            Err(e) => return Err(e),
+        };
+        let config: ConverterConfig =
+            serde_yaml_ng::from_value(file.clone()).map_err(io::Error::other)?;
+        if !missing && config.template == *templates {
+            return Ok(config);
+        }
+        let map = file
+            .as_mapping_mut()
+            .ok_or_else(|| io::Error::other("the file is not a converter config"))?;
+        match templates.is_empty() {
+            true => map.remove("template"),
+            false => map.insert(
+                "template".into(),
+                serde_yaml_ng::to_value(templates).map_err(io::Error::other)?,
+            ),
+        };
+        let text = serde_yaml_ng::to_string(&file).map_err(io::Error::other)?;
+        write_atomic(&path, &text)?;
+        Ok(ConverterConfig {
+            template: templates.clone(),
+            ..config
+        })
     }
 
     /// Removes its files; one already missing is fine.
