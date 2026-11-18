@@ -489,3 +489,100 @@ fn profiles_that_already_clash_can_still_be_renamed() {
     let names: Vec<_> = engine.profiles().into_iter().map(|p| p.name).collect();
     assert_eq!(names, ["Fri", "Thu"]);
 }
+
+/// The address a profile created from `address` saves, after a restart.
+fn saved_address(address: &str) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    engine.send(Command::CreateProfile(ProfileDraft {
+        address: address.into(),
+        ..draft("Thursday")
+    }));
+    assert_eq!(failed(&events), Vec::<String>::new());
+    drop(engine);
+    let (engine, _events) = start(dir.path());
+    engine.profiles()[0].address.clone()
+}
+
+#[test]
+fn a_github_repository_page_saves_as_its_zip_download() {
+    let head = "https://github.com/owner/repo/archive/HEAD.zip";
+    let branch = "https://github.com/owner/repo/archive/refs/heads/dev.zip";
+    for (typed, saved) in [
+        ("https://github.com/owner/repo", head),
+        (" https://github.com/owner/repo/ ", head),
+        ("https://github.com/owner/repo.git", head),
+        (
+            "http://github.com/owner/repo",
+            "http://github.com/owner/repo/archive/HEAD.zip",
+        ),
+        ("https://github.com/owner/repo/tree/dev", branch),
+        ("https://github.com/owner/repo/tree/dev/", branch),
+    ] {
+        assert_eq!(saved_address(typed), saved, "{typed}");
+    }
+}
+
+#[test]
+fn other_addresses_save_as_typed() {
+    for typed in [
+        "https://github.com/owner/repo/archive/refs/heads/dev.zip",
+        "https://github.com/owner/repo/releases/download/v1/data.zip",
+        "https://github.com/owner/repo/releases",
+        "https://github.com/owner",
+        "https://github.com/owner/repo#readme",
+        "https://github.com/owner/repo?tab=readme",
+        "https://github.com/owner/repo/tree",
+        "https://example.com/owner/repo",
+        "http://127.0.0.1:1/data.zip",
+    ] {
+        assert_eq!(saved_address(typed), typed);
+    }
+}
+
+#[test]
+fn a_page_link_and_its_zip_link_are_one_address() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let zip = "https://github.com/owner/repo/archive/refs/heads/dev.zip";
+    engine.send(Command::CreateProfile(ProfileDraft {
+        address: zip.into(),
+        ..draft("Thursday")
+    }));
+    engine.send(Command::CreateProfile(ProfileDraft {
+        address: "https://github.com/owner/repo/tree/dev".into(),
+        ..draft("Friday")
+    }));
+    assert_eq!(failed(&events), Vec::<String>::new());
+    assert!(engine.profiles().iter().all(|p| p.address == zip));
+
+    // The images address is rewritten too, so the rule keeping game data apart sees one form.
+    let friday = engine
+        .profiles()
+        .into_iter()
+        .find(|p| p.name == "Friday")
+        .unwrap();
+    engine.send(Command::SaveProfile(Profile {
+        address: "http://127.0.0.1:1/data.zip".into(),
+        images_address: "https://github.com/owner/repo/tree/dev/".into(),
+        ..friday
+    }));
+    assert_eq!(
+        failed(&events),
+        ["That address is used for game data, so it can't be book images."]
+    );
+}
+
+#[test]
+fn a_stored_zip_address_loads_as_it_was() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let thursday = create(&engine, &events, "Thursday");
+    drop(engine);
+    let zip = "https://github.com/owner/repo/archive/refs/heads/main.zip";
+    hand_edit(dir.path(), &thursday.id, "address", zip);
+
+    let (engine, _events) = start(dir.path());
+
+    assert_eq!(engine.profiles()[0].address, zip);
+}

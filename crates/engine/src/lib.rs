@@ -33,7 +33,7 @@ use last_run::LastRuns;
 use profiles::Profiles;
 
 pub use last_run::{Fix, LastRun, LogLevel, Warning, log_level};
-pub use profiles::{ProfileDraft, is_valid_name};
+pub use profiles::{ProfileDraft, download_address, is_valid_name};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Rules {
@@ -553,7 +553,7 @@ impl Engine {
                 }
             }),
             Command::DownloadGameData(profile)
-                if self.converting_from(&profiles, &profile.address) =>
+                if self.converting_from(&profiles, &download_address(&profile.address)) =>
             {
                 Err(WAIT_FOR_CONVERSION.into())
             }
@@ -596,7 +596,7 @@ impl Engine {
         let old = profiles.get(&profile.id)?.clone();
         // Its old copy would be removed while the converter reads it.
         let converting = self.conversion.converting() == Some(profile.id.clone());
-        if converting && profile.address != old.address {
+        if converting && download_address(&profile.address) != old.address {
             return Err(WAIT_FOR_CONVERSION.into());
         }
         let id = profile.id.clone();

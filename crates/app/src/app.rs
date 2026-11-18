@@ -179,7 +179,15 @@ impl App {
                         self.screen = first_screen(&self.engine);
                     }
                 }
-                Event::ProfileSaved(id) => self.saved = Some(id),
+                Event::ProfileSaved(id) => {
+                    let saved = self.engine.profiles().into_iter().find(|p| p.id == id);
+                    if let Some(section) = self.game_data.as_mut().filter(|s| s.id == id)
+                        && let Some(profile) = saved
+                    {
+                        section.saved(&profile);
+                    }
+                    self.saved = Some(id);
+                }
                 Event::GameData { address, state } => {
                     self.data.insert(address, state);
                 }
@@ -1889,6 +1897,28 @@ mod tests {
         harness.run();
         assert_eq!(harness.state().error, None);
         assert_eq!(harness.state().engine.profiles()[0].address, typed);
+    }
+
+    #[test]
+    fn the_address_fields_show_the_address_as_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events, heard) = harness_on_profile_heard(dir.path(), 1280.0);
+        harness.run();
+        let section = harness.state_mut().game_data.as_mut().unwrap();
+        section.address = " http://127.0.0.1:1/other.zip ".into();
+        section.images_address = "half typed".into();
+        harness.run();
+        harness.get_by_label("Download").click();
+        harness.run();
+        let saved = |e: &Event| matches!(e, Event::ProfileSaved(_));
+        forward(&heard, &events, saved);
+        harness.run();
+        let section = harness.state().game_data.as_ref().unwrap();
+        assert_eq!(section.address, "http://127.0.0.1:1/other.zip");
+        assert_eq!(
+            section.images_address, "half typed",
+            "an unsaved field keeps its text"
+        );
     }
 
     #[test]
