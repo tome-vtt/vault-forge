@@ -1509,25 +1509,20 @@ mod tests {
     }
 
     /// The Engine's stand-in converter (crates/engine/tests/stand_in), built once per test run
-    /// beside this test program, so a package-only run never finds it missing or out of date.
-    // ponytail: rewrites the binary the Engine's tests run; safe while `cargo test` runs test
-    // programs one at a time, give it its own --target-dir if a parallel runner is adopted.
+    /// into its own folder, so a package-only run never finds it missing or out of date.
+    // The folder is this package's build script output folder, so nothing reads cargo's layout.
+    // ponytail: a runner that starts one process per test (nextest) runs this build once per
+    // test, serialised by cargo's lock; give it a once-per-run setup step if one is adopted.
     fn stand_in_converter() -> std::path::PathBuf {
         static BUILT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
         BUILT
             .get_or_init(|| {
-                let exe = std::env::current_exe().unwrap();
-                // target/<profile>/deps/<test program>
-                let dir = exe.parent().unwrap().parent().unwrap();
-                let profile = match dir.file_name().unwrap().to_str().unwrap() {
-                    "debug" => "dev",
-                    other => other,
-                };
+                let dir = std::path::Path::new(env!("OUT_DIR")).join("stand-in");
                 let build = "build -p vault-forge-engine --bin stand-in-converter";
                 let built = std::process::Command::new(env!("CARGO"))
                     .args(build.split(' '))
-                    .args(["--quiet", "--profile", profile, "--target-dir"])
-                    .arg(dir.parent().unwrap())
+                    .args(["--quiet", "--target-dir"])
+                    .arg(&dir)
                     .status()
                     .is_ok_and(|s| s.success());
                 assert!(
@@ -1535,7 +1530,7 @@ mod tests {
                     "could not build the stand-in converter: run cargo {build}"
                 );
                 let name = format!("stand-in-converter{}", std::env::consts::EXE_SUFFIX);
-                dir.join(name)
+                dir.join("debug").join(name)
             })
             .clone()
     }
