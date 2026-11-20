@@ -1510,7 +1510,8 @@ mod tests {
 
     /// The Engine's stand-in converter (crates/engine/tests/stand_in), built once per test run
     /// into its own folder, so a package-only run never finds it missing or out of date.
-    // The folder is this package's build script output folder, so nothing reads cargo's layout.
+    // The folder is under this package's build script output folder, never read from the test
+    // program's path, which cargo's build-dir layout moves.
     // ponytail: a runner that starts one process per test (nextest) runs this build once per
     // test, serialised by cargo's lock; give it a once-per-run setup step if one is adopted.
     fn stand_in_converter() -> std::path::PathBuf {
