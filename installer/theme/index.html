@@ -346,7 +346,7 @@ summary { cursor: pointer; color: var(--accent); font-weight: 500; width: max-co
     if (p.phase === "finishing") return "Almost done";
     const elapsed = (performance.now() - started) / 1000;
     if (!p.bytesDone || elapsed < 1.5) return "";
-    const left = ((p.bytesTotal - p.bytesDone) * elapsed) / p.bytesDone;
+    const left = Math.round(((p.bytesTotal - p.bytesDone) * elapsed) / p.bytesDone);
     if (left > 90) return `About ${Math.round(left / 60)} minutes left`;
     if (left > 50) return "About a minute left";
     if (left > 5) return `About ${Math.ceil(left / 5) * 5} seconds left`;
