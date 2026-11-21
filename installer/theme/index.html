@@ -347,10 +347,10 @@ summary { cursor: pointer; color: var(--accent); font-weight: 500; width: max-co
     const elapsed = (performance.now() - started) / 1000;
     if (!p.bytesDone || elapsed < 1.5) return "";
     const left = ((p.bytesTotal - p.bytesDone) * elapsed) / p.bytesDone;
-    if (left < 10) return "A few seconds left";
-    if (left < 60) return `About ${Math.round(left / 5) * 5} seconds left`;
-    const min = Math.round(left / 60);
-    return min === 1 ? "About a minute left" : `About ${min} minutes left`;
+    if (left > 90) return `About ${Math.round(left / 60)} minutes left`;
+    if (left > 50) return "About a minute left";
+    if (left > 5) return `About ${Math.ceil(left / 5) * 5} seconds left`;
+    return "Almost done";
   }
   silk.on("progress", (p) => {
     const n = Math.floor(p.percent);
@@ -374,7 +374,7 @@ summary { cursor: pointer; color: var(--accent); font-weight: 500; width: max-co
   silk.on("error", (e) => {
     if (quitWhenStopped) return silk.quit();
     const verb = uninstall ? "removed" : "installed";
-    text("failed-title", e.cancelled ? "Setup cancelled" : `${name} was not ${verb}`);
+    text("failed-title", `${name} was not ${verb}`);
     // An uninstall has no rollback, so a failed one may have removed some files already.
     text("failed-sub", uninstall ? `${name} may be partly removed. Try again to finish removing it.` : "Nothing was changed on this PC.");
     text("failed-message", e.message);
