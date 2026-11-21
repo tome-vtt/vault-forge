@@ -2547,6 +2547,46 @@ mod tests {
     }
 
     #[test]
+    fn many_chosen_book_tags_wrap_and_leave_the_page_where_it_was() {
+        for width in [1280.0, 400.0] {
+            let dir = tempfile::tempdir().unwrap();
+            let (mut harness, events) = harness_on_profile(dir.path(), width);
+            let books = (0..120)
+                .map(|i| Book {
+                    code: format!("B{i:03}"),
+                    name: format!("Book {i}"),
+                    year: "2017".into(),
+                    group: Group::Supplements,
+                })
+                .collect();
+            let data = DataState::Ready {
+                books,
+                bytes: 1,
+                downloaded: UNIX_EPOCH,
+                newer: false,
+            };
+            game_data(&events, data);
+            harness.run();
+            let before = harness.get_by_label("All").rect();
+            harness.get_by_label("Choose all").click();
+            harness.run();
+            harness.run();
+            let after = harness.get_by_label("All").rect();
+            assert!(
+                (after.left() - before.left()).abs() < 0.5,
+                "at {width} the books bar moved from x={} to x={}",
+                before.left(),
+                after.left()
+            );
+            // The tags come before the book rows, which show the codes too.
+            let tag = |code| harness.get_all_by_label(code).next().unwrap().rect();
+            let (first, last) = (tag("B000"), tag("B119"));
+            assert!(last.top() > first.bottom(), "at {width} the tags wrap");
+            assert!(last.right() <= width, "at {width} the last tag is in view");
+        }
+    }
+
+    #[test]
     fn the_chosen_filter_shows_only_the_ticked_books() {
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
