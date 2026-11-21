@@ -2678,8 +2678,8 @@ mod tests {
         };
         game_data(&events, ready);
         // From the books bar down to the next section's title: the list's height and fixed padding.
-        let mut gap = |height: f32, search: &str| {
-            harness.set_size(egui::vec2(1280.0, height));
+        let mut gap = |width: f32, height: f32, search: &str| {
+            harness.set_size(egui::vec2(width, height));
             harness.state_mut().books.as_mut().unwrap().search = search.into();
             harness.run();
             let bar = harness.get_by_label("All").rect();
@@ -2691,16 +2691,20 @@ mod tests {
             vault.top() - bar.bottom()
         };
         // A window tall enough that only the list's own 452 px limit stops it.
-        let full = gap(2000.0, "");
-        assert_eq!(gap(2000.0, "book 1"), full, "eleven rows already reach it");
-        // Six 40 px rows are 240, 212 short of 452, whatever room the window leaves below the list.
-        for height in [2000.0, 820.0] {
-            for search in ["book 7", "nothing"] {
-                let short = full - gap(height, search);
-                assert!(
-                    (short - 212.0).abs() < 1.0,
-                    "{search:?} at {height}: {short} shorter"
-                );
+        // Six rows are 240 (212 short of 452), or 264 (188 short) with a phone's 44 px rows,
+        // whatever room the window leaves below the list.
+        for (width, shorter) in [(1280.0, 212.0), (400.0, 188.0)] {
+            let full = gap(width, 2000.0, "");
+            let eleven = gap(width, 2000.0, "book 1");
+            assert_eq!(eleven, full, "eleven rows already reach it at {width}");
+            for height in [2000.0, 820.0] {
+                for search in ["book 7", "nothing"] {
+                    let short = full - gap(width, height, search);
+                    assert!(
+                        (short - shorter).abs() < 1.0,
+                        "{search:?} at {width}x{height}: {short} shorter"
+                    );
+                }
             }
         }
     }

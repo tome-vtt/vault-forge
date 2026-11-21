@@ -109,10 +109,10 @@ impl BooksSection {
                 // The list's own top: inside it, the clip is also cut by the page's scroll.
                 let top = ui.max_rect().top();
                 // Never shorter than six rows, even where the window leaves less room below it.
-                let least = 6.0 * row_height(phone);
+                let min_height = 6.0 * row_height(phone);
                 egui::ScrollArea::vertical()
                     .max_height(452.0)
-                    .min_scrolled_height(least)
+                    .min_scrolled_height(min_height)
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                         let mut any = false;
@@ -167,7 +167,7 @@ impl BooksSection {
                             });
                         }
                         // After the rows, so each group's own bottom still ends its stuck heading.
-                        ui.expand_to_include_y(ui.min_rect().top() + least);
+                        ui.expand_to_include_y(ui.min_rect().top() + min_height);
                     });
             });
         if let Some(chosen) = changed {
