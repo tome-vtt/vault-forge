@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vault Forge Setup</title>
+<style>
+/* Vault Forge's Silk Setup theme, built to match docs/design/installer/. The window is 720 x 460
+   and frameless (vault-forge.toml [window]); this page draws the title bar. Tokens match the app's
+   approved main window (docs/design/main-window/). Fonts are copies of crates/app/fonts. */
+@font-face { font-family: "IBM Plex Sans"; font-weight: 400; src: url("fonts/IBMPlexSans-Regular.ttf"); }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 500; src: url("fonts/IBMPlexSans-Medium.ttf"); }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 600; src: url("fonts/IBMPlexSans-SemiBold.ttf"); }
+@font-face { font-family: "IBM Plex Mono"; font-weight: 400; src: url("fonts/IBMPlexMono-Regular.ttf"); }
+:root {
+  --ground: #f6f8f9; --surface: #ffffff; --raised: #f4f6f8; --active: #e6e9eb;
+  --border: #e8eaec; --rule: #f0f1f2; --control: #cdced1;
+  --text: #131416; --text2: #3b3d3f; --muted: #5d5f60;
+  --accent: #1b6c80;
+  --positive: #1e7b4f; --negative: #c4242a;
+  --pill-positive-bg: #dcfae5; --pill-positive-ink: #04250e;
+  --pill-neutral-bg: #ebedee; --pill-neutral-ink: #353736;
+  --primary: #1d1f20; --primary-hover: #3a3d3f; --on-primary: #ffffff;
+  --hover: #eceef0; --panel: #fafafa; --field: #ffffff;
+  --negative-edge: #efc4c2; --negative-wash: #fff8f7;
+  --radius-card: 8px; --radius-control: 6px; --radius-sheet: 16px; --sheet-inset: 8px;
+  --fs-title: 22px; --fs-body: 14px; --fs-small: 12px;
+  --font: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --ground: #0f1011; --surface: #17181a; --raised: #202123; --active: #2a2c2e;
+    --border: #2a2c2e; --rule: #222325; --control: #45474a;
+    --text: #f2f3f4; --text2: #d0d2d4; --muted: #b0b3b6;
+    --accent: #5fb8cc;
+    --positive: #3fc07a; --negative: #ef6b6b;
+    --pill-positive-bg: #172a1d; --pill-positive-ink: #5fd393;
+    --pill-neutral-bg: #2a2c2e; --pill-neutral-ink: #d0d2d4;
+    --primary: #f2f3f4; --primary-hover: #d0d2d4; --on-primary: #111213;
+    --hover: #1c1d1f; --panel: #1d1e20; --field: #141517;
+    --negative-edge: #5a2a2c; --negative-wash: #211517;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body { background: var(--ground); color: var(--text); font: 400 var(--fs-body)/20px var(--font); user-select: none; }
+button { font: inherit; color: inherit; }
+[hidden] { display: none !important; }
+.num { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--mono); font-size: 13px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.win { height: 100%; display: grid; grid-template-rows: 36px 1fr; }
+
+/* title bar on the frame ground; the whole bar is the drag handle */
+.bar { display: flex; align-items: center; gap: 8px; padding-left: 12px; }
+.bar img { width: 18px; height: 18px; display: block; }
+.bar .name { font-size: var(--fs-small); color: var(--text2); font-weight: 500; }
+.bar .ctl { margin-left: auto; display: flex; height: 100%; }
+.bar .ctl button { width: 46px; height: 100%; border: 0; background: none; color: var(--text2); cursor: pointer; display: grid; place-items: center; }
+.bar .ctl button:hover { background: var(--hover); }
+.bar .ctl button.close:hover { background: #c42b1c; color: #fff; }
+
+.body { display: grid; grid-template-columns: 188px 1fr; min-height: 0; }
+
+/* rail: steps on the frame ground, like the app's sidebar */
+.rail { display: flex; flex-direction: column; padding: 8px 10px 16px; }
+.rail .label { color: var(--muted); font-size: var(--fs-small); padding: 0 10px 8px; }
+.steps { list-style: none; margin: 0; padding: 0; }
+.steps li { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; margin-bottom: 2px; border-radius: 8px; color: var(--muted); }
+.steps li .dot { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--control); display: grid; place-items: center; flex: none; }
+.steps li[aria-current="step"] { background: var(--active); color: var(--text); font-weight: 500; }
+.steps li[aria-current="step"] .dot { border-color: var(--accent); }
+.steps li[aria-current="step"] .dot::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.steps li.done { color: var(--text2); }
+.steps li.done .dot { background: var(--accent); border-color: var(--accent); }
+.steps li.done .dot svg { color: var(--surface); }
+.rail .ver { margin-top: auto; padding: 0 10px; color: var(--muted); font-size: var(--fs-small); }
+
+/* the sheet */
+.sheet { margin: 0 var(--sheet-inset) var(--sheet-inset) 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sheet); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.view { flex: 1; display: flex; flex-direction: column; padding: 24px; min-height: 0; }
+.hero { display: flex; gap: 16px; align-items: center; }
+.hero img { width: 56px; height: 56px; flex: none; }
+h1 { margin: 0; font-size: var(--fs-title); line-height: 28px; font-weight: 600; letter-spacing: -0.01em; }
+.sub { margin: 4px 0 0; color: var(--muted); }
+.panel { margin-top: 20px; background: var(--panel); border-radius: var(--radius-sheet); padding: 16px; }
+.panel .lbl { font-weight: 500; margin: 0 0 8px; }
+.path { height: 40px; display: flex; align-items: center; padding: 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--field); font-family: var(--mono); font-size: 13px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; user-select: text; }
+.hint { margin: 8px 0 0; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pill { flex: none; white-space: nowrap; display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; font-size: var(--fs-small); font-weight: 500; }
+.pill.ok { background: var(--pill-positive-bg); color: var(--pill-positive-ink); }
+.pill.neutral { background: var(--pill-neutral-bg); color: var(--pill-neutral-ink); }
+
+.foot { margin-top: auto; padding-top: 16px; display: flex; gap: 8px; align-items: center; }
+.foot .left { margin-right: auto; color: var(--muted); font-size: var(--fs-small); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
+.btn { height: 32px; padding: 0 14px; border-radius: var(--radius-control); border: 1px solid var(--control); background: var(--surface); cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 8px; }
+.btn:hover { background: var(--raised); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .5; cursor: default; transform: none; }
+.btn.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); font-weight: 500; }
+.btn.primary:hover { background: var(--primary-hover); }
+.btn.danger { color: var(--negative); border-color: var(--negative-edge); }
+
+/* progress, as on the app's Last run screen */
+.progress { margin-top: 20px; }
+.progress .line { display: flex; gap: 16px; align-items: baseline; }
+.progress .now { font-size: 18px; font-weight: 500; }
+.progress .pct { margin-left: auto; font-size: 18px; font-weight: 500; }
+.track { margin-top: 12px; height: 6px; border-radius: 999px; background: var(--active); overflow: hidden; }
+.track i { display: block; width: 0; height: 6px; border-radius: 999px; background: var(--accent); transition: width 200ms linear; }
+.progress .meta { margin: 10px 0 0; color: var(--muted); display: flex; gap: 16px; min-height: 20px; }
+.progress .meta .file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.progress .meta .left { margin-left: auto; flex: none; }
+details { margin-top: 16px; min-height: 0; display: flex; flex-direction: column; }
+summary { cursor: pointer; color: var(--accent); font-weight: 500; width: max-content; }
+.log { margin: 8px 0 0; height: 92px; overflow: auto; background: var(--raised); border-radius: var(--radius-card); padding: 8px 12px; font: 400 12px/18px var(--mono); color: var(--text2); white-space: pre; user-select: text; }
+
+/* done and failed */
+.result { display: flex; gap: 14px; align-items: flex-start; }
+.badge { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; flex: none; }
+.badge.ok { background: var(--pill-positive-bg); color: var(--positive); }
+.badge.bad { background: var(--negative-wash); color: var(--negative); border: 1px solid var(--negative-edge); }
+.list { margin: 20px 0 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: var(--radius-card); }
+.list li { display: flex; gap: 12px; align-items: center; min-height: 40px; padding: 0 16px; border-top: 1px solid var(--rule); }
+.list li:first-child { border-top: 0; }
+.list li svg { color: var(--positive); flex: none; }
+.failbox { margin-top: 20px; border: 1px solid var(--negative-edge); background: var(--negative-wash); border-radius: var(--radius-card); padding: 14px 16px; color: var(--text2); user-select: text; }
+.failbox b { color: var(--text); font-weight: 500; display: block; margin-bottom: 2px; }
+@media (prefers-reduced-motion: reduce) { .track i { transition: none; } }
+</style>
+</head>
+<body>
+<div class="win">
+  <div class="bar" data-silk-drag>
+    <img src="icon.png" alt="">
+    <span class="name" id="barname"></span>
+    <div class="ctl">
+      <button data-go="minimize" aria-label="Minimise" title="Minimise"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5.5h10" stroke="currentColor"/></svg></button>
+      <button class="close" data-go="close" aria-label="Close" title="Close"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M.5.5l9 9M9.5.5l-9 9" stroke="currentColor"/></svg></button>
+    </div>
+  </div>
+
+  <div class="body">
+    <nav class="rail" aria-label="Steps">
+      <div class="label" id="steplabel"></div>
+      <ol class="steps" id="steps"></ol>
+      <div class="ver num" id="ver"></div>
+    </nav>
+
+    <main class="sheet">
+      <!-- Install: nothing installed yet -->
+      <section class="view" data-view="welcome" hidden>
+        <div class="hero">
+          <img src="icon.png" alt="">
+          <div>
+            <h1 id="welcome-title"></h1>
+            <p class="sub">Turn your own 5eTools or Pf2eTools data into Obsidian notes.</p>
+          </div>
+        </div>
+        <div class="panel">
+          <p class="lbl">Install folder</p>
+          <div class="path" id="target"></div>
+          <p class="hint"><span class="pill neutral" id="scope"></span><span id="scope-hint"></span></p>
+        </div>
+        <div class="foot">
+          <span class="left">Adds Start menu and desktop shortcuts.</span>
+          <button class="btn" data-go="quit">Cancel</button>
+          <button class="btn primary" data-go="install">Install</button>
+        </div>
+      </section>
+
+      <!-- Install: a version is already there (older, or this one again) -->
+      <section class="view" data-view="update" hidden>
+        <div class="hero">
+          <img src="icon.png" alt="">
+          <div>
+            <h1 id="update-title"></h1>
+            <p class="sub">Your profiles, game data and vaults stay as they are.</p>
+          </div>
+        </div>
+        <div class="panel">
+          <p class="lbl">Installed version</p>
+          <p class="hint" style="margin:0"><span class="pill neutral num" id="from"></span><span id="to-sep">to</span><span class="pill ok num" id="to"></span></p>
+          <p class="hint" id="update-hint"></p>
+        </div>
+        <div class="foot">
+          <span class="left mono" id="update-target"></span>
+          <button class="btn" data-go="quit">Cancel</button>
+          <button class="btn primary" data-go="install" id="update-go"></button>
+        </div>
+      </section>
+
+      <!-- Installing or removing -->
+      <section class="view" data-view="installing" hidden>
+        <h1 id="installing-title"></h1>
+        <p class="sub" id="installing-sub"></p>
+        <div class="progress" aria-live="polite">
+          <div class="line"><span class="now" id="phase"></span><span class="pct num" id="pct">0%</span></div>
+          <div class="track" id="meter" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="fill"></i></div>
+          <p class="meta"><span class="file mono" id="file"></span><span class="left num" id="eta"></span></p>
+        </div>
+        <details id="details">
+          <summary>Details</summary>
+          <pre class="log" id="log"></pre>
+        </details>
+        <div class="foot">
+          <button class="btn" data-go="cancel" id="cancel">Cancel</button>
+        </div>
+      </section>
+
+      <!-- Installed or removed -->
+      <section class="view" data-view="done" hidden>
+        <div class="result">
+          <div class="badge ok"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 10.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <div>
+            <h1 id="done-title"></h1>
+            <p class="sub" id="done-sub"></p>
+          </div>
+        </div>
+        <ul class="list" id="done-list">
+          <li><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Shortcut in the Start menu</li>
+          <li><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Shortcut on the desktop</li>
+          <li><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Listed in Settings &gt; Apps, to remove it later</li>
+        </ul>
+        <div class="foot">
+          <button class="btn" data-go="quit" id="close">Close</button>
+          <button class="btn primary" data-go="launch" id="launch">Open Vault Forge</button>
+        </div>
+      </section>
+
+      <!-- Failed or cancelled -->
+      <section class="view" data-view="failed" hidden>
+        <div class="result">
+          <div class="badge bad"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M9 4.5v5.5M9 13v.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+          <div>
+            <h1 id="failed-title"></h1>
+            <p class="sub" id="failed-sub"></p>
+          </div>
+        </div>
+        <div class="failbox" id="failbox">
+          <b>What went wrong</b>
+          <span id="failed-message"></span>
+        </div>
+        <div class="foot">
+          <button class="btn" data-go="quit">Close</button>
+          <button class="btn primary" data-go="install" id="retry">Try again</button>
+        </div>
+      </section>
+
+      <!-- Uninstall: confirm -->
+      <section class="view" data-view="remove" hidden>
+        <div class="hero">
+          <img src="icon.png" alt="">
+          <div>
+            <h1>Remove Vault Forge?</h1>
+            <p class="sub">This removes the app and its shortcuts.</p>
+          </div>
+        </div>
+        <div class="panel">
+          <p class="lbl">What stays</p>
+          <p class="hint" style="margin:0">Your vaults and their notes, your profiles and the game data you downloaded are kept. Install Vault Forge again and they are all still there.</p>
+        </div>
+        <div class="foot">
+          <button class="btn" data-go="quit">Keep it</button>
+          <button class="btn danger" data-go="install">Remove</button>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<script>
+  const info = silk.info;
+  const uninstall = info.mode === "uninstall";
+  const $ = (id) => document.getElementById(id);
+  const text = (id, s) => { $(id).textContent = s; };
+  const mb = (bytes) => `${Math.max(1, Math.round(bytes / 1048576))} MB`;
+  const tick = '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5.2l2 2 4-4.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  // Rail steps: each view sits on one step; a finished run ticks them all.
+  const STEPS = uninstall ? ["Confirm", "Remove", "Done"] : ["Welcome", "Install", "Done"];
+  const AT = { welcome: 0, update: 0, remove: 0, installing: 1, failed: 1, done: 2 };
+  function show(view) {
+    document.body.dataset.view = view;
+    for (const v of document.querySelectorAll("[data-view]")) v.hidden = v.dataset.view !== view;
+    const at = AT[view];
+    const finished = view === "done";
+    $("steps").innerHTML = STEPS.map((s, i) => {
+      const done = i < at || (finished && i === at);
+      const cur = i === at && !finished;
+      return `<li class="${done ? "done" : ""}"${cur ? ' aria-current="step"' : ""}><span class="dot">${done ? tick : ""}</span>${s}</li>`;
+    }).join("");
+    document.querySelector(`[data-view="${view}"] .primary, [data-view="${view}"] .danger`)?.focus();
+  }
+
+  // Fixed text from silk.info.
+  const name = info.product;
+  text("barname", uninstall ? `Remove ${name}` : `${name} Setup`);
+  text("steplabel", uninstall ? "Remove" : "Setup");
+  text("ver", `Version ${uninstall ? (info.installed ?? info.version) : info.version}`);
+  text("welcome-title", `Install ${name}`);
+  text("target", info.target);
+  $("target").title = info.target;
+  const perMachine = info.scope === "machine";
+  text("scope", perMachine ? "For everyone on this PC" : "Just for you");
+  text("scope-hint", `${perMachine ? "" : "No administrator rights needed. "}Uses ${mb(info.size)}.`);
+  if (info.installed) {
+    text("from", info.installed);
+    text("to", info.version);
+    text("update-target", info.target);
+    $("update-target").title = info.target;
+    if (info.alreadyCurrent) {
+      text("update-title", `${name} ${info.installed} is already installed`);
+      text("update-hint", "Install it again if something is not working.");
+      text("update-go", "Reinstall");
+      $("to-sep").hidden = $("to").hidden = true;
+    } else {
+      text("update-title", `Update ${name}`);
+      text("update-hint", `${name} closes while it updates, if it is open.`);
+      text("update-go", "Update");
+    }
+  }
+  text("installing-title", uninstall ? "Removing" : "Installing");
+  text("installing-sub", uninstall ? "This cannot be stopped once it starts." : "This takes about a minute.");
+  text("done-title", uninstall ? `${name} is removed` : `${name} is ready`);
+  text("done-sub", uninstall ? "Your vaults, profiles and game data are kept." : `Version ${info.version} is installed.`);
+  text("launch", `Open ${name}`);
+  // An uninstall cannot be cancelled once it starts: the confirm screen is the way out.
+  $("cancel").hidden = uninstall;
+  $("details").hidden = uninstall;
+  $("done-list").hidden = uninstall;
+  if (uninstall || !info.launchAtFinish) {
+    $("launch").hidden = true;
+    $("close").classList.add("primary");
+  }
+
+  // Progress: phase, bar, the file just written, a log of files and, once there is a rate, the time left.
+  const phases = { preparing: "Getting ready", copying: "Copying files", removing: "Removing files", finishing: "Adding shortcuts" };
+  if (uninstall) phases.finishing = "Finishing up";
+  let started = 0;
+  function eta(p) {
+    if (p.phase === "finishing") return "Almost done";
+    const elapsed = (performance.now() - started) / 1000;
+    if (!p.bytesDone || elapsed < 1.5) return "";
+    const left = ((p.bytesTotal - p.bytesDone) * elapsed) / p.bytesDone;
+    if (left < 10) return "A few seconds left";
+    if (left < 60) return `About ${Math.round(left / 5) * 5} seconds left`;
+    const min = Math.round(left / 60);
+    return min === 1 ? "About a minute left" : `About ${min} minutes left`;
+  }
+  silk.on("progress", (p) => {
+    const n = Math.floor(p.percent);
+    $("fill").style.width = `${n}%`;
+    text("pct", `${n}%`);
+    $("meter").setAttribute("aria-valuenow", String(n));
+    text("phase", phases[p.phase] ?? p.phase);
+    text("file", p.phase === "finishing" ? "" : (p.file ?? ""));
+    text("eta", uninstall ? "" : eta(p));
+    if (p.file && (p.phase === "copying" || p.phase === "removing")) {
+      const log = $("log");
+      log.textContent += (log.textContent ? "\n" : "") + p.file;
+      log.scrollTop = log.scrollHeight;
+    }
+    $("cancel").disabled = p.phase === "finishing";
+  });
+
+  // Closing from our own title bar mid-install cancels first, so nothing is left half-copied.
+  let quitWhenStopped = false;
+  silk.on("finish", () => (quitWhenStopped ? silk.quit() : show("done")));
+  silk.on("error", (e) => {
+    if (quitWhenStopped) return silk.quit();
+    const verb = uninstall ? "removed" : "installed";
+    text("failed-title", e.cancelled ? "Setup cancelled" : `${name} was not ${verb}`);
+    text("failed-sub", "Nothing was changed on this PC.");
+    text("failed-message", e.message);
+    $("failbox").hidden = e.cancelled;
+    show("failed");
+  });
+
+  const actions = {
+    install() {
+      started = performance.now();
+      $("fill").style.width = "0";
+      text("pct", "0%"); text("file", ""); text("eta", ""); text("log", "");
+      text("phase", phases.preparing);
+      $("meter").setAttribute("aria-valuenow", "0");
+      $("cancel").disabled = false;
+      show("installing");
+      silk.start().catch(() => {}); // the error event shows it
+    },
+    cancel() {
+      $("cancel").disabled = true;
+      silk.cancel();
+    },
+    launch() {
+      silk.launch().then(silk.quit, (e) => text("done-sub", `Could not open ${name}: ${e.message}`));
+    },
+    quit: () => silk.quit(),
+    minimize: () => silk.window.minimize(),
+    close() {
+      if (document.body.dataset.view !== "installing") return silk.quit();
+      quitWhenStopped = true;
+      silk.cancel();
+    },
+  };
+  document.addEventListener("click", (e) => {
+    const go = e.target.closest("[data-go]")?.dataset.go;
+    if (go) actions[go]();
+  });
+
+  // A run after silk.reboot() starts by itself.
+  if (info.resumed) { started = performance.now(); text("phase", phases.preparing); show("installing"); }
+  else show(uninstall ? "remove" : info.installed ? "update" : "welcome");
+</script>
+</body>
+</html>
