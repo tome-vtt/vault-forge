@@ -108,8 +108,11 @@ impl BooksSection {
             .show(ui, |ui| {
                 // The list's own top: inside it, the clip is also cut by the page's scroll.
                 let top = ui.max_rect().top();
+                // Never shorter than six rows, even where the window leaves less room below it.
+                let least = 6.0 * row_height(phone);
                 egui::ScrollArea::vertical()
                     .max_height(452.0)
+                    .min_scrolled_height(least)
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                         let mut any = false;
@@ -163,6 +166,8 @@ impl BooksSection {
                                 ui.weak(format!("No book matches \"{}\".", self.search.trim()));
                             });
                         }
+                        // After the rows, so each group's own bottom still ends its stuck heading.
+                        ui.expand_to_include_y(ui.min_rect().top() + least);
                     });
             });
         if let Some(chosen) = changed {
@@ -297,13 +302,18 @@ fn group_header(
     (heading.response.rect, choice)
 }
 
+/// A book row's height: taller on a phone, for touch.
+fn row_height(phone: bool) -> f32 {
+    if phone { 44.0 } else { 40.0 }
+}
+
 /// One book: its box and name, its code in Plex Mono and its year (not on a phone). The whole
 /// row ticks the box. Returns the profile with the book ticked or unticked when it changes.
 fn row(ui: &mut egui::Ui, profile: &Profile, book: &Book, phone: bool) -> Option<Profile> {
     let p = theme::palette(ui);
     // The row is laid out before its contents, so the box and name stay on top of it.
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), if phone { 44.0 } else { 40.0 }),
+        egui::vec2(ui.available_width(), row_height(phone)),
         egui::Sense::click(),
     );
     if ui.rect_contains_pointer(rect) {

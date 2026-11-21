@@ -2659,6 +2659,53 @@ mod tests {
     }
 
     #[test]
+    fn the_books_list_is_never_shorter_than_six_rows_and_stops_at_452() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        let books = (1..=60)
+            .map(|n| Book {
+                code: format!("B{n}"),
+                name: format!("Book {n}"),
+                year: "2024".into(),
+                group: Group::Supplements,
+            })
+            .collect();
+        let ready = DataState::Ready {
+            books,
+            bytes: 1,
+            downloaded: UNIX_EPOCH,
+            newer: false,
+        };
+        game_data(&events, ready);
+        // From the books bar down to the next section's title: the list's height and fixed padding.
+        let mut gap = |height: f32, search: &str| {
+            harness.set_size(egui::vec2(1280.0, height));
+            harness.state_mut().books.as_mut().unwrap().search = search.into();
+            harness.run();
+            let bar = harness.get_by_label("All").rect();
+            let vault = harness
+                .get_all_by_label("Vault")
+                .map(|n| n.rect())
+                .find(|r| r.top() > bar.bottom())
+                .expect("the Vault section follows the books");
+            vault.top() - bar.bottom()
+        };
+        // A window tall enough that only the list's own 452 px limit stops it.
+        let full = gap(2000.0, "");
+        assert_eq!(gap(2000.0, "book 1"), full, "eleven rows already reach it");
+        // Six 40 px rows are 240, 212 short of 452, whatever room the window leaves below the list.
+        for height in [2000.0, 820.0] {
+            for search in ["book 7", "nothing"] {
+                let short = full - gap(height, search);
+                assert!(
+                    (short - 212.0).abs() < 1.0,
+                    "{search:?} at {height}: {short} shorter"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn the_next_group_stays_below_a_stuck_heading_and_its_books() {
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
