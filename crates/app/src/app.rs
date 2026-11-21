@@ -2710,6 +2710,92 @@ mod tests {
     }
 
     #[test]
+    fn a_new_search_or_filter_brings_the_books_list_back_to_its_top_and_a_tick_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        let book = |n: usize, group| Book {
+            code: format!("B{n}"),
+            name: format!("Book {n}"),
+            year: "2024".into(),
+            group,
+        };
+        let books = (1..=12)
+            .map(|n| book(n, Group::CoreRules))
+            .chain((13..=120).map(|n| book(n, Group::Supplements)))
+            .collect();
+        let ready = DataState::Ready {
+            books,
+            bytes: 1,
+            downloaded: UNIX_EPOCH,
+            newer: false,
+        };
+        game_data(&events, ready);
+        harness.run();
+        let search = |harness: &mut Harness<'_, App>, text: &str| {
+            harness.state_mut().books.as_mut().unwrap().search = text.into();
+            harness.run();
+        };
+        // Where Book 1 sits before anything scrolls: whole, just under its heading.
+        let offset = |harness: &Harness<'_, App>| {
+            harness.get_by_label("Book 1").rect().top()
+                - harness.get_by_label("All").rect().bottom()
+        };
+        let top = offset(&harness);
+        let at_top = |harness: &Harness<'_, App>, when: &str| {
+            let now = offset(harness);
+            assert!(
+                (now - top).abs() < 0.5,
+                "{when}: Book 1 is {now} below the bar, not {top}"
+            );
+        };
+        // Ten rows of wheel inside the list take Book 1 at least a row out of view.
+        let down = |harness: &mut Harness<'_, App>| {
+            let inside = harness.get_by_label("Book 1").rect().center();
+            wheel(harness, inside, -400.0);
+            harness.run_steps(8);
+            assert!(offset(harness) < top - 40.0, "the list scrolled down");
+        };
+
+        // "book 1" still finds 31 books, more than the list shows at once.
+        down(&mut harness);
+        search(&mut harness, "book 1");
+        at_top(&harness, "after a search");
+
+        // A tick keeps the list where it is.
+        down(&mut harness);
+        let ticked = harness.get_by_label("Book 115").rect();
+        harness.get_by_label("Book 115").click_accesskit();
+        harness.run();
+        harness.get_by_label("1 of 120 chosen");
+        assert_eq!(harness.get_by_label("Book 115").rect(), ticked);
+
+        // With the Core rules chosen too, Chosen lists 13 books, again more than show at once.
+        search(&mut harness, "");
+        // The topmost Choose all is the Core rules heading's.
+        harness
+            .get_all_by_label("Choose all")
+            .min_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("13 of 120 chosen");
+        down(&mut harness);
+        harness.get_by_label("Chosen").click();
+        harness.run();
+        at_top(&harness, "after Chosen");
+        down(&mut harness);
+        harness.get_by_label("All").click();
+        harness.run();
+        at_top(&harness, "after All");
+
+        // Another profile or game's books, a fresh section, start at the top too.
+        down(&mut harness);
+        harness.state_mut().books = None;
+        harness.run();
+        at_top(&harness, "in a fresh section");
+    }
+
+    #[test]
     fn the_next_group_stays_below_a_stuck_heading_and_its_books() {
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
