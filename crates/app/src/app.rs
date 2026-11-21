@@ -2751,8 +2751,6 @@ mod tests {
         // Ten rows of wheel inside the list take Book 1 at least a row out of view.
         let down = |harness: &mut Harness<'_, App>| {
             let inside = harness.get_by_label("Book 1").rect().center();
-            harness.hover_at(inside);
-            harness.run();
             wheel(harness, inside, -400.0);
             harness.run_steps(8);
             assert!(offset(harness) < top - 40.0, "the list scrolled down");
@@ -2789,6 +2787,12 @@ mod tests {
         harness.get_by_label("All").click();
         harness.run();
         at_top(&harness, "after All");
+
+        // Another profile or game's books, a fresh section, start at the top too.
+        down(&mut harness);
+        harness.state_mut().books = None;
+        harness.run();
+        at_top(&harness, "in a fresh section");
     }
 
     #[test]

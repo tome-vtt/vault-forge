@@ -13,8 +13,9 @@ pub struct BooksSection {
     pub rules: Rules,
     pub search: String,
     chosen_only: bool,
-    /// The search and Chosen filter the list last showed, to start it at its top when they change.
-    shown: (String, bool),
+    /// The search and Chosen filter the list last showed, to start it at its top when they change;
+    /// none yet, so a fresh section starts at its top too, not where another profile's list was.
+    last_filter: Option<(String, bool)>,
     book_codes: String,
     adventure_codes: String,
 }
@@ -26,7 +27,7 @@ impl BooksSection {
             rules: profile.rules,
             search: String::new(),
             chosen_only: false,
-            shown: (String::new(), false),
+            last_filter: None,
             book_codes: profile.config.sources.book.join(", "),
             adventure_codes: profile.config.sources.adventure.join(", "),
         }
@@ -103,9 +104,9 @@ impl BooksSection {
                 && (b.name.to_lowercase().contains(&search)
                     || b.code.to_lowercase().contains(&search))
         };
-        let filter = (search.clone(), self.chosen_only);
-        let refiltered = filter != self.shown;
-        self.shown = filter;
+        let filter = Some((search.clone(), self.chosen_only));
+        let refiltered = filter != self.last_filter;
+        self.last_filter = filter;
         let mut changed = None;
         egui::Frame::new()
             .fill(ui.visuals().extreme_bg_color)
