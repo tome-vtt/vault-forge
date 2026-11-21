@@ -310,7 +310,8 @@ summary { cursor: pointer; color: var(--accent); font-weight: 500; width: max-co
   if (info.installed) {
     text("from", info.installed);
     text("to", info.version);
-    text("update-target", `…\\${info.target.split("\\").slice(-2).join("\\")}`); // the end of the path, as the demo shows
+    const parts = info.target.split("\\"); // the end of the path, as the demo shows
+    text("update-target", parts.length > 3 ? `…\\${parts.slice(-2).join("\\")}` : info.target);
     $("update-target").title = info.target;
     if (info.alreadyCurrent) {
       text("update-title", `${name} ${info.installed} is already installed`);
