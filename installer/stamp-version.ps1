@@ -7,7 +7,7 @@ param([string] $Manifest = (Join-Path $PSScriptRoot '../Cargo.toml'))
 $ErrorActionPreference = 'Stop'
 
 $tag = $env:RELEASE_TAG
-if ($tag -cnotmatch '^v(\d+\.\d+\.\d+)(-[0-9A-Za-z][0-9A-Za-z.-]*)?\z') {
+if ($tag -cnotmatch '^v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))(-[0-9A-Za-z][0-9A-Za-z.-]*)?\z') {
     [Console]::Error.WriteLine("'$tag' is not a release tag: push a tag such as v1.2.3, or v1.2.3-rc.1 for a pre-release")
     exit 1
 }
