@@ -13,6 +13,8 @@ pub struct BooksSection {
     pub rules: Rules,
     pub search: String,
     chosen_only: bool,
+    /// The search and Chosen filter the list last showed, to start it at its top when they change.
+    shown: (String, bool),
     book_codes: String,
     adventure_codes: String,
 }
@@ -24,6 +26,7 @@ impl BooksSection {
             rules: profile.rules,
             search: String::new(),
             chosen_only: false,
+            shown: (String::new(), false),
             book_codes: profile.config.sources.book.join(", "),
             adventure_codes: profile.config.sources.adventure.join(", "),
         }
@@ -100,6 +103,9 @@ impl BooksSection {
                 && (b.name.to_lowercase().contains(&search)
                     || b.code.to_lowercase().contains(&search))
         };
+        let filter = (search.clone(), self.chosen_only);
+        let refiltered = filter != self.shown;
+        self.shown = filter;
         let mut changed = None;
         egui::Frame::new()
             .fill(ui.visuals().extreme_bg_color)
@@ -110,8 +116,11 @@ impl BooksSection {
                 let top = ui.max_rect().top();
                 // Never shorter than six rows, even where the window leaves less room below it.
                 let min_height = 6.0 * row_height(phone);
-                egui::ScrollArea::vertical()
-                    .max_height(452.0)
+                let mut list = egui::ScrollArea::vertical();
+                if refiltered {
+                    list = list.vertical_scroll_offset(0.0);
+                }
+                list.max_height(452.0)
                     .min_scrolled_height(min_height)
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
