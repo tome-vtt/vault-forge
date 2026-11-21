@@ -466,6 +466,7 @@ fn date_time(time: SystemTime) -> String {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use egui_kittest::kittest::Queryable;
     use std::time::Duration;
 
     #[test]
@@ -475,5 +476,61 @@ mod tests {
         assert_eq!(when(noon, noon), "today, 12:00");
         let later = noon + Duration::from_secs(3 * 86_400);
         assert_eq!(when(noon, later), "26 Oct 2026, 12:00");
+    }
+
+    #[test]
+    fn the_subtitle_names_when_the_run_started() {
+        let mut run = LastRun {
+            started: SystemTime::from(Local.with_ymd_and_hms(2020, 3, 14, 12, 0, 0).unwrap()),
+            seconds: 1,
+            converted: true,
+            exit_code: Some(0),
+            message: String::new(),
+            fix: None,
+            books: 0,
+            homebrew: 0,
+            folders: Vec::new(),
+            warnings: Vec::new(),
+            log: Vec::new(),
+        };
+        // Built in memory: an Engine-made run started today, so always reads "today, …".
+        let now = run.started + Duration::from_secs(3 * 86_400);
+        assert_eq!(
+            subtitle(Some(&run), now),
+            "last converted 14 Mar 2020, 12:00"
+        );
+        run.converted = false;
+        assert_eq!(
+            subtitle(Some(&run), now),
+            "last attempt failed 14 Mar 2020, 12:00"
+        );
+    }
+
+    #[test]
+    fn the_strip_reads_a_run_of_3725_seconds_as_62_m_5_s() {
+        // Built in memory: a real stand-in run lasts under a second, so never shows minutes.
+        let run = LastRun {
+            started: SystemTime::now(),
+            seconds: 3725,
+            converted: true,
+            exit_code: Some(0),
+            message: String::new(),
+            fix: None,
+            books: 4,
+            homebrew: 1,
+            folders: vec![("compendium/bestiary".into(), 3226)],
+            warnings: Vec::new(),
+            log: vec!["Done".into()],
+        };
+        let mut harness = egui_kittest::Harness::builder()
+            .with_context_setup(theme::install)
+            .build_ui_state(
+                |ui, view: &mut LastRunView| {
+                    view.show(ui, Some(&run));
+                },
+                LastRunView::default(),
+            );
+        harness.run();
+        harness.get_by_label("62 m 5 s");
     }
 }

@@ -138,6 +138,7 @@ impl Profiles {
             templates: None,
         };
         let id = profile.id.clone();
+        // A new profile has no template folder, so its save never warns.
         self.save(profile).inspect_err(|_| {
             // A config without its fields file never loads, yet would keep the id taken.
             let _ = self.files.delete(&id);
@@ -145,7 +146,8 @@ impl Profiles {
         Ok(id)
     }
 
-    pub(crate) fn rename(&mut self, id: &str, name: &str) -> Result<(), String> {
+    /// As `save`: `Some` is a warning about a save that went ahead.
+    pub(crate) fn rename(&mut self, id: &str, name: &str) -> Result<Option<String>, String> {
         let profile = self
             .list
             .iter()
@@ -158,38 +160,41 @@ impl Profiles {
         self.save(renamed)
     }
 
-    /// Writes a new or changed profile at once.
-    pub(crate) fn save(&mut self, profile: Profile) -> Result<(), String> {
+    /// Writes a new or changed profile at once. `Some` is a warning for the user about a save that
+    /// went ahead: its template folder could not be read, so its templates were left out.
+    pub(crate) fn save(&mut self, profile: Profile) -> Result<Option<String>, String> {
         if !is_valid_name(&profile.name) {
             return Err("A profile needs a name.".into());
         }
         let mut profile = Profile {
-            address: profile.address.trim().into(),
-            images_address: profile.images_address.trim().into(),
+            address: download_address(&profile.address),
+            images_address: download_address(&profile.images_address),
             vault: profile
                 .vault
                 .to_str()
                 .map_or(profile.vault.clone(), |v| v.trim().into()),
             ..profile
         };
+        let old = self.get(&profile.id).ok();
         // Each game's books have their own codes, so a switch of game rules starts over.
-        if self
-            .get(&profile.id)
-            .is_ok_and(|old| old.rules != profile.rules)
-        {
+        if old.is_some_and(|old| old.rules != profile.rules) {
             profile.config.sources.book.clear();
             profile.config.sources.adventure.clear();
         }
         if profile.address.is_empty() {
             return Err("A profile needs a game data address.".into());
         }
-        // The cache keeps one copy per address, checked as game data or not at all.
+        // The cache keeps one copy per address, checked as game data or not at all. Only an
+        // address this save changes is checked, so profiles that clashed before the rule still save.
         let mut others = self.list.iter().filter(|p| p.id != profile.id);
-        if others.clone().any(|p| p.images_address == profile.address) {
+        let address_changed = old.is_none_or(|old| old.address != profile.address);
+        let images_changed = old.is_none_or(|old| images(old) != images(&profile));
+        if address_changed && others.clone().any(|p| images(p) == Some(&profile.address)) {
             return Err("That address is used for book images, so it can't be game data.".into());
         }
-        if profile.images_address == profile.address
-            || others.any(|p| p.address == profile.images_address)
+        if let Some(images) = images(&profile)
+            && ((address_changed || images_changed) && images == profile.address
+                || images_changed && others.any(|p| p.address == images))
         {
             return Err("That address is used for game data, so it can't be book images.".into());
         }
@@ -203,7 +208,8 @@ impl Profiles {
         let homebrew = &mut profile.config.sources.homebrew;
         *homebrew = homebrew.iter().map(|f| converter_path(f)).collect();
         homebrew.retain(|f| listed.insert(f.clone()));
-        profile.config.template = self.templates(&profile)?;
+        let (template, unread) = self.templates(&profile);
+        profile.config.template = template;
         self.files
             .save(&profile)
             .map_err(|e| format!("Could not save the profile: {e}"))?;
@@ -212,29 +218,34 @@ impl Profiles {
             None => self.list.push(profile),
         }
         self.sort();
-        Ok(())
+        Ok(unread.map(|e| {
+            format!("{e}. The profile is saved without its templates; Convert waits until the folder is back.")
+        }))
     }
 
     /// Rewrites the profile's `template` keys from its template folder as it is now, since the
-    /// user may add or remove templates after saving. Run before each conversion. Not `save`:
-    /// that would quietly fix hand-edited folders the conversion must refuse.
+    /// user may add or remove templates after saving. Run before each conversion. Only that key
+    /// of the file on disk changes: the user may have edited the rest by hand since it was saved,
+    /// and the app's copy takes those edits. Not `save`: that would quietly fix hand-edited
+    /// folders the conversion must refuse.
     pub(crate) fn refresh_templates(&mut self, id: &str) -> Result<(), String> {
         let i = self.list.iter().position(|p| p.id == id);
         let i = i.ok_or("That profile no longer exists.")?;
-        let templates = self.templates(&self.list[i])?;
-        if templates == self.list[i].config.template {
-            return Ok(());
+        let (templates, unread) = self.templates(&self.list[i]);
+        if let Some(e) = unread {
+            return Err(e);
         }
-        let mut profile = self.list[i].clone();
-        profile.config.template = templates;
-        self.files
-            .save(&profile)
-            .map_err(|e| format!("Could not save the profile: {e}"))?;
-        self.list[i] = profile;
+        let config = self
+            .files
+            .save_templates(id, &self.list[i].config, &templates)
+            .map_err(|e| format!("Could not update the profile file's templates: {e}"))?;
+        self.list[i].config = config;
         Ok(())
     }
 
     pub(crate) fn delete(&mut self, id: &str) -> Result<(), String> {
+        // Never trust the caller with a path: only a listed profile's own files go.
+        self.get(id)?;
         self.files
             .delete(id)
             .map_err(|e| format!("Could not delete the profile: {e}"))?;
@@ -245,20 +256,29 @@ impl Profiles {
     /// The converter's `template` keys: the statblock template when switched on (it is 5e only),
     /// then each template in the profile's own folder, replacing the built-in one of its type.
     /// A file for a type the profile's rules lack is left out: the converter refuses unknown keys.
-    fn templates(&self, profile: &Profile) -> Result<BTreeMap<String, PathBuf>, String> {
+    /// A folder that cannot be read is left out too, and the second value says why.
+    fn templates(&self, profile: &Profile) -> (BTreeMap<String, PathBuf>, Option<String>) {
         let mut templates = BTreeMap::new();
         if profile.config.yaml_statblocks && profile.rules == Rules::Dnd5e {
             templates.insert("monster".into(), converter_path(&self.statblock_template));
         }
         let Some(folder) = &profile.templates else {
-            return Ok(templates);
+            return (templates, None);
         };
         let types = match profile.rules {
             Rules::Dnd5e => TEMPLATE_TYPES_5E,
             Rules::Pf2e => TEMPLATE_TYPES_PF2E,
         };
-        let files =
-            files_in(folder).map_err(|e| format!("Could not read the template folder: {e}"))?;
+        let files = match files_in(folder) {
+            Ok(files) => files,
+            Err(e) => {
+                let e = format!(
+                    "Could not read the template folder {}: {e}",
+                    folder.display()
+                );
+                return (templates, Some(e));
+            }
+        };
         for (name, path) in files {
             // The converter's own naming: `monster2md.txt` is the monster template, plus `index.txt`.
             let key = match name.strip_suffix("2md.txt") {
@@ -270,7 +290,7 @@ impl Profiles {
                 templates.insert(key.into(), converter_path(&path));
             }
         }
-        Ok(templates)
+        (templates, None)
     }
 
     fn sort(&mut self) {
@@ -300,6 +320,46 @@ impl Profiles {
         }
         id
     }
+}
+
+/// The profile's book images address, if it has one. Switched off, it still counts: switching
+/// them back on downloads that address as book images, never as game data.
+fn images(profile: &Profile) -> Option<&str> {
+    let address = profile.images_address.as_str();
+    (!address.is_empty()).then_some(address)
+}
+
+/// An address as the profile saves it: trimmed, with a GitHub repository page turned into its zip
+/// download, so the download and the one-copy-per-address rule see one form. Others stay as typed.
+pub fn download_address(address: &str) -> String {
+    let address = address.trim();
+    let scheme = if address.starts_with("http://") {
+        "http://"
+    } else {
+        "https://"
+    };
+    let Some(path) = address
+        .strip_prefix(scheme)
+        .and_then(|a| a.strip_prefix("github.com/"))
+    else {
+        return address.into();
+    };
+    if path.contains(['?', '#']) {
+        return address.into();
+    }
+    let path = path.trim_end_matches('/');
+    let mut parts = path.splitn(4, '/');
+    let (owner, repo) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+    let repo = repo.strip_suffix(".git").unwrap_or(repo);
+    let archive = match (parts.next(), parts.next()) {
+        (None, _) => "HEAD".to_string(),
+        (Some("tree"), Some(branch)) if !branch.is_empty() => format!("refs/heads/{branch}"),
+        _ => return address.into(),
+    };
+    if owner.is_empty() || repo.is_empty() {
+        return address.into();
+    }
+    format!("{scheme}github.com/{owner}/{repo}/archive/{archive}.zip")
 }
 
 /// A file path as the converter config wants it: Windows paths written with `/`, as its docs ask.

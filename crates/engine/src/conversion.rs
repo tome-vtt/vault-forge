@@ -10,8 +10,9 @@ use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
+use crate::game_data::GameData;
 use crate::last_run::{self, LastRuns};
-use crate::profiles::vault_folder;
+use crate::profiles::{Profiles, vault_folder};
 use crate::{ConvertedNotes, Event, Fix, LastRun, Profile, converter, holding_folder};
 
 pub(crate) struct Conversion {
@@ -47,22 +48,41 @@ impl Conversion {
         self.running.lock().unwrap().as_ref().map(|r| r.id.clone())
     }
 
-    /// Starts converting the profile from the config file and the game data's `data` folder,
-    /// unless a conversion is already running anywhere in the app.
+    /// Starts converting the profile from its config file and its game data's `data` folder,
+    /// unless [`Profile::blocker`] refuses it: one conversion at a time across the app, no
+    /// download running, game data downloaded and a book chosen.
     pub(crate) fn start(
         &self,
-        profile: &Profile,
-        config: &Path,
-        data: &Path,
+        profiles: &mut Profiles,
+        game_data: &GameData,
+        id: &str,
     ) -> Result<(), String> {
         let mut running = self.running.lock().unwrap();
-        if running.is_some() {
-            return Err("Another profile is converting.".into());
+        let p = profiles.get(id)?;
+        let data = game_data.data_folder(&p.address);
+        // As `is_downloading`: switched-off images count until they have stopped.
+        let downloading = p.downloads().iter().any(|(a, _)| game_data.is_running(a))
+            || game_data.is_stopping(&p.images_address);
+        let converting = running.as_ref().map(|r| r.id.as_str());
+        if let Some(reason) = p.blocker(data.is_some(), downloading, converting) {
+            return Err(reason.into());
         }
-        let folders = folders(profile)?;
+        let data = data.unwrap_or_default();
+        profiles.refresh_templates(id)?;
+        let (profile, config) = (profiles.get(id)?, profiles.file(id));
+        let checked = checked_folders(profile)?;
+        if holding_folder::holds_old_folders(&profile.vault) {
+            return Err(format!(
+                "Could not make the holding folder in the vault: {} still holds old notes that \
+                 could not be put back; move them back into the vault first",
+                profile.vault.join(holding_folder::NAME).display()
+            ));
+        }
         let holding = holding_folder::create(&profile.vault)
             .map_err(|e| format!("Could not make the holding folder in the vault: {e}"))?;
-        let started = converter::start(&self.converter, config, profile.rules, data, &holding);
+        // Probed only now: the holding folder is the one entry sure to be on the vault's own disk.
+        let folders = replaced(checked, case_blind([holding.clone()]));
+        let started = converter::start(&self.converter, &config, profile.rules, &data, &holding);
         let (child, lines) = started.map_err(|e| {
             let _ = holding_folder::discard(&holding);
             format!("Could not start the converter: {e}")
@@ -119,34 +139,8 @@ impl Conversion {
                 .unwrap()
                 .as_ref()
                 .is_some_and(|r| r.cancelled);
-            let mut keep = false;
-            let (converted, mut message, fix) = match code {
-                _ if cancelled => (false, CANCELLED.to_owned(), None),
-                Some(0) => match holding_folder::swap(&holding, &vault, &folders) {
-                    Ok(()) => (true, explain(Some(0)), None),
-                    Err(failed) if failed.put_back => (
-                        false,
-                        format!(
-                            "Could not put the notes into the vault ({}), so it was not changed.",
-                            failed.error
-                        ),
-                        Some(Fix::Vault),
-                    ),
-                    // The old notes are still in the holding folder, so it must stay.
-                    Err(failed) => {
-                        keep = true;
-                        let message = format!(
-                            "Could not put the notes into the vault ({}), and some of your old \
-                             notes could not be put back: they are in {}.",
-                            failed.error,
-                            holding.display()
-                        );
-                        (false, message, Some(Fix::Vault))
-                    }
-                },
-                Some(2) => (false, explain(code), Some(Fix::DownloadAddress)),
-                code => (false, explain(code), None),
-            };
+            let swap = || holding_folder::swap(&holding, &vault, &folders);
+            let (converted, mut message, fix, keep) = ended(code, cancelled, &holding, swap);
             if !keep {
                 let _ = holding_folder::discard(&holding);
             }
@@ -204,6 +198,40 @@ impl Drop for Conversion {
 
 const CANCELLED: &str = "Conversion cancelled, so your vault was not changed.";
 
+/// How a conversion that ran to its end turned out: whether it converted, its sentence, the fix it
+/// points to, and whether the holding folder stays. It stays only when a swap that failed could
+/// not put every old folder back, since it then holds the old notes; the sentence names it.
+fn ended(
+    code: Option<i32>,
+    cancelled: bool,
+    holding: &Path,
+    swap: impl FnOnce() -> Result<(), holding_folder::SwapFailed>,
+) -> (bool, String, Option<Fix>, bool) {
+    match code {
+        _ if cancelled => (false, CANCELLED.to_owned(), None, false),
+        Some(0) => match swap() {
+            Ok(()) => (true, explain(Some(0)), None, false),
+            Err(failed) => {
+                let keep = !failed.put_back;
+                let tail = match keep {
+                    true => format!(
+                        "and some of your old notes could not be put back: they are in {}",
+                        holding.display()
+                    ),
+                    false => "so it was not changed".into(),
+                };
+                let message = format!(
+                    "Could not put the notes into the vault ({}), {tail}.",
+                    failed.error
+                );
+                (false, message, Some(Fix::Vault), keep)
+            }
+        },
+        Some(2) => (false, explain(code), Some(Fix::DownloadAddress), false),
+        code => (false, explain(code), None, false),
+    }
+}
+
 /// The converter's exit code as one plain sentence; `None` when it was stopped from outside.
 fn explain(code: Option<i32>) -> String {
     match code {
@@ -221,10 +249,9 @@ fn explain(code: Option<i32>) -> String {
     }
 }
 
-/// The vault folders a conversion replaces: the compendium and rules folders, leaving out one
-/// inside the other, since replacing the outer one replaces it too. Refused when one is not a
-/// folder inside the vault, as a config edited by hand can say, or is the holding folder.
-fn folders(profile: &Profile) -> Result<Vec<String>, String> {
+/// The profile's compendium and rules folders. Refused when one is not a folder inside the
+/// vault, as a config edited by hand can say, or is the holding folder.
+fn checked_folders(profile: &Profile) -> Result<[String; 2], String> {
     let inside = |folder: &str, what: &str| {
         let checked = vault_folder(folder, what)?;
         let rooted = folder.trim_start().starts_with(['/', '\\']);
@@ -238,13 +265,51 @@ fn folders(profile: &Profile) -> Result<Vec<String>, String> {
     };
     let compendium = inside(&profile.config.paths.compendium, "compendium")?;
     let rules = inside(&profile.config.paths.rules, "rules")?;
-    Ok(if Path::new(&rules).starts_with(&compendium) {
+    Ok([compendium, rules])
+}
+
+/// The vault folders a conversion replaces: the compendium and rules folders, leaving out one
+/// inside the other, since replacing the outer one replaces it too. Compared the way the vault's
+/// disk names folders: `Compendium/` and `compendium/rules/` are one folder on a `case_blind` one.
+fn replaced([compendium, rules]: [String; 2], case_blind: bool) -> Vec<String> {
+    let key = |folder: &str| match case_blind {
+        true => folder.to_lowercase(),
+        false => folder.to_owned(),
+    };
+    let (outer, inner) = (key(&compendium), key(&rules));
+    if Path::new(&inner).starts_with(&outer) {
         vec![compendium]
-    } else if Path::new(&compendium).starts_with(&rules) {
+    } else if Path::new(&outer).starts_with(&inner) {
         vec![rules]
     } else {
         vec![compendium, rules]
-    })
+    }
+}
+
+/// Whether the disk holding `entries`, existing entries listed by their own names, ignores letter
+/// case in names, as most Windows and macOS disks do and a FAT, exFAT or NTFS disk does under
+/// Linux: the first entry whose name has letters is found under its name in other letter case,
+/// which is not listed as an entry of its own. With nothing to try, it goes by the platform.
+fn case_blind(entries: impl IntoIterator<Item = PathBuf>) -> bool {
+    let probe = |path: PathBuf| {
+        let name = path.file_name()?.to_str()?;
+        let other = match name.to_ascii_lowercase() {
+            lower if lower != name => lower,
+            _ => name.to_ascii_uppercase(),
+        };
+        if other == name {
+            return None;
+        }
+        fs::symlink_metadata(&path).ok()?;
+        let parent = path.parent()?;
+        let listed = fs::read_dir(parent)
+            .ok()?
+            .flatten()
+            .any(|e| e.file_name() == other.as_str());
+        Some(!listed && fs::symlink_metadata(parent.join(other)).is_ok())
+    };
+    let found = entries.into_iter().find_map(probe);
+    found.unwrap_or(cfg!(any(windows, target_os = "macos")))
 }
 
 /// The notes in the holding folder's `folders` so far, by vault folder (`compendium/bestiary`);
@@ -260,7 +325,7 @@ fn written(holding: &Path, folders: &[String]) -> Vec<(String, usize)> {
         {
             let path = entry.path();
             let (mut notes, mut newest) = (0, SystemTime::UNIX_EPOCH);
-            let name = if path.is_dir() {
+            let name = if entry.file_type().is_ok_and(|k| k.is_dir()) {
                 walk(&path, &mut notes, &mut newest);
                 format!("{own}/{}", entry.file_name().to_string_lossy())
             } else {
@@ -287,7 +352,8 @@ fn by_name(written: &[(String, usize)]) -> Vec<(String, usize)> {
 fn walk(dir: &Path, notes: &mut usize, newest: &mut SystemTime) {
     for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
         let path = entry.path();
-        if path.is_dir() {
+        // The entry's own type, so a link counts as a note and is never followed.
+        if entry.file_type().is_ok_and(|k| k.is_dir()) {
             walk(&path, notes, newest);
         } else {
             *notes += 1;
@@ -302,7 +368,11 @@ fn walk(dir: &Path, notes: &mut usize, newest: &mut SystemTime) {
 // ponytail: walks the folders on the caller's thread; move it to a worker if a vault of many
 // thousand notes makes Convert pause.
 pub(crate) fn converted_notes(profile: &Profile) -> Option<ConvertedNotes> {
-    let folders = folders(profile).ok()?;
+    let checked = checked_folders(profile).ok()?;
+    // With no holding folder between conversions, the vault's own entries are probed.
+    // ponytail: a disk mounted inside the vault is not probed; only the note count is at stake.
+    let entries = fs::read_dir(&profile.vault).into_iter().flatten().flatten();
+    let folders = replaced(checked, case_blind(entries.map(|e| e.path())));
     let (mut notes, mut written) = (0, SystemTime::UNIX_EPOCH);
     for folder in &folders {
         walk(&profile.vault.join(folder), &mut notes, &mut written);
@@ -312,4 +382,71 @@ pub(crate) fn converted_notes(profile: &Profile) -> Option<ConvertedNotes> {
         written,
         folders,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use holding_folder::SwapFailed;
+
+    // No real swap fails to put a folder back on demand, so the failure is made here.
+    fn swap_failing(put_back: bool) -> impl FnOnce() -> Result<(), SwapFailed> {
+        move || {
+            Err(SwapFailed {
+                error: std::io::Error::other("denied"),
+                put_back,
+            })
+        }
+    }
+
+    #[test]
+    fn the_holding_folder_tells_whether_the_vault_disk_ignores_letter_case() {
+        let dir = tempfile::tempdir().unwrap();
+        // A vault not made yet: its holding folder is made, then probed.
+        let holding = holding_folder::create(&dir.path().join("New vault")).unwrap();
+
+        // The runners' own disks: case-blind on Windows and macOS, case-sensitive on Linux.
+        assert_eq!(
+            case_blind([holding]),
+            cfg!(any(windows, target_os = "macos"))
+        );
+    }
+
+    #[test]
+    fn a_swap_that_cannot_put_old_notes_back_keeps_them_and_says_where() {
+        let holding = Path::new("vault").join(holding_folder::NAME);
+
+        let ended = ended(Some(0), false, &holding, swap_failing(false));
+
+        assert_eq!(
+            ended,
+            (
+                false,
+                format!(
+                    "Could not put the notes into the vault (denied), and some of your old notes \
+                     could not be put back: they are in {}.",
+                    holding.display()
+                ),
+                Some(Fix::Vault),
+                true
+            )
+        );
+    }
+
+    #[test]
+    fn a_swap_that_put_everything_back_discards_the_holding_folder() {
+        let holding = Path::new("vault").join(holding_folder::NAME);
+
+        let ended = ended(Some(0), false, &holding, swap_failing(true));
+
+        assert_eq!(
+            ended,
+            (
+                false,
+                "Could not put the notes into the vault (denied), so it was not changed.".into(),
+                Some(Fix::Vault),
+                false
+            )
+        );
+    }
 }

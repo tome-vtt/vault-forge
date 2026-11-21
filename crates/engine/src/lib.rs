@@ -33,7 +33,7 @@ use last_run::LastRuns;
 use profiles::Profiles;
 
 pub use last_run::{Fix, LastRun, LogLevel, Warning, log_level};
-pub use profiles::{ProfileDraft, is_valid_name};
+pub use profiles::{ProfileDraft, download_address, is_valid_name};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Rules {
@@ -135,7 +135,7 @@ pub enum Group {
     Adventures,
 }
 
-/// One book or adventure in the game data's lists.
+/// One book in the game data's lists, adventures included.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Book {
     /// The source code the converter config names it by, such as XPHB.
@@ -154,10 +154,6 @@ impl Profile {
             downloads.push((self.images_address.as_str(), Kind::Images));
         }
         downloads
-    }
-
-    fn uses(&self, address: &str) -> bool {
-        self.address == address || self.images_address == address
     }
 
     /// How many books are chosen, adventures included.
@@ -194,25 +190,45 @@ impl Profile {
         }
     }
 
-    /// Whether the book is chosen.
-    pub fn has(&self, book: &Book) -> bool {
-        let codes = match book.group {
+    /// The codes chosen in a group: an adventure is kept under the config's `adventure` key, any
+    /// other book under `book`.
+    pub fn codes(&self, group: Group) -> &[String] {
+        match group {
             Group::Adventures => &self.config.sources.adventure,
             _ => &self.config.sources.book,
-        };
-        codes.contains(&book.code)
+        }
     }
 
-    /// Ticks or unticks a book: an adventure goes in the config's `adventure` key, any other
-    /// book in `book`.
-    pub fn choose(&mut self, book: &Book, on: bool) {
-        let codes = match book.group {
+    fn codes_mut(&mut self, group: Group) -> &mut Vec<String> {
+        match group {
             Group::Adventures => &mut self.config.sources.adventure,
             _ => &mut self.config.sources.book,
-        };
+        }
+    }
+
+    /// Whether the book is chosen.
+    pub fn has(&self, book: &Book) -> bool {
+        self.codes(book.group).contains(&book.code)
+    }
+
+    /// Ticks or unticks a book.
+    pub fn choose(&mut self, book: &Book, on: bool) {
+        let codes = self.codes_mut(book.group);
         codes.retain(|code| *code != book.code);
         if on {
             codes.push(book.code.clone());
+        }
+    }
+
+    /// Replaces a group's codes with those typed where the game data has no books list to tick:
+    /// separated by commas or spaces, each kept once.
+    pub fn type_codes(&mut self, group: Group, text: &str) {
+        let codes = self.codes_mut(group);
+        codes.clear();
+        for code in text.split(|c: char| c == ',' || c.is_whitespace()) {
+            if !code.is_empty() && !codes.iter().any(|c| c == code) {
+                codes.push(code.to_owned());
+            }
         }
     }
 
@@ -282,18 +298,6 @@ pub enum Appearance {
     System,
     Light,
     Dark,
-}
-
-/// The book codes typed where the game data has no books list to tick: separated by commas or
-/// spaces, each once.
-pub fn typed_codes(text: &str) -> Vec<String> {
-    let mut codes: Vec<String> = Vec::new();
-    for code in text.split(|c: char| c == ',' || c.is_whitespace()) {
-        if !code.is_empty() && !codes.iter().any(|c| c == code) {
-            codes.push(code.to_owned());
-        }
-    }
-    codes
 }
 
 #[derive(Debug)]
@@ -373,7 +377,8 @@ pub enum Event {
         converted: bool,
         message: String,
     },
-    /// A command could not be carried out; the message is for the user.
+    /// A command could not be carried out, or a save went ahead with a problem to tell the user
+    /// (its template folder could not be read); the message is for the user.
     Failed(String),
 }
 
@@ -527,8 +532,9 @@ impl Engine {
             Command::CreateProfile(draft) => profiles.create(draft).map(|id| {
                 let _ = self.events.send(Event::ProfileCreated(id));
             }),
-            Command::RenameProfile { id, name } => profiles.rename(&id, &name).map(|()| {
+            Command::RenameProfile { id, name } => profiles.rename(&id, &name).map(|warning| {
                 let _ = self.events.send(Event::ProfileSaved(id));
+                self.warn(warning);
             }),
             Command::DeleteProfile(id) if self.conversion.converting() == Some(id.clone()) => {
                 Err(WAIT_FOR_CONVERSION.into())
@@ -547,7 +553,7 @@ impl Engine {
                 }
             }),
             Command::DownloadGameData(profile)
-                if self.converting_from(&profiles, &profile.address) =>
+                if self.converting_from(&profiles, &download_address(&profile.address)) =>
             {
                 Err(WAIT_FOR_CONVERSION.into())
             }
@@ -566,27 +572,7 @@ impl Engine {
                     self.game_data.cancel(address);
                 }
             }),
-            Command::Convert(id) => profiles
-                .get(&id)
-                .and_then(|p| {
-                    let data = self.game_data.data_folder(&p.address);
-                    // As `is_downloading`: switched-off images count until they have stopped.
-                    let downloading = p
-                        .downloads()
-                        .iter()
-                        .any(|(a, _)| self.game_data.is_running(a))
-                        || self.game_data.is_stopping(&p.images_address);
-                    let converting = self.conversion.converting();
-                    match p.blocker(data.is_some(), downloading, converting.as_deref()) {
-                        Some(reason) => Err(reason.into()),
-                        None => Ok(data.unwrap_or_default()),
-                    }
-                })
-                .and_then(|data| {
-                    profiles.refresh_templates(&id)?;
-                    let p = profiles.get(&id)?;
-                    self.conversion.start(p, &profiles.file(&id), &data)
-                }),
+            Command::Convert(id) => self.conversion.start(&mut profiles, &self.game_data, &id),
             Command::CancelConversion(id) => {
                 self.conversion.cancel(&id);
                 Ok(())
@@ -610,11 +596,11 @@ impl Engine {
         let old = profiles.get(&profile.id)?.clone();
         // Its old copy would be removed while the converter reads it.
         let converting = self.conversion.converting() == Some(profile.id.clone());
-        if converting && profile.address != old.address {
+        if converting && download_address(&profile.address) != old.address {
             return Err(WAIT_FOR_CONVERSION.into());
         }
         let id = profile.id.clone();
-        profiles.save(profile)?;
+        let warning = profiles.save(profile)?;
         let new = profiles.get(&id)?.clone();
         // A changed address or images switch is checked at once, so its state and the images'
         // size show before anything downloads.
@@ -624,8 +610,16 @@ impl Engine {
             }
         }
         let _ = self.events.send(Event::ProfileSaved(id));
+        self.warn(warning);
         self.release_unused(profiles, &old)?;
         Ok(new)
+    }
+
+    /// Tells the user about a change that was saved all the same.
+    fn warn(&self, warning: Option<String>) {
+        if let Some(message) = warning {
+            let _ = self.events.send(Event::Failed(message));
+        }
     }
 
     /// Whether the running conversion reads the address's game data, which nothing may replace
@@ -636,15 +630,15 @@ impl Engine {
     }
 
     /// Stops each of `old`'s downloads that no profile downloads any more (images switched
-    /// off), and removes the cached copy of each of its addresses that no profile uses.
+    /// off included), and removes its cached copy.
     fn release_unused(&self, profiles: &Profiles, old: &Profile) -> Result<(), String> {
         for address in [&old.address, &old.images_address] {
             let downloads = |p: &Profile| p.downloads().iter().any(|(a, _)| a == address);
             if !profiles.list().iter().any(downloads) {
                 self.game_data.stop(address);
-            }
-            if !address.is_empty() && !profiles.list().iter().any(|p| p.uses(address)) {
-                self.game_data.release(address)?;
+                if !address.is_empty() {
+                    self.game_data.release(address)?;
+                }
             }
         }
         Ok(())

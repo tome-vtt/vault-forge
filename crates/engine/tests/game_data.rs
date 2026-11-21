@@ -397,6 +397,13 @@ fn switching_images_off_mid_download_stops_it_and_leaves_no_partial_folder() {
         saved.convert_blocker(&data, None),
         Some("Wait for the download to finish.")
     );
+    // The Engine's own refusal ends too, once the download has stopped.
+    engine.send(Command::Convert(saved.id.clone()));
+    let refused = events.try_iter().find_map(|e| match e {
+        Event::Failed(message) => Some(message),
+        _ => None,
+    });
+    assert_eq!(refused.as_deref(), Some("Choose at least one book first."));
     assert_eq!(cache_entries(dir.path()), copies);
 }
 
@@ -432,6 +439,34 @@ fn convert_waits_for_switched_off_images_to_stop_downloading() {
         _ => None,
     });
     assert_eq!(refused.as_deref(), Some("Wait for the download to finish."));
+}
+
+#[test]
+fn convert_is_refused_while_the_profiles_game_data_is_downloading() {
+    let server = Server::start();
+    let address = format!("{}/stalled.zip", server.url);
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Thursday", &address);
+    engine.send(Command::DownloadGameData(profile.clone()));
+    wait(&events, &address, |s| {
+        matches!(s, DataState::Downloading { .. })
+    });
+
+    engine.send(Command::Convert(profile.id));
+
+    let after: Vec<Event> = events.try_iter().collect();
+    let refused = after.iter().find_map(|e| match e {
+        Event::Failed(message) => Some(message.as_str()),
+        _ => None,
+    });
+    assert_eq!(refused, Some("Wait for the download to finish."));
+    assert!(
+        !after
+            .iter()
+            .any(|e| matches!(e, Event::ConversionStarted(_))),
+        "no conversion starts"
+    );
 }
 
 #[test]
@@ -941,4 +976,233 @@ fn a_data_folder_with_no_books_list_leaves_the_books_to_be_typed() {
     let state = wait(&events, &address, |_| true);
     assert!(state.can_convert(), "the copy is still there");
     assert_eq!(book_list(state), [], "nothing to tick, so codes are typed");
+}
+
+/// Game data that unpacks to about `gib` GiB of zeros: one 64 MiB entry, compressed once and
+/// copied, so the archive itself stays about a thousandth of that.
+fn bomb(gib: usize) -> Vec<u8> {
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let books = list(
+        "book",
+        &[("PHB", "Player's Handbook", "core", "2014-08-19")],
+    );
+    zip.start_file(
+        "5etools-src/data/books.json",
+        zip::write::SimpleFileOptions::default(),
+    )
+    .unwrap();
+    zip.write_all(books.as_bytes()).unwrap();
+    zip.start_file(
+        "5etools-src/zeros/0",
+        zip::write::SimpleFileOptions::default(),
+    )
+    .unwrap();
+    let chunk = vec![0; 1024 * 1024];
+    for _ in 0..64 {
+        zip.write_all(&chunk).unwrap();
+    }
+    for i in 1..gib * 16 {
+        zip.deep_copy_file("5etools-src/zeros/0", &format!("5etools-src/zeros/{i}"))
+            .unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
+#[test]
+fn an_archive_that_unpacks_to_more_than_64_gb_is_refused_and_the_previous_copy_kept() {
+    let server = Server::start();
+    let address = server.put("/data.zip", game_data(3, 0));
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Thursday", &address);
+    engine.send(Command::DownloadGameData(profile.clone()));
+    wait(&events, &address, ready);
+    let kept = cache_entries(dir.path());
+
+    server.put("/data.zip", bomb(65));
+    engine.send(Command::DownloadGameData(profile.clone()));
+
+    let message = loop {
+        match events.recv_timeout(Duration::from_secs(30)).unwrap() {
+            Event::Failed(message) => break message,
+            Event::GameData { state, .. } => assert!(!ready(&state), "unpacked: {state:?}"),
+            _ => {}
+        }
+    };
+    assert!(message.contains("64 GB"), "{message}");
+    assert_eq!(
+        books(wait(&events, &address, |_| true)),
+        3,
+        "the copy there was"
+    );
+    assert_eq!(cache_entries(dir.path()), kept, "no .new folder left");
+}
+
+#[test]
+fn cancel_while_unpacking_stops_it_and_leaves_no_partial_folder() {
+    let server = Server::start();
+    let address = server.put("/data.zip", bomb(63));
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Thursday", &address);
+
+    engine.send(Command::DownloadGameData(profile.clone()));
+    wait(&events, &address, |s| matches!(s, DataState::Unpacking));
+    engine.send(Command::CancelDownload(profile.id));
+
+    // Unpacking all of it would take far longer than `wait` allows.
+    let state = wait(&events, &address, |s| !matches!(s, DataState::Unpacking));
+    assert_eq!(state, DataState::Missing { size: None });
+    assert!(cache_entries(dir.path()).is_empty());
+}
+
+#[test]
+fn an_update_check_waiting_when_the_last_profile_is_deleted_reports_no_copy_ready() {
+    let server = Server::start();
+    let address = server.put("/data.zip", game_data(3, 2));
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Thursday", &address);
+    engine.send(Command::DownloadGameData(profile.clone()));
+    wait(&events, &address, ready);
+
+    let (go, answered) = server.hold_next_head();
+    engine.send(Command::CheckGameData(profile.id.clone()));
+    wait(&events, &address, ready);
+    engine.send(Command::DeleteProfile(profile.id));
+    go.send(()).unwrap();
+    answered.recv().unwrap();
+
+    // Closing the Engine ends the events only once every worker, the late check too, has ended.
+    drop(engine);
+    let late: Vec<DataState> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::GameData { address: a, state } if a == address => Some(state),
+            _ => None,
+        })
+        .collect();
+    assert!(!late.iter().any(ready), "removed copy reported: {late:?}");
+}
+
+/// A list holding one entry 5eTools never writes, then a good one.
+fn list_with_a_bad_entry(key: &str, good: (&str, &str, &str, &str)) -> String {
+    let good = list(key, &[good]);
+    let good = good.split_once('[').unwrap().1;
+    format!(r#"{{"{key}": [{{"id": "BAD", "name": "Odd", "published": null}}, {good}"#)
+}
+
+#[test]
+fn a_malformed_entry_in_the_books_list_is_skipped_and_the_rest_kept() {
+    let server = Server::start();
+    let books = list_with_a_bad_entry("book", ("PHB", "Player's Handbook", "core", "2014-08-19"));
+    let address = server.put("/5e.zip", zip(&[("5etools-src/data/books.json", books)]));
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Thursday", &address);
+
+    engine.send(Command::DownloadGameData(profile));
+
+    assert_eq!(
+        book_list(wait(&events, &address, ready)),
+        [book("PHB", "Player's Handbook", "2014", Group::CoreRules)]
+    );
+}
+
+#[test]
+fn a_malformed_entry_in_the_adventures_list_is_skipped_and_the_rest_kept() {
+    let server = Server::start();
+    let books = list(
+        "book",
+        &[("PHB", "Player's Handbook", "core", "2014-08-19")],
+    );
+    let adventures = list_with_a_bad_entry(
+        "adventure",
+        ("CoS", "Curse of Strahd", "supplement", "2016-03-15"),
+    );
+    let address = server.put(
+        "/5e.zip",
+        zip(&[
+            ("5etools-src/data/books.json", books),
+            ("5etools-src/data/adventures.json", adventures),
+        ]),
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Thursday", &address);
+
+    engine.send(Command::DownloadGameData(profile));
+
+    assert_eq!(
+        book_list(wait(&events, &address, ready)),
+        [
+            book("PHB", "Player's Handbook", "2014", Group::CoreRules),
+            book("CoS", "Curse of Strahd", "2016", Group::Adventures),
+        ]
+    );
+}
+
+#[test]
+fn an_archive_entry_that_climbs_out_of_its_folder_is_refused() {
+    let server = Server::start();
+    let books = list(
+        "book",
+        &[("PHB", "Player's Handbook", "core", "2014-08-19")],
+    );
+    let address = server.put(
+        "/data.zip",
+        zip(&[
+            ("5etools-src/data/books.json", books),
+            ("../../escaped.txt", "out".into()),
+        ]),
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, "Thursday", &address);
+
+    engine.send(Command::DownloadGameData(profile));
+
+    let state = wait(&events, &address, |s| {
+        !matches!(s, DataState::Downloading { .. } | DataState::Unpacking)
+    });
+    assert_eq!(state, DataState::NotGameData);
+    assert!(!dir.path().join("local").join("escaped.txt").exists());
+    assert!(cache_entries(dir.path()).is_empty());
+}
+
+#[test]
+fn switching_images_off_removes_their_copy_unless_another_profile_has_them_on() {
+    let server = Server::start();
+    let address = server.put("/data.zip", game_data(1, 0));
+    let images = server.put("/img.zip", zip(&[("img/a.webp", "x".into())]));
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let on = |profile: Profile| Profile {
+        images: true,
+        images_address: images.clone(),
+        ..profile
+    };
+    let thursday = on(create(&engine, &events, "Thursday", &address));
+    let friday = on(create(&engine, &events, "Friday", &address));
+    engine.send(Command::SaveProfile(friday.clone()));
+    engine.send(Command::DownloadImages(thursday.clone()));
+    wait(&events, &images, ready);
+    let copies = cache_entries(dir.path());
+    assert_eq!(copies.len(), 1, "only the images are downloaded");
+
+    engine.send(Command::SaveProfile(Profile {
+        images: false,
+        ..thursday
+    }));
+    assert_eq!(
+        cache_entries(dir.path()),
+        copies,
+        "Friday still has them on"
+    );
+    engine.send(Command::SaveProfile(Profile {
+        images: false,
+        ..friday
+    }));
+
+    assert!(cache_entries(dir.path()).is_empty());
 }

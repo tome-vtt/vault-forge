@@ -18,7 +18,7 @@ How the app looks: System, which follows the operating system's light or dark lo
 _Avoid_: theme (for the user's choice), skin, mode
 
 **Game data**:
-The 5eTools or Pf2eTools data a profile reads its books from, downloaded from an address the user pastes.
+The 5eTools or Pf2eTools data a profile reads its books from, downloaded from an address the user pastes: a link to a zip file, or a GitHub repository page, which the profile saves as that repository's zip download.
 _Avoid_: source data, data folder, dataset
 
 **Data cache**:
@@ -30,7 +30,7 @@ The optional second download a profile can switch on, holding the books' portrai
 _Avoid_: assets, media, img
 
 **Book**:
-One source in the game data (a rulebook, supplement or adventure), named by its source code such as XPHB.
+One source in the game data (a rulebook, supplement or adventure), named by its source code such as XPHB. Adventures are Books, but the converter keeps their codes apart from the others', so the screens name them apart too, as "books and adventures".
 _Avoid_: source, module
 
 **Homebrew**:

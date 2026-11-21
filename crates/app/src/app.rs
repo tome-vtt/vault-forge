@@ -179,7 +179,15 @@ impl App {
                         self.screen = first_screen(&self.engine);
                     }
                 }
-                Event::ProfileSaved(id) => self.saved = Some(id),
+                Event::ProfileSaved(id) => {
+                    let saved = self.engine.profiles().into_iter().find(|p| p.id == id);
+                    if let Some(section) = self.game_data.as_mut().filter(|s| s.id == id)
+                        && let Some(profile) = saved
+                    {
+                        section.saved(&profile);
+                    }
+                    self.saved = Some(id);
+                }
                 Event::GameData { address, state } => {
                     self.data.insert(address, state);
                 }
@@ -216,6 +224,9 @@ impl App {
                     self.running = None;
                     self.ended = Some((id, converted, message));
                     self.last_run = None;
+                    if let Some(setup) = &mut self.setup {
+                        setup.notes = None;
+                    }
                 }
                 Event::NewerRelease {
                     version,
@@ -312,6 +323,7 @@ impl App {
                         if menu.clicked() {
                             self.menu_open = true;
                         }
+                        ui.add_space(16.0 - ui.spacing().item_spacing.x);
                     }
                     let title = match (open, &self.screen) {
                         (Some(profile), _) => {
@@ -366,7 +378,9 @@ impl App {
 
     /// The profile list, then the Appearance switch at the foot.
     fn sidebar(&mut self, ui: &mut egui::Ui, profiles: &[Profile]) {
-        ui.add_space(28.0);
+        ui.add_space(28.0 - ui.spacing().item_spacing.y);
+        // The demo's nav rows sit 2px apart.
+        ui.spacing_mut().item_spacing.y = 2.0;
         egui::Frame::new()
             .inner_margin(egui::Margin::symmetric(10, 0))
             .show(ui, |ui| {
@@ -375,22 +389,38 @@ impl App {
         ui.add_space(8.0 - ui.spacing().item_spacing.y);
         for p in profiles {
             let open = matches!(&self.screen, Screen::Profile(id) if *id == p.id);
-            if theme::nav_row(ui, open, &p.name, rules_tag(p.rules)).clicked() {
+            if theme::nav_row(
+                ui,
+                open,
+                Some(theme::Icon::Folder),
+                &p.name,
+                rules_tag(p.rules),
+            )
+            .clicked()
+            {
                 self.go(Screen::Profile(p.id.clone()));
             }
         }
         let on_new = matches!(self.screen, Screen::NewProfile);
-        if theme::add_row(ui, on_new, "+ New profile").clicked() {
+        if theme::add_row(ui, on_new, "New profile").clicked() {
             self.go(Screen::NewProfile);
         }
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
             // Bottom up: About is the last row, Obsidian setup above it.
             let on_about = matches!(self.screen, Screen::About);
-            if theme::nav_row(ui, on_about, "About", "").clicked() {
+            if theme::nav_row(ui, on_about, Some(theme::Icon::Info), "About", "").clicked() {
                 self.go(Screen::About);
             }
             let on_setup = matches!(self.screen, Screen::ObsidianSetup);
-            if theme::nav_row(ui, on_setup, "Obsidian setup", "").clicked() {
+            if theme::nav_row(
+                ui,
+                on_setup,
+                Some(theme::Icon::Checklist),
+                "Obsidian setup",
+                "",
+            )
+            .clicked()
+            {
                 self.go(Screen::ObsidianSetup);
             }
             let margin = egui::Margin {
@@ -677,7 +707,12 @@ impl App {
         };
         let mut cancel = false;
         let mut command = None;
-        let modal = egui::Modal::new(egui::Id::unique("profile_dialog")).frame(theme::dialog(ctx));
+        // One id per kind of dialog: egui keeps a modal's size between openings, so each kind's
+        // first opening gets its own unseen sizing pass and never reuses another kind's layout.
+        let kind = std::mem::discriminant(&*dialog);
+        let modal = egui::Modal::new(egui::Id::unique("profile_dialog").with(kind))
+            .frame(theme::dialog(ctx))
+            .backdrop_color(egui::Color32::from_rgba_unmultiplied(19, 20, 22, 92));
         modal.show(ctx, |ui| {
             ui.set_width(theme::dialog_width(ctx));
             match dialog {
@@ -841,7 +876,6 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
 
-    use chrono::TimeZone;
     use eframe::egui::Theme;
     use egui_kittest::Harness;
     use std::sync::mpsc::Sender;
@@ -881,15 +915,31 @@ mod tests {
 
     fn assert_looks(harness: &Harness<'_, App>, theme: Theme) {
         assert_eq!(harness.ctx.theme(), theme);
-        let p = match theme {
-            Theme::Light => &theme::LIGHT,
-            Theme::Dark => &theme::DARK,
-        };
-        let visuals = harness.ctx.global_style().visuals.clone();
-        assert_eq!(visuals.panel_fill, p.ground);
-        assert_eq!(visuals.window_fill, p.surface);
-        assert_eq!(visuals.hyperlink_color, p.accent);
-        assert_eq!(visuals.widgets.noninteractive.fg_stroke.color, p.text);
+        let v = harness.ctx.global_style().visuals.clone();
+        let w = &v.widgets;
+        // The demo's tokens, light then dark, written out here so a changed or swapped palette
+        // entry fails.
+        for (token, drawn, light, dark) in [
+            ("ground", v.panel_fill, 0xf6f8f9, 0x0f1011),
+            ("surface", v.window_fill, 0xffffff, 0x17181a),
+            ("border", v.window_stroke.color, 0xe8eaec, 0x2a2c2e),
+            ("rule", w.noninteractive.bg_stroke.color, 0xf0f1f2, 0x222325),
+            ("panel", v.faint_bg_color, 0xfafafa, 0x1d1e20),
+            ("field", v.extreme_bg_color, 0xffffff, 0x141517),
+            ("raised", v.code_bg_color, 0xf4f6f8, 0x202123),
+            ("active", v.selection.bg_fill, 0xe6e9eb, 0x2a2c2e),
+            ("control", w.inactive.bg_stroke.color, 0xcdced1, 0x45474a),
+            ("text", w.noninteractive.fg_stroke.color, 0x131416, 0xf2f3f4),
+            ("text2", w.inactive.fg_stroke.color, 0x3b3d3f, 0xd0d2d4),
+            ("muted", v.weak_text_color.unwrap(), 0x5d5f60, 0xb0b3b6),
+            ("accent", v.hyperlink_color, 0x1b6c80, 0x5fb8cc),
+            ("warning", v.warn_fg_color, 0x92400e, 0xe8b45a),
+            ("negative", v.error_fg_color, 0xc4242a, 0xef6b6b),
+        ] {
+            let rgb = u32::from_be_bytes([0, drawn.r(), drawn.g(), drawn.b()]);
+            let want = if theme == Theme::Light { light } else { dark };
+            assert_eq!(rgb, want, "{token} in {theme:?}");
+        }
     }
 
     #[test]
@@ -1075,6 +1125,18 @@ mod tests {
         (harness, events, heard)
     }
 
+    /// Passes the Engine's events `heard` on to the app's `events`, up to the one wanted.
+    fn forward(heard: &Receiver<Event>, events: &Sender<Event>, wanted: fn(&Event) -> bool) {
+        loop {
+            let event = heard.recv_timeout(Duration::from_secs(30)).unwrap();
+            let done = wanted(&event);
+            events.send(event).unwrap();
+            if done {
+                break;
+            }
+        }
+    }
+
     /// Turns the mouse wheel `dy` points with the pointer at `at`.
     fn wheel(harness: &Harness<'_, App>, at: egui::Pos2, dy: f32) {
         harness.hover_at(at);
@@ -1224,6 +1286,83 @@ mod tests {
     }
 
     #[test]
+    fn the_vault_folder_says_whether_the_vault_has_converted_notes_as_the_demo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        let vault = dir.path().join("vault");
+        let profile = harness.state().engine.profiles().remove(0);
+        let send = |harness: &Harness<'_, App>, vault: std::path::PathBuf| {
+            let profile = Profile {
+                vault,
+                ..profile.clone()
+            };
+            harness.state().engine.send(Command::SaveProfile(profile));
+        };
+        send(&harness, vault.clone());
+        harness.run();
+        harness.get_by_label("Empty");
+        harness.get_by_label("No converted notes in this vault yet.");
+
+        // A conversion that ends is read again.
+        std::fs::create_dir_all(vault.join("compendium")).unwrap();
+        std::fs::create_dir_all(vault.join("rules")).unwrap();
+        for n in 0..1000 {
+            std::fs::write(vault.join(format!("compendium/{n}.md")), "old").unwrap();
+        }
+        std::fs::write(vault.join("rules/older.md"), "older").unwrap();
+        let ended = Event::ConversionEnded {
+            id: profile.id.clone(),
+            converted: true,
+            message: "Converted.".into(),
+        };
+        events.send(ended).unwrap();
+        harness.run();
+        harness.get_by_label("Has notes");
+        harness
+            .get_by_label("1,001 notes from the last conversion. Converting again replaces them.");
+        assert!(harness.query_by_label("Empty").is_none());
+
+        // So is another vault.
+        send(&harness, dir.path().join("other"));
+        harness.run();
+        harness.get_by_label("Empty");
+        assert!(harness.query_by_label("Has notes").is_none());
+    }
+
+    #[test]
+    fn the_compendium_and_rules_folders_stack_at_phone_width_as_the_demo() {
+        let dir = tempfile::tempdir().unwrap();
+        for (width, stacked) in [(600.0, true), (601.0, false), (1280.0, false)] {
+            let (mut harness, _events) =
+                harness_on_profile(dir.path().join(width.to_string()).as_path(), width);
+            // Tall enough that the folder fields are painted without scrolling.
+            harness.set_size(egui::vec2(width, 1600.0));
+            harness.run();
+            let compendium = harness.get_by_label("Compendium folder").rect();
+            let rules = harness.get_by_label("Rules folder").rect();
+            if stacked {
+                assert_eq!(rules.left(), compendium.left(), "{width}: one column");
+                // The demo's 16px between the Compendium field and the Rules label. The fields
+                // carry their labels' names, so the label is found as painted.
+                let label = painted(&harness)
+                    .iter()
+                    .find_map(|s| match s {
+                        egui::Shape::Text(t) if t.galley.text() == "Rules folder" => Some(t.pos.y),
+                        _ => None,
+                    })
+                    .expect("the Rules folder label");
+                // As the other screens space a field from the next label: 16 after egui's own.
+                let spacing = harness.ctx.global_style().spacing.item_spacing.y;
+                let gap = label - compendium.bottom() - spacing;
+                assert!((gap - 16.0).abs() <= 0.5, "{width}: gap is {gap}");
+            } else {
+                assert_eq!(rules.top(), compendium.top(), "{width}: side by side");
+                assert!(rules.left() > compendium.right(), "{width}: side by side");
+            }
+        }
+    }
+
+    #[test]
     fn a_vault_with_no_converted_notes_converts_without_asking() {
         let dir = tempfile::tempdir().unwrap();
         let (mut harness, events, heard) = harness_on_profile_heard(dir.path(), 1280.0);
@@ -1334,25 +1473,120 @@ mod tests {
         }
     }
 
-    /// Saves `run` as the open profile's last run, as the Engine would, and reports its end so
-    /// the app reads it.
-    fn last_run_saved(
+    /// Serves one game data archive, holding only its books list, at every path.
+    fn serve_game_data() -> String {
+        use std::io::{BufRead, BufReader, Write};
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let stored = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("5etools-src/data/books.json", stored)
+            .unwrap();
+        zip.write_all(br#"{"book": []}"#).unwrap();
+        let body = zip.finish().unwrap().into_inner();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/data.zip", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let get = line.starts_with("GET");
+                while reader.read_line(&mut line).unwrap() > 2 {
+                    line.clear();
+                }
+                let mut out = stream;
+                let _ = write!(
+                    out,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nETag: \"v1\"\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                if get {
+                    let _ = out.write_all(&body);
+                }
+            }
+        });
+        url
+    }
+
+    /// The Engine's stand-in converter (crates/engine/tests/stand_in), built once per test run
+    /// into its own folder, so a package-only run never finds it missing or out of date.
+    // The folder is under this package's build script output folder, never read from the test
+    // program's path, which cargo's build-dir layout moves.
+    // ponytail: a runner that starts one process per test (nextest) runs this build once per
+    // test, serialised by cargo's lock; give it a once-per-run setup step if one is adopted.
+    fn stand_in_converter() -> std::path::PathBuf {
+        static BUILT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+        BUILT
+            .get_or_init(|| {
+                let dir = std::path::Path::new(env!("OUT_DIR")).join("stand-in");
+                let build = "build -p vault-forge-engine --bin stand-in-converter";
+                let built = std::process::Command::new(env!("CARGO"))
+                    .args(build.split(' '))
+                    .args(["--quiet", "--target-dir"])
+                    .arg(&dir)
+                    .status()
+                    .is_ok_and(|s| s.success());
+                assert!(
+                    built,
+                    "could not build the stand-in converter: run cargo {build}"
+                );
+                let name = format!("stand-in-converter{}", std::env::consts::EXE_SUFFIX);
+                dir.join("debug").join(name)
+            })
+            .clone()
+    }
+
+    /// The app on one profile the Engine has just converted: the stand-in converter run on
+    /// `books` (and one homebrew file), on game data from a local web server. As
+    /// `harness_on_profile_heard`, the test passes the Engine's events on to the app.
+    fn harness_after_run(
         dir: &std::path::Path,
-        harness: &mut Harness<'_, App>,
-        events: &Sender<Event>,
-        run: &LastRun,
-    ) {
-        let id = harness.state().engine.profiles()[0].id.clone();
-        let file = dir.join("profiles").join(format!("{id}.last-run.json"));
-        std::fs::write(file, serde_json::to_string(run).unwrap()).unwrap();
-        let (converted, message) = (run.converted, run.message.clone());
-        let ended = Event::ConversionEnded {
-            id,
-            converted,
-            message,
-        };
-        events.send(ended).unwrap();
+        width: f32,
+        books: &[String],
+    ) -> (Harness<'static, App>, Sender<Event>, Receiver<Event>) {
+        let vault = dir.join("vault");
+        std::fs::create_dir(&vault).unwrap();
+        let converter = stand_in_converter();
+        let (engine, heard) =
+            Engine::start_with_converter(dir.to_path_buf(), dir.join("local"), converter).unwrap();
+        engine.send(Command::CreateProfile(ProfileDraft {
+            name: "Thursday".into(),
+            rules: Rules::Dnd5e,
+            address: serve_game_data(),
+            vault: vault.display().to_string(),
+        }));
+        let mut profile = engine.profiles().remove(0);
+        profile.config.sources.book = books.to_vec();
+        profile.config.sources.homebrew = vec!["homebrew.json".into()];
+        engine.send(Command::SaveProfile(profile.clone()));
+        engine.send(Command::DownloadGameData(profile.clone()));
+        let (events, received) = std::sync::mpsc::channel();
+        let mut harness = Harness::builder()
+            .with_size([width, 820.0])
+            .with_context_setup(theme::install)
+            // ponytail: the log's fonts have no emoji, so the converter's "🔸 WARN|" draws a box;
+            // drop this once they do.
+            .allow_missing_glyphs()
+            .build_ui_state(
+                |ui, app: &mut App| app.ui(ui),
+                App::new(engine, received, mpsc::channel().1),
+            );
+        forward(&heard, &events, |e| {
+            matches!(
+                e,
+                Event::GameData {
+                    state: DataState::Ready { .. },
+                    ..
+                }
+            )
+        });
         harness.run();
+        harness.state().engine.send(Command::Convert(profile.id));
+        forward(&heard, &events, |e| {
+            matches!(e, Event::ConversionEnded { .. })
+        });
+        harness.run();
+        (harness, events, heard)
     }
 
     fn open_last_run(harness: &mut Harness<'_, App>) {
@@ -1362,44 +1596,27 @@ mod tests {
         harness.run();
     }
 
-    fn converted_run() -> LastRun {
-        let folders = [
-            ("compendium/bestiary", 1408),
-            ("compendium/items", 1127),
-            ("compendium/spells", 512),
-            ("compendium/backgrounds", 76),
-            ("rules/variant-rules", 40),
-            ("compendium/feats", 33),
-            ("compendium/races", 21),
-            ("rules", 9),
-        ];
-        // Long past, so the subtitle reads its date whatever the clock says.
-        let started = chrono::Local
-            .with_ymd_and_hms(2020, 3, 14, 12, 0, 0)
-            .unwrap();
-        LastRun {
-            started: started.into(),
-            seconds: 102,
-            converted: true,
-            exit_code: Some(0),
-            message: "The books were converted into your vault.".into(),
-            fix: None,
-            books: 4,
-            homebrew: 1,
-            folders: folders.map(|(f, n)| (f.to_owned(), n)).to_vec(),
-            warnings: vec![vault_forge_engine::Warning {
-                text: "no image file for img/bestiary/Vrock.webp".into(),
-                step: "Writing compendium/bestiary".into(),
-            }],
-            log: [
-                "Reading data",
-                "Writing compendium/bestiary",
-                "Warning: no image file for img/bestiary/Vrock.webp",
-                "Done",
-            ]
-            .map(String::from)
-            .to_vec(),
-        }
+    /// Nine books the stand-in writes into six compendium folders, beside its one rules note;
+    /// `converted_books` adds a thousand more to the bestiary.
+    const CONVERTED: [&str; 9] = [
+        "bestiary/MM",
+        "bestiary/VGM",
+        "bestiary/MTF",
+        "items/DMG",
+        "items/XDMG",
+        "spells/PHB",
+        "backgrounds/SCAG",
+        "feats/TCE",
+        "races/VRGR",
+    ];
+
+    fn converted_books() -> Vec<String> {
+        let more = (1..=1000).map(|n| format!("bestiary/B{n}"));
+        CONVERTED
+            .iter()
+            .map(|b| b.to_string())
+            .chain(more)
+            .collect()
     }
 
     #[test]
@@ -1418,57 +1635,76 @@ mod tests {
     #[test]
     fn a_converted_run_shows_its_figures_folders_warnings_and_log() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
-        harness.run();
-        last_run_saved(dir.path(), &mut harness, &events, &converted_run());
-        harness.get_by_label("D&D 5e · 0 books · last converted 14 Mar 2020, 12:00");
+        let (mut harness, _events, _) = harness_after_run(dir.path(), 1280.0, &converted_books());
+        harness.get_by_label_contains("D&D 5e · 1009 books · last converted ");
         harness.get_by_label("Converted");
         open_last_run(&mut harness);
 
-        // The strip: 3,226 notes in all, 4 books + 1 homebrew, 1 warning, 1 m 42 s.
-        harness.get_by_label("3,226");
-        harness.get_by_label("4 + 1 homebrew");
-        harness.get_by_label("1 m 42 s");
-        harness.get_by_label("8 folders");
+        // The strip: 1,010 notes in all, 1009 books + 1 homebrew, and the run's own time.
+        let id = harness.state().engine.profiles()[0].id.clone();
+        let run = harness.state().engine.last_run(&id).unwrap();
+        harness.get_by_label("1,010");
+        harness.get_by_label("1009 + 1 homebrew");
+        let (m, s) = (run.seconds / 60, run.seconds % 60);
+        harness.get_by_label(&format!("{m} m {s} s"));
+        harness.get_by_label("7 folders");
         harness.get_by_label("compendium/bestiary");
-        harness.get_by_label("1,408");
-        harness.get_by_label("compendium/feats");
-        assert!(
-            harness.query_by_label("compendium/races").is_none(),
-            "top six"
-        );
-        harness.get_by_label("Show all 8 folders").click();
+        harness.get_by_label("1,003");
+        harness.get_by_label("compendium/spells");
+        assert!(harness.query_by_label("rules").is_none(), "top six");
+        harness.get_by_label("Show all 7 folders").click();
         harness.run();
-        harness.get_by_label("compendium/races");
         harness.get_by_label("rules");
         harness.get_by_label("Show fewer").click();
         harness.run();
-        assert!(harness.query_by_label("compendium/races").is_none());
+        assert!(harness.query_by_label("rules").is_none());
 
         harness.get_by_label("The notes were still written");
         harness.get_by_label("no image file for img/bestiary/Vrock.webp");
-        let step = "Writing compendium/bestiary";
-        assert_eq!(
-            harness.get_all_by_label(step).count(),
-            2,
-            "the warning's step and the log"
-        );
+        harness.get_by_label("Unresolved link to Strahd zombie");
+        // Each warning's card names its step, above the log. The converter's two streams can
+        // arrive in either order, so the steps are the Engine's.
+        assert_eq!(run.warnings.len(), 2);
+        let log = harness.get_by_label("Log").rect().top();
+        for warning in &run.warnings {
+            let on_cards = harness
+                .get_all_by_label(&warning.step)
+                .filter(|n| n.rect().top() < log)
+                .count();
+            let cards = run.warnings.iter().filter(|w| w.step == warning.step);
+            assert_eq!(on_cards, cards.count(), "{}", warning.step);
+        }
         harness.get_by_label("Open vault in Obsidian");
         harness.get_by_label("Show folder");
         harness.get_by_label("Save log…");
-        harness.get_by_label("Reading data");
+        // The log, from its first line to its last once scrolled.
+        harness.get_by_label("Save log…").scroll_to_me();
+        harness.run();
+        let first = harness.get_by_label(&run.log[0]).rect().center();
+        wheel(&harness, first, -100_000.0);
+        harness.run_steps(8);
         harness.get_by_label("Done");
     }
 
     #[test]
     fn the_warnings_filter_shows_only_the_logs_warning_lines() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
-        harness.run();
-        last_run_saved(dir.path(), &mut harness, &events, &converted_run());
+        let (mut harness, _events, _) = harness_after_run(dir.path(), 1280.0, &converted_books());
         open_last_run(&mut harness);
+        // The log's first plain line, which no warning card names as its step.
+        let id = harness.state().engine.profiles()[0].id.clone();
+        let run = harness.state().engine.last_run(&id).unwrap();
+        let steps: Vec<&str> = run.warnings.iter().map(|w| w.step.as_str()).collect();
+        let quiet = run
+            .log
+            .iter()
+            .find(|l| {
+                vault_forge_engine::log_level(l) == vault_forge_engine::LogLevel::Info
+                    && !steps.contains(&l.as_str())
+            })
+            .unwrap();
+        harness.get_by_label(quiet);
         let warning = "Warning: no image file for img/bestiary/Vrock.webp";
-        harness.get_by_label(warning);
         // Not the strip's or the card's "Warnings", which are labels.
         let filter = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Warnings");
         filter.scroll_to_me();
@@ -1478,48 +1714,39 @@ mod tests {
             .click();
         harness.run();
         harness.get_by_label(warning);
-        assert!(harness.query_by_label("Reading data").is_none());
-        assert!(harness.query_by_label("Done").is_none());
+        harness.get_by_label("🔸 WARN| Unresolved link to Strahd zombie");
+        assert!(harness.query_by_label(quiet).is_none());
         harness.get_by_label("All lines").click();
         harness.run();
-        harness.get_by_label("Reading data");
+        harness.get_by_label(quiet);
     }
 
     const FAILED: &str = "The converter could not read the game data or the profile's settings \
                           (exit code 2), so your vault was not changed.";
 
-    fn failed_run() -> LastRun {
-        LastRun {
-            converted: false,
-            exit_code: Some(2),
-            message: FAILED.into(),
-            fix: Some(Fix::DownloadAddress),
-            folders: Vec::new(),
-            warnings: Vec::new(),
-            log: vec!["Error: unable to find books.json".into()],
-            ..converted_run()
-        }
+    /// The stand-in ends with exit code 2 before writing a note when the book EARLY2 is chosen.
+    fn failing() -> Vec<String> {
+        vec!["EARLY2".into()]
     }
 
     #[test]
     fn a_failed_run_shows_why_with_its_exit_code_and_a_fix() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
-        harness.run();
-        last_run_saved(dir.path(), &mut harness, &events, &failed_run());
-        harness.get_by_label("D&D 5e · 0 books · last attempt failed 14 Mar 2020, 12:00");
+        let (mut harness, _events, _) = harness_after_run(dir.path(), 1280.0, &failing());
+        harness.get_by_label_contains("D&D 5e · 1 book · last attempt failed ");
         harness.get_by_label("Failed");
         open_last_run(&mut harness);
 
         harness.get_by_label("The converter stopped before writing anything");
         harness.get_by_label(FAILED);
-        harness.get_by_label("Error: unable to find books.json");
+        harness.get_by_label("Error: stopping early with exit code 2");
         assert!(harness.query_by_label("Save log…").is_none());
         harness.get_by_label("Check the download address").click();
         harness.run();
         harness.get_by_label("Game rules");
+        let served = harness.state().engine.profiles()[0].address.clone();
         let address = harness
-            .get_all_by_value("http://127.0.0.1:1/data.zip")
+            .get_all_by_value(&served)
             .find(|n| n.accesskit_node().role() == egui::accesskit::Role::TextInput)
             .unwrap();
         assert!(address.accesskit_node().is_focused());
@@ -1528,9 +1755,7 @@ mod tests {
     #[test]
     fn on_a_phone_a_failed_runs_fix_sits_under_its_message() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut harness, events) = harness_on_profile(dir.path(), 400.0);
-        harness.run();
-        last_run_saved(dir.path(), &mut harness, &events, &failed_run());
+        let (mut harness, _events, _) = harness_after_run(dir.path(), 400.0, &failing());
         open_last_run(&mut harness);
         let bounds = |label| {
             harness
@@ -1551,23 +1776,12 @@ mod tests {
     #[test]
     fn a_profile_made_again_after_a_delete_has_no_last_run() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut harness, events, heard) = harness_on_profile_heard(dir.path(), 1280.0);
-        harness.run();
-        last_run_saved(dir.path(), &mut harness, &events, &converted_run());
+        let (mut harness, events, heard) = harness_after_run(dir.path(), 1280.0, &["XPHB".into()]);
         harness.get_by_label("Converted");
-        // Passes the Engine's events on to the app, up to the one wanted.
-        let forward = |wanted: fn(&Event) -> bool| loop {
-            let event = heard.recv_timeout(Duration::from_secs(10)).unwrap();
-            let done = wanted(&event);
-            events.send(event).unwrap();
-            if done {
-                break;
-            }
-        };
 
         let id = harness.state().engine.profiles()[0].id.clone();
         harness.state().engine.send(Command::DeleteProfile(id));
-        forward(|e| matches!(e, Event::ProfileDeleted(_)));
+        forward(&heard, &events, |e| matches!(e, Event::ProfileDeleted(_)));
         harness.run();
         harness
             .state()
@@ -1578,7 +1792,7 @@ mod tests {
                 address: "http://127.0.0.1:1/data.zip".into(),
                 vault: "/vault".into(),
             }));
-        forward(|e| matches!(e, Event::ProfileCreated(_)));
+        forward(&heard, &events, |e| matches!(e, Event::ProfileCreated(_)));
         harness.run();
 
         harness.get_by_label("D&D 5e · 0 books · not converted yet");
@@ -1601,20 +1815,12 @@ mod tests {
         harness.run();
         harness.get_by_label(cancelled);
         harness.state_mut().books.as_mut().unwrap().search = "strahd".into();
-        let forward = |wanted: fn(&Event) -> bool| loop {
-            let event = heard.recv_timeout(Duration::from_secs(10)).unwrap();
-            let done = wanted(&event);
-            events.send(event).unwrap();
-            if done {
-                break;
-            }
-        };
 
         harness
             .state()
             .engine
             .send(Command::DeleteProfile(id.clone()));
-        forward(|e| matches!(e, Event::ProfileDeleted(_)));
+        forward(&heard, &events, |e| matches!(e, Event::ProfileDeleted(_)));
         harness.run();
         harness
             .state()
@@ -1625,7 +1831,7 @@ mod tests {
                 address: "http://127.0.0.1:1/other.zip".into(),
                 vault: "/other".into(),
             }));
-        forward(|e| matches!(e, Event::ProfileCreated(_)));
+        forward(&heard, &events, |e| matches!(e, Event::ProfileCreated(_)));
         harness.run();
 
         assert_eq!(
@@ -1687,6 +1893,28 @@ mod tests {
         harness.run();
         assert_eq!(harness.state().error, None);
         assert_eq!(harness.state().engine.profiles()[0].address, typed);
+    }
+
+    #[test]
+    fn the_address_fields_show_the_address_as_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events, heard) = harness_on_profile_heard(dir.path(), 1280.0);
+        harness.run();
+        let section = harness.state_mut().game_data.as_mut().unwrap();
+        section.address = " http://127.0.0.1:1/other.zip ".into();
+        section.images_address = "half typed".into();
+        harness.run();
+        harness.get_by_label("Download").click();
+        harness.run();
+        let saved = |e: &Event| matches!(e, Event::ProfileSaved(_));
+        forward(&heard, &events, saved);
+        harness.run();
+        let section = harness.state().game_data.as_ref().unwrap();
+        assert_eq!(section.address, "http://127.0.0.1:1/other.zip");
+        assert_eq!(
+            section.images_address, "half typed",
+            "an unsaved field keeps its text"
+        );
     }
 
     #[test]
@@ -1825,6 +2053,267 @@ mod tests {
     }
 
     #[test]
+    fn the_images_address_keeps_focus_while_typing_once_images_are_ready() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        let profile = harness.state().engine.profiles().remove(0);
+        let images_address = "http://127.0.0.1:1/img.zip".to_string();
+        harness.state().engine.send(Command::SaveProfile(Profile {
+            images: true,
+            images_address: images_address.clone(),
+            ..profile
+        }));
+        // Reopened, so the screen's address field starts with the saved address.
+        harness.state_mut().game_data = None;
+        game_data(&events, ready());
+        events
+            .send(Event::GameData {
+                address: images_address.clone(),
+                state: ready(),
+            })
+            .unwrap();
+        harness.run();
+        // Whether the field holding this value has focus; another node carries the value too.
+        let focused = |harness: &Harness<'static, App>, value: &str| {
+            let input = egui::accesskit::Role::TextInput;
+            harness
+                .query_all_by_value(value)
+                .find(|n| n.accesskit_node().role() == input)
+                .map(|n| n.accesskit_node().is_focused())
+        };
+        let input = egui::accesskit::Role::TextInput;
+        harness
+            .get_all_by_value(&images_address)
+            .find(|n| n.accesskit_node().role() == input)
+            .unwrap()
+            .focus();
+        harness.run();
+        assert_eq!(focused(&harness, &images_address), Some(true));
+        for typed in ["a", "b"] {
+            harness.event(egui::Event::Text(typed.into()));
+            harness.run();
+        }
+        let typed = format!("{images_address}ab");
+        let focused = focused(&harness, &typed).expect("both letters typed");
+        assert!(focused, "still focused");
+    }
+
+    #[test]
+    fn a_dialog_opened_after_the_other_kind_has_its_buttons_at_the_right_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        harness.get_by_label("Rename profile").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Rename profile").click();
+        harness.run();
+        harness.get_by_label("Cancel").click();
+        harness.run();
+        harness.get_by_label("Delete profile").click();
+        harness.run_steps(1);
+        let cancel = harness.get_by_label("Cancel").rect();
+        let delete = harness
+            .get_all_by_label("Delete profile")
+            .map(|n| n.rect())
+            .find(|r| (r.left() - cancel.right() - 8.0).abs() < 1.0)
+            .unwrap();
+        // The 480 dialog sits centred, its content 24px inside it.
+        let right = 1280.0 / 2.0 + 240.0 - 24.0;
+        assert!(
+            (delete.right() - right).abs() < 1.0,
+            "Delete ends at {}, not {right}",
+            delete.right()
+        );
+    }
+
+    #[test]
+    fn the_dialog_title_is_26_tall() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        harness.get_by_label("Rename profile").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Rename profile").click();
+        harness.run();
+        let title = harness
+            .get_all_by_role(egui::accesskit::Role::Label)
+            .find(|n| n.accesskit_node().value().as_deref() == Some("Rename profile"))
+            .unwrap()
+            .rect();
+        assert!((title.height() - 26.0).abs() < 0.5, "{}", title.height());
+    }
+
+    #[test]
+    fn the_sidebar_brand_row_and_nav_rows_are_spaced_as_the_demo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        // The name is centred in the 36px brand row, then the nav group starts 28px below it.
+        let name = harness.get_by_label("Vault Forge").rect();
+        let profiles = harness.get_by_label("Profiles").rect();
+        let below = profiles.top() - name.center().y;
+        assert!((below - 18.0 - 28.0).abs() < 1.0, "{below}");
+        // 8px brand padding, the 22px mark and a 10px gap, from the rows' left edge.
+        let row = harness.get_by_label("Thursday 5e").rect();
+        let inset = name.left() - row.left();
+        assert!((inset - 40.0).abs() < 1.0, "{inset}");
+        let setup = harness.get_by_label("Obsidian setup").rect();
+        let about = harness.get_by_label("About").rect();
+        let gap = about.top() - setup.bottom();
+        assert!((gap - 2.0).abs() < 0.5, "nav rows {gap} apart");
+    }
+
+    /// The painted shapes, nested ones flattened.
+    fn painted(harness: &Harness<'_, App>) -> Vec<egui::Shape> {
+        fn flatten(shape: &egui::Shape, out: &mut Vec<egui::Shape>) {
+            match shape {
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| flatten(s, out)),
+                shape => out.push(shape.clone()),
+            }
+        }
+        let mut out = Vec::new();
+        for clipped in &harness.output().shapes {
+            flatten(&clipped.shape, &mut out);
+        }
+        out
+    }
+
+    #[test]
+    fn every_sidebar_row_starts_with_the_demos_icon_rested_hovered_or_pressed() {
+        // The demo's SVGs in its 16px viewBox, 1.5px strokes; its 1px folder corner arcs are cut
+        // straight, and the i's dot is its round-capped 0.1px line.
+        let folder = "closed 1.5 2.5,4.5 3.5,3.5 6.5,3.5 8.0,5.0 12.5,5.0 13.5,6.0 13.5,12.0 \
+                      12.5,13.0 3.5,13.0 2.5,12.0";
+        let rows: [(&str, &str, &[&str]); 4] = [
+            ("Thursday 5e", "Thursday", &[folder]),
+            (
+                "New profile",
+                "New profile",
+                &["line 1.5 3.0,8.0 13.0,8.0", "line 1.5 8.0,3.0 8.0,13.0"],
+            ),
+            (
+                "Obsidian setup",
+                "Obsidian setup",
+                &[
+                    "closed 1.5 3.0,2.5 9.5,2.5 13.0,6.0 13.0,13.5 3.0,13.5",
+                    "open 1.5 5.5,9.0 7.3,10.8 10.5,7.5",
+                ],
+            ),
+            (
+                "About",
+                "About",
+                &[
+                    "circle 1.5 8.0,8.0 r5.5",
+                    "dot 8.0,5.0 r0.75",
+                    "line 1.5 8.0,7.2 8.0,11.0",
+                ],
+            ),
+        ];
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
+        let grey = egui::Color32::from_rgb(0x5d, 0x5f, 0x60);
+        // A hovered or pressed row keeps its layout, so its text does not jump.
+        for (theme, state) in [
+            (Theme::Light, "rested"),
+            (Theme::Dark, "rested"),
+            (Theme::Dark, "hovered"),
+            (Theme::Light, "pressed"),
+        ] {
+            harness.ctx.set_theme(theme);
+            for (label, text, icon) in rows {
+                let row = harness.get_by_label(label).rect();
+                let press = |pressed| egui::Event::PointerButton {
+                    pos: row.center(),
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                if state != "rested" {
+                    harness.hover_at(row.center());
+                }
+                if state == "pressed" {
+                    harness.event(press(true));
+                }
+                harness.run();
+                let shapes = painted(&harness);
+                // 10px padding, the 16px icon and a 10px gap, as the demo's .nav row.
+                let left = shapes
+                    .iter()
+                    .find_map(|s| match s {
+                        egui::Shape::Text(t) if t.galley.text() == text && row.contains(t.pos) => {
+                            Some(t.pos.x - row.left())
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("no {text} in its row"));
+                assert!((left - 36.0).abs() < 0.5, "{label} {state} text at {left}");
+                // Every grey mark in the 16px square after the padding, in the demo's points.
+                let origin = egui::pos2(row.left() + 10.0, row.center().y - 8.0);
+                let square = egui::Rect::from_min_size(origin, egui::vec2(16.0, 16.0)).expand(1.0);
+                let at = |p: &egui::Pos2| format!("{:.1},{:.1}", p.x - origin.x, p.y - origin.y);
+                let line = |points: &[egui::Pos2]| points.iter().map(at).collect::<Vec<_>>();
+                let mut drawn = Vec::new();
+                for shape in &shapes {
+                    if !square.contains_rect(shape.visual_bounding_rect()) {
+                        continue;
+                    }
+                    let mark = match shape {
+                        egui::Shape::LineSegment { points, stroke } if stroke.color == grey => {
+                            format!("line {} {}", stroke.width, line(points).join(" "))
+                        }
+                        egui::Shape::Path(path)
+                            if path.stroke.color == egui::epaint::ColorMode::Solid(grey) =>
+                        {
+                            let kind = if path.closed { "closed" } else { "open" };
+                            let points = line(&path.points).join(" ");
+                            format!("{kind} {} {points}", path.stroke.width)
+                        }
+                        egui::Shape::Circle(c) if c.stroke.color == grey => {
+                            format!("circle {} {} r{}", c.stroke.width, at(&c.center), c.radius)
+                        }
+                        egui::Shape::Circle(c) if c.fill == grey => {
+                            format!("dot {} r{}", at(&c.center), c.radius)
+                        }
+                        _ => continue,
+                    };
+                    drawn.push(mark);
+                }
+                drawn.sort();
+                assert_eq!(drawn, icon, "{label} {state} in {theme:?}");
+                // The demo's rows have no border, rested, hovered or pressed.
+                for shape in &shapes {
+                    if let egui::Shape::Rect(frame) = shape
+                        && frame.rect.intersects(row.shrink(1.0))
+                    {
+                        assert_eq!(frame.stroke.width, 0.0, "{label} {state} border");
+                    }
+                }
+                if state == "pressed" {
+                    // Let go away from the row, so nothing is clicked.
+                    harness.hover_at(egui::pos2(900.0, 700.0));
+                    harness.event(press(false));
+                    harness.run();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_narrow_top_bar_has_16_after_the_menu_button() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 600.0);
+        harness.run();
+        let menu = harness.get_by_label("Open menu").rect();
+        let title = harness
+            .get_all_by_label("Thursday")
+            .map(|n| n.rect())
+            .min_by(|a, b| a.top().total_cmp(&b.top()))
+            .unwrap();
+        let gap = title.left() - menu.right();
+        assert!((gap - 16.0).abs() < 1.0, "gap is {gap}");
+    }
+
+    #[test]
     fn a_narrow_window_stacks_the_game_data_description_above_its_panel() {
         let dir = tempfile::tempdir().unwrap();
         let rect = |harness: &Harness<'_, App>, label| harness.get_by_label(label).rect();
@@ -1839,10 +2328,9 @@ mod tests {
         let (mut harness, _events) = harness_on_profile(dir.path(), 901.0);
         harness.run();
         let (title, panel) = (rect(&harness, "Game data"), rect(&harness, "Game rules"));
-        assert!(
-            panel.left() >= title.left() + 340.0,
-            "panel beside the description"
-        );
+        // The 340 column, the demo's 24px gap, then the panel's 16px padding.
+        let gap = panel.left() - title.left() - 340.0 - 16.0;
+        assert!((gap - 24.0).abs() <= 1.0, "gap is {gap}");
     }
 
     #[test]
@@ -1989,6 +2477,97 @@ mod tests {
             harness.state().engine.profiles()[0].config.sources.book,
             ["XGE"]
         );
+    }
+
+    #[test]
+    fn typed_adventure_codes_are_saved_as_adventures_each_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _events) = harness_on_profile(dir.path(), 1280.0);
+        harness.run();
+        codes_field(&harness, "Adventure codes").focus();
+        harness.run();
+        codes_field(&harness, "Adventure codes").type_text("CoS, CoS");
+        harness.run();
+        let sources = &harness.state().engine.profiles()[0].config.sources;
+        assert_eq!(sources.adventure, ["CoS"]);
+        assert!(sources.book.is_empty());
+    }
+
+    #[test]
+    fn choose_all_chooses_every_book_of_its_group_and_clear_all_clears_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        let book = |code: &str, name: &str, group| Book {
+            code: code.into(),
+            name: name.into(),
+            year: "2017".into(),
+            group,
+        };
+        let data = DataState::Ready {
+            books: vec![
+                book("XGE", "Xanathar's Guide to Everything", Group::Supplements),
+                book("TCE", "Tasha's Cauldron of Everything", Group::Supplements),
+                book("CoS", "Curse of Strahd", Group::Adventures),
+            ],
+            bytes: 1,
+            downloaded: UNIX_EPOCH,
+            newer: false,
+        };
+        game_data(&events, data);
+        harness.run();
+
+        // The Supplements heading comes first, above the Adventures one.
+        harness
+            .get_all_by_label("Choose all")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        let sources = &harness.state().engine.profiles()[0].config.sources;
+        assert_eq!(sources.book, ["XGE", "TCE"]);
+        assert!(sources.adventure.is_empty());
+        harness.get_by_label("Supplements · 2 of 2");
+
+        harness.get_by_label("Clear all").click();
+        harness.run();
+        let sources = &harness.state().engine.profiles()[0].config.sources;
+        assert!(sources.book.is_empty() && sources.adventure.is_empty());
+        harness.get_by_label("Supplements · 0 of 2");
+
+        // The Adventures heading's own Choose all fills the adventures alone.
+        harness
+            .get_all_by_label("Choose all")
+            .nth(1)
+            .unwrap()
+            .click();
+        harness.run();
+        let sources = &harness.state().engine.profiles()[0].config.sources;
+        assert_eq!(sources.adventure, ["CoS"]);
+        assert!(sources.book.is_empty());
+    }
+
+    #[test]
+    fn the_chosen_filter_shows_only_the_ticked_books() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, events) = harness_on_profile(dir.path(), 1280.0);
+        game_data(&events, three_books());
+        harness.run();
+        harness.get_by_label("Player's Handbook").click();
+        harness.run();
+
+        harness.get_by_label("Chosen").click();
+        harness.run();
+        harness.get_by_label("Player's Handbook");
+        assert!(
+            harness
+                .query_by_label("Xanathar's Guide to Everything")
+                .is_none()
+        );
+        assert!(harness.query_by_label("Curse of Strahd").is_none());
+
+        harness.get_by_label("All").click();
+        harness.run();
+        harness.get_by_label("Curse of Strahd");
     }
 
     #[test]
@@ -2335,8 +2914,8 @@ mod tests {
             .unwrap()
             .click();
         harness.run();
-        // The top bar's breadcrumb and the screen's title.
-        assert_eq!(harness.get_all_by_label("New profile").count(), 2);
+        // The sidebar row, the top bar's breadcrumb and the screen's title.
+        assert_eq!(harness.get_all_by_label("New profile").count(), 3);
         assert!(harness.state().engine.profiles().is_empty());
     }
 
@@ -2373,14 +2952,15 @@ mod tests {
         harness.get_by_label("See what's new");
     }
 
-    /// The top bar at `width` after the release check found 1.1.0.
+    /// The top bar at `width` after the release check found 1.1.0, at a page the version alone
+    /// could not spell, so only the event's own page matches it.
     fn top_bar_with_notice(dir: &std::path::Path, width: f32) -> Harness<'static, App> {
         let (engine, _) = Engine::start(dir.to_path_buf(), dir.join("local")).unwrap();
         let (events, received) = std::sync::mpsc::channel();
         events
             .send(Event::NewerRelease {
                 version: "1.1.0".into(),
-                page: "https://github.com/tome-vtt/vault-forge/releases/tag/v1.1.0".into(),
+                page: "https://github.com/tome-vtt/vault-forge/releases/tag/notes-for-1.1.0".into(),
                 released: "2026-10-27".into(),
             })
             .unwrap();
@@ -2485,6 +3065,54 @@ mod tests {
     }
 
     #[test]
+    fn the_obsidian_setup_screen_names_the_folder_of_the_profile_last_open_not_the_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut harness, _) = harness_on_profile(dir.path(), 1280.0);
+        harness
+            .state()
+            .engine
+            .send(Command::CreateProfile(ProfileDraft {
+                name: "Wednesday".into(),
+                rules: Rules::Dnd5e,
+                address: "http://127.0.0.1:1/data.zip".into(),
+                vault: "/vault".into(),
+            }));
+        let mut second = harness.state().engine.profiles()[1].clone();
+        assert_eq!(second.name, "Wednesday", "Thursday is the first profile");
+        second.config.paths.compendium = "lore/".into();
+        harness.state().engine.send(Command::SaveProfile(second));
+        harness.run();
+        harness.get_by_label("Wednesday 5e").click();
+        harness.run();
+
+        harness.get_by_label("Obsidian setup").click();
+        harness.run();
+
+        harness.get_by_label("lore/bestiary");
+        assert!(harness.query_by_label("compendium/bestiary").is_none());
+    }
+
+    #[test]
+    fn each_show_button_on_obsidian_setup_shows_its_own_bundled_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut harness = harness(dir.path());
+        harness.get_by_label("Obsidian setup").click();
+        harness.run();
+        let engine = &harness.state().engine;
+        let (styles, snippet) = (
+            engine.bundled_file(vault_forge_engine::ADMONITIONS_STYLES),
+            engine.bundled_file(vault_forge_engine::CSS_SNIPPET),
+        );
+
+        harness.get_by_label("Show the file").click();
+        harness.run();
+        harness.get_by_label("Show the files").click();
+        harness.run();
+
+        assert_eq!(crate::file_manager::shown(), [styles, snippet]);
+    }
+
+    #[test]
     fn with_no_profile_the_obsidian_setup_screen_shows_the_usual_bestiary_folder() {
         let dir = tempfile::tempdir().unwrap();
         let mut harness = harness(dir.path());
@@ -2534,7 +3162,7 @@ mod tests {
         harness.step();
         assert_eq!(
             opened_url(&harness).as_deref(),
-            Some("https://github.com/tome-vtt/vault-forge/releases/tag/v1.1.0")
+            Some("https://github.com/tome-vtt/vault-forge/releases/tag/notes-for-1.1.0")
         );
     }
 }

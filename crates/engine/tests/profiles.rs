@@ -2,7 +2,7 @@
 use std::path::Path;
 use std::sync::mpsc::Receiver;
 
-use vault_forge_engine::{Command, Engine, Event, Profile, ProfileDraft, Rules};
+use vault_forge_engine::{Command, Engine, Event, Group, Profile, ProfileDraft, Rules};
 
 fn draft(name: &str) -> ProfileDraft {
     ProfileDraft {
@@ -344,4 +344,291 @@ fn a_bundled_file_is_named_inside_the_converters_folder() {
             .to_str(),
         expected.to_str()
     );
+}
+
+#[test]
+fn typed_codes_are_saved_under_their_own_key_each_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let mut typed = create(&engine, &events, "Thursday");
+
+    typed.type_codes(Group::CoreRules, "XPHB, PS-Z XPHB");
+    typed.type_codes(Group::Adventures, "CoS,,CoS");
+    engine.send(Command::SaveProfile(typed));
+
+    drop(engine);
+    let (engine, _) = start(dir.path());
+    let reopened = &engine.profiles()[0];
+    assert_eq!(reopened.config.sources.book, ["XPHB", "PS-Z"]);
+    assert_eq!(reopened.config.sources.adventure, ["CoS"]);
+}
+
+fn failed(events: &Receiver<Event>) -> Vec<String> {
+    let failed = events.try_iter().filter_map(|e| match e {
+        Event::Failed(message) => Some(message),
+        _ => None,
+    });
+    failed.collect()
+}
+
+/// Rewrites one `key: value` line of a profile's own fields file, as a hand edit would.
+fn hand_edit(dir: &Path, id: &str, key: &str, value: &str) {
+    let path = dir.join(format!("profiles/{id}.forge.yaml"));
+    let text = std::fs::read_to_string(&path).unwrap();
+    let prefix = format!("{key}:");
+    let mut lines: Vec<String> = text
+        .lines()
+        .filter(|l| !l.starts_with(&prefix))
+        .map(String::from)
+        .collect();
+    lines.push(format!("{key}: {value}"));
+    std::fs::write(&path, lines.join("\n")).unwrap();
+}
+
+#[test]
+fn a_delete_of_an_unknown_id_is_refused_and_touches_no_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    create(&engine, &events, "Keep");
+    for name in ["settings.yaml", "settings.forge.yaml"] {
+        std::fs::write(dir.path().join(name), "appearance: dark").unwrap();
+    }
+    let before = yaml_files(dir.path());
+
+    for id in ["../settings", "nobody"] {
+        engine.send(Command::DeleteProfile(id.into()));
+        let sent: Vec<Event> = events.try_iter().collect();
+        assert!(
+            !sent.iter().any(|e| matches!(e, Event::ProfileDeleted(_))),
+            "{sent:?}"
+        );
+        assert!(
+            sent.iter()
+                .any(|e| matches!(e, Event::Failed(m) if m == "That profile no longer exists.")),
+            "{sent:?}"
+        );
+    }
+
+    assert!(dir.path().join("settings.yaml").exists());
+    assert!(dir.path().join("settings.forge.yaml").exists());
+    assert_eq!(yaml_files(dir.path()), before);
+    assert_eq!(engine.profiles().len(), 1);
+}
+
+#[test]
+fn a_profile_file_with_an_empty_address_does_not_block_the_others() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let keep = create(&engine, &events, "Keep");
+    let odd = create(&engine, &events, "Odd");
+    drop(engine);
+    hand_edit(dir.path(), &odd.id, "address", "''");
+
+    let (engine, events) = start(dir.path());
+    engine.send(Command::RenameProfile {
+        id: keep.id.clone(),
+        name: "Kept".into(),
+    });
+    engine.send(Command::CreateProfile(draft("New")));
+
+    assert_eq!(failed(&events), Vec::<String>::new());
+    let names: Vec<_> = engine.profiles().into_iter().map(|p| p.name).collect();
+    assert_eq!(names, ["Kept", "New", "Odd"]);
+}
+
+#[test]
+fn book_images_switched_off_still_reserve_their_address() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let thursday = create(&engine, &events, "Thursday");
+    let spare = "http://127.0.0.1:1/images.zip".to_string();
+    engine.send(Command::SaveProfile(Profile {
+        images: false,
+        images_address: spare.clone(),
+        ..thursday
+    }));
+    assert_eq!(failed(&events), Vec::<String>::new());
+
+    engine.send(Command::CreateProfile(ProfileDraft {
+        address: spare,
+        ..draft("Friday")
+    }));
+
+    assert_eq!(
+        failed(&events),
+        ["That address is used for book images, so it can't be game data."]
+    );
+    assert_eq!(engine.profiles().len(), 1);
+}
+
+#[test]
+fn profiles_that_already_clash_can_still_be_renamed() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let thursday = create(&engine, &events, "Thursday");
+    engine.send(Command::CreateProfile(ProfileDraft {
+        address: "http://127.0.0.1:1/other.zip".into(),
+        ..draft("Friday")
+    }));
+    drop(engine);
+    // Saved before the rule: Friday's book images are Thursday's game data.
+    hand_edit(dir.path(), "friday", "images", "true");
+    hand_edit(dir.path(), "friday", "images_address", &thursday.address);
+    // And Thursday's own book images are its own game data.
+    hand_edit(dir.path(), "thursday", "images_address", &thursday.address);
+
+    let (engine, events) = start(dir.path());
+    for (id, name) in [("thursday", "Thu"), ("friday", "Fri")] {
+        engine.send(Command::RenameProfile {
+            id: id.into(),
+            name: name.into(),
+        });
+    }
+
+    assert_eq!(failed(&events), Vec::<String>::new());
+    let names: Vec<_> = engine.profiles().into_iter().map(|p| p.name).collect();
+    assert_eq!(names, ["Fri", "Thu"]);
+}
+
+#[test]
+fn game_data_cannot_move_to_the_profiles_own_book_images_address() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let thursday = create(&engine, &events, "Thursday");
+    let images = "http://127.0.0.1:1/images.zip".to_string();
+    engine.send(Command::SaveProfile(Profile {
+        images: true,
+        images_address: images.clone(),
+        ..thursday.clone()
+    }));
+    assert_eq!(failed(&events), Vec::<String>::new());
+    let saved = engine.profiles()[0].clone();
+    let contents = || -> Vec<Vec<u8>> {
+        let profiles = dir.path().join("profiles");
+        let names = yaml_files(dir.path());
+        names
+            .iter()
+            .map(|f| std::fs::read(profiles.join(f)).unwrap())
+            .collect()
+    };
+    let before = contents();
+
+    engine.send(Command::SaveProfile(Profile {
+        address: images.clone(),
+        ..saved
+    }));
+
+    let sent: Vec<Event> = events.try_iter().collect();
+    assert!(
+        !sent.iter().any(|e| matches!(e, Event::ProfileSaved(_))),
+        "{sent:?}"
+    );
+    assert!(
+        sent.iter().any(|e| matches!(e, Event::Failed(m)
+            if m == "That address is used for game data, so it can't be book images.")),
+        "{sent:?}"
+    );
+    let now = engine.profiles().remove(0);
+    assert_eq!(
+        (now.address, now.images_address),
+        (thursday.address, images)
+    );
+    assert_eq!(contents(), before);
+}
+
+/// The address a profile created from `address` saves, after a restart.
+fn saved_address(address: &str) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    engine.send(Command::CreateProfile(ProfileDraft {
+        address: address.into(),
+        ..draft("Thursday")
+    }));
+    assert_eq!(failed(&events), Vec::<String>::new());
+    drop(engine);
+    let (engine, _events) = start(dir.path());
+    engine.profiles()[0].address.clone()
+}
+
+#[test]
+fn a_github_repository_page_saves_as_its_zip_download() {
+    let head = "https://github.com/owner/repo/archive/HEAD.zip";
+    let branch = "https://github.com/owner/repo/archive/refs/heads/dev.zip";
+    for (typed, saved) in [
+        ("https://github.com/owner/repo", head),
+        (" https://github.com/owner/repo/ ", head),
+        ("https://github.com/owner/repo.git", head),
+        (
+            "http://github.com/owner/repo",
+            "http://github.com/owner/repo/archive/HEAD.zip",
+        ),
+        ("https://github.com/owner/repo/tree/dev", branch),
+        ("https://github.com/owner/repo/tree/dev/", branch),
+    ] {
+        assert_eq!(saved_address(typed), saved, "{typed}");
+    }
+}
+
+#[test]
+fn other_addresses_save_as_typed() {
+    for typed in [
+        "https://github.com/owner/repo/archive/refs/heads/dev.zip",
+        "https://github.com/owner/repo/releases/download/v1/data.zip",
+        "https://github.com/owner/repo/releases",
+        "https://github.com/owner",
+        "https://github.com/owner/repo#readme",
+        "https://github.com/owner/repo?tab=readme",
+        "https://github.com/owner/repo/tree",
+        "https://example.com/owner/repo",
+        "http://127.0.0.1:1/data.zip",
+    ] {
+        assert_eq!(saved_address(typed), typed);
+    }
+}
+
+#[test]
+fn a_page_link_and_its_zip_link_are_one_address() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let zip = "https://github.com/owner/repo/archive/refs/heads/dev.zip";
+    engine.send(Command::CreateProfile(ProfileDraft {
+        address: zip.into(),
+        ..draft("Thursday")
+    }));
+    engine.send(Command::CreateProfile(ProfileDraft {
+        address: "https://github.com/owner/repo/tree/dev".into(),
+        ..draft("Friday")
+    }));
+    assert_eq!(failed(&events), Vec::<String>::new());
+    assert!(engine.profiles().iter().all(|p| p.address == zip));
+
+    // The images address is rewritten too, so the rule keeping game data apart sees one form.
+    let friday = engine
+        .profiles()
+        .into_iter()
+        .find(|p| p.name == "Friday")
+        .unwrap();
+    engine.send(Command::SaveProfile(Profile {
+        address: "http://127.0.0.1:1/data.zip".into(),
+        images_address: "https://github.com/owner/repo/tree/dev/".into(),
+        ..friday
+    }));
+    assert_eq!(
+        failed(&events),
+        ["That address is used for game data, so it can't be book images."]
+    );
+}
+
+#[test]
+fn a_stored_zip_address_loads_as_it_was() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let thursday = create(&engine, &events, "Thursday");
+    drop(engine);
+    let zip = "https://github.com/owner/repo/archive/refs/heads/main.zip";
+    hand_edit(dir.path(), &thursday.id, "address", zip);
+
+    let (engine, _events) = start(dir.path());
+
+    assert_eq!(engine.profiles()[0].address, zip);
 }

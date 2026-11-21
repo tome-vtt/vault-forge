@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
-use vault_forge_engine::{Command, DataState, Engine, Event, Fix, ProfileDraft, Rules};
+use vault_forge_engine::{Command, DataState, Engine, Event, Fix, Profile, ProfileDraft, Rules};
 
 /// Serves one game data archive at every path.
 fn serve_game_data() -> String {
@@ -364,6 +364,35 @@ fn a_second_conversion_is_refused_while_one_runs() {
 }
 
 #[test]
+fn converting_the_same_profile_again_is_refused_while_it_runs() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    choose(&setup, &id, &["HANG"]);
+
+    setup.engine.send(Command::Convert(id.clone()));
+    wait(
+        &setup.events,
+        |e| matches!(e, Event::ConversionLog { line, .. } if line == "Waiting"),
+    );
+    setup.engine.send(Command::Convert(id.clone()));
+    // Progress may still arrive, so the refusal is looked for rather than taken as the next event.
+    let refused = std::iter::from_fn(|| setup.events.recv_timeout(Duration::from_secs(30)).ok())
+        .find_map(|e| match e {
+            Event::Failed(m) => Some(m),
+            Event::ConversionEnded { .. } => panic!("the conversion ended before the refusal"),
+            _ => None,
+        })
+        .unwrap();
+
+    assert_eq!(refused, "Converting now.");
+    setup.engine.send(Command::CancelConversion(id));
+    wait(&setup.events, |e| {
+        matches!(e, Event::ConversionEnded { .. })
+    });
+}
+
+#[test]
 fn the_game_data_a_conversion_reads_stays_until_it_ends() {
     let address = serve_game_data();
     let setup = setup(&address);
@@ -384,12 +413,24 @@ fn the_game_data_a_conversion_reads_stays_until_it_ends() {
         );
     };
 
+    // The address is matched as it would be saved, not as typed.
+    refused(Command::DownloadGameData(Profile {
+        address: format!(" {address} "),
+        ..second.clone()
+    }));
     refused(Command::DownloadGameData(second));
     refused(Command::DeleteProfile(first.clone()));
     let profiles = setup.engine.profiles().into_iter();
     let mut moved = profiles.into_iter().find(|p| p.id == first).unwrap();
+    let same = Profile {
+        address: format!(" {address} "),
+        ..moved.clone()
+    };
     moved.address = "http://127.0.0.1:1/other.zip".into();
     refused(Command::SaveProfile(moved));
+    setup.engine.send(Command::SaveProfile(same));
+    let reply = setup.events.recv_timeout(Duration::from_secs(30)).unwrap();
+    assert!(matches!(reply, Event::ProfileSaved(_)), "{reply:?}");
 
     setup.engine.send(Command::CancelConversion(first));
     wait(&setup.events, |e| {
@@ -561,6 +602,63 @@ fn old_notes_a_swap_could_not_put_back_are_kept() {
 }
 
 #[test]
+fn old_notes_left_by_a_crash_mid_swap_are_not_deleted() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    fill(&setup.vault);
+    let id = setup.engine.profiles()[0].id.clone();
+    // The app died after moving the old compendium into the holding folder, before the new one
+    // went in.
+    let holding = setup.vault.join(".vault-forge-holding");
+    std::fs::create_dir(&holding).unwrap();
+    std::fs::rename(
+        setup.vault.join("compendium"),
+        holding.join(".replaced-0-compendium"),
+    )
+    .unwrap();
+    let before = files(&setup.vault);
+
+    setup.engine.send(Command::Convert(id));
+
+    let refused = setup.events.try_iter().find_map(|e| match e {
+        Event::Failed(m) => Some(m),
+        _ => None,
+    });
+    let refused = refused.expect("Convert is refused");
+    assert!(refused.contains("could not be put back"), "{refused}");
+    assert!(
+        refused.contains(&holding.display().to_string()),
+        "{refused}"
+    );
+    assert_eq!(files(&setup.vault), before);
+}
+
+#[test]
+fn a_swap_that_fails_partway_puts_every_folder_back_on_every_system() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    fill(&setup.vault);
+    let id = setup.engine.profiles()[0].id.clone();
+    // A file where the rules folder's parent should be, so the swap fails after the compendium
+    // is swapped in, on every system.
+    std::fs::write(setup.vault.join("x"), "a file").unwrap();
+    let mut profile = choose(&setup, &id, &["XPHB"]);
+    profile.config.paths.rules = "x/rules/".into();
+    setup.engine.send(Command::SaveProfile(profile));
+    let before = files(&setup.vault);
+
+    let (_, converted, message) = convert(&setup, &id);
+
+    assert!(!converted);
+    assert!(
+        message.starts_with("Could not put the notes into the vault (")
+            && message.ends_with("), so it was not changed."),
+        "{message}"
+    );
+    assert_eq!(files(&setup.vault), before);
+}
+
+#[test]
 fn the_notes_written_so_far_are_reported_by_folder() {
     let address = serve_game_data();
     let setup = setup(&address);
@@ -602,6 +700,95 @@ fn nested_folders_are_converted_again_over_their_own_notes() {
         assert!(setup.vault.join(compendium).join("XPHB.md").is_file());
         assert!(setup.vault.join(rules).join("conditions.md").is_file());
     }
+}
+
+#[test]
+fn folders_differing_only_in_letter_case_keep_every_new_note() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    // One folder on a disk that ignores letter case, two on one that does not; the notes stay
+    // either way.
+    for (compendium, rules) in [("Compendium/", "compendium/"), ("Notes/", "notes/Rules/")] {
+        let mut profile = choose(&setup, &id, &["XPHB"]);
+        profile.config.paths.compendium = compendium.into();
+        profile.config.paths.rules = rules.into();
+        setup.engine.send(Command::SaveProfile(profile));
+
+        for run in ["first", "second"] {
+            let (_, converted, message) = convert(&setup, &id);
+            assert!(converted, "{compendium} {run}: {message}");
+            assert!(
+                setup.vault.join(compendium).join("XPHB.md").is_file(),
+                "{compendium} {run}"
+            );
+            assert!(
+                setup.vault.join(rules).join("conditions.md").is_file(),
+                "{rules} {run}"
+            );
+        }
+    }
+}
+
+#[test]
+fn folders_differing_only_in_letter_case_keep_every_new_note_in_a_vault_not_made_yet() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    let vault = setup.vault.join("New vault");
+    let mut profile = choose(&setup, &id, &["XPHB"]);
+    profile.vault = vault.clone();
+    profile.config.paths.compendium = "Compendium/".into();
+    profile.config.paths.rules = "compendium/".into();
+    setup.engine.send(Command::SaveProfile(profile));
+
+    let (_, converted, message) = convert(&setup, &id);
+
+    assert!(converted, "{message}");
+    assert!(vault.join("Compendium/XPHB.md").is_file());
+    assert!(vault.join("compendium/conditions.md").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn counting_converted_notes_does_not_follow_a_symlink_loop() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    convert(&setup, &id);
+    let compendium = setup.vault.join("compendium");
+    std::os::unix::fs::symlink(&compendium, compendium.join("loop")).unwrap();
+
+    let notes = setup.engine.converted_notes(&id).unwrap();
+
+    assert_eq!(notes.notes, 3, "two notes and the link, not followed");
+}
+
+#[cfg(unix)]
+#[test]
+fn the_progress_count_does_not_follow_a_symlink_loop_in_the_holding_folder() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    choose(&setup, &id, &["XPHB", "HANG"]);
+    setup.engine.send(Command::Convert(id.clone()));
+    let counted = |compendium: usize| {
+        move |e: &Event| {
+            matches!(e, Event::ConversionProgress { written, .. }
+                if *written == [("compendium".to_owned(), compendium), ("rules".to_owned(), 1)])
+        }
+    };
+    wait(&setup.events, counted(2));
+
+    let compendium = setup.vault.join(".vault-forge-holding/compendium");
+    std::os::unix::fs::symlink(&compendium, compendium.join("loop")).unwrap();
+
+    // Two notes and the link, which is not followed into a folder of its own.
+    wait(&setup.events, counted(3));
+    setup.engine.send(Command::CancelConversion(id));
+    wait(&setup.events, |e| {
+        matches!(e, Event::ConversionEnded { .. })
+    });
 }
 
 /// The notes in the vault's compendium and rules folders.
@@ -785,4 +972,143 @@ fn a_conversion_uses_the_templates_in_the_folder_now_not_at_save() {
     let spell = templates.path().join("spell2md.txt").display().to_string();
     let spell = spell.replace('\\', "/");
     assert_eq!(used, [&format!("Template spell: {spell}")]);
+}
+
+#[test]
+fn a_refused_conversion_leaves_the_profile_file_as_it_was() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let templates = tempfile::tempdir().unwrap();
+    std::fs::write(templates.path().join("monster2md.txt"), "{name}").unwrap();
+    let mut profile = setup.engine.profiles()[0].clone();
+    profile.templates = Some(templates.path().to_path_buf());
+    profile.config.sources.book.clear();
+    setup.engine.send(Command::SaveProfile(profile.clone()));
+    wait(&setup.events, |e| matches!(e, Event::ProfileSaved(_)));
+    std::fs::write(templates.path().join("spell2md.txt"), "{name}").unwrap();
+    let file = setup.engine.profile_file(&profile.id);
+    let before = std::fs::read(&file).unwrap();
+
+    setup.engine.send(Command::Convert(profile.id.clone()));
+
+    assert!(
+        setup
+            .events
+            .try_iter()
+            .any(|e| matches!(&e, Event::Failed(m) if m == "Choose at least one book first."))
+    );
+    assert_eq!(std::fs::read(&file).unwrap(), before);
+}
+
+#[test]
+fn a_conversion_is_refused_while_the_template_folder_is_missing() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let templates = tempfile::tempdir().unwrap();
+    let mut profile = setup.engine.profiles()[0].clone();
+    profile.templates = Some(templates.path().to_path_buf());
+    setup.engine.send(Command::SaveProfile(profile.clone()));
+    wait(&setup.events, |e| matches!(e, Event::ProfileSaved(_)));
+    templates.close().unwrap();
+    fill(&setup.vault);
+    let before = files(&setup.vault);
+
+    setup.engine.send(Command::Convert(profile.id.clone()));
+
+    let sent: Vec<Event> = setup.events.try_iter().collect();
+    assert!(
+        sent.iter().any(
+            |e| matches!(e, Event::Failed(m) if m.starts_with("Could not read the template folder"))
+        ),
+        "{sent:?}"
+    );
+    assert!(
+        !sent
+            .iter()
+            .any(|e| matches!(e, Event::ConversionStarted(_))),
+        "{sent:?}"
+    );
+    assert_eq!(files(&setup.vault), before);
+}
+
+#[test]
+fn a_template_refresh_keeps_hand_edits_to_the_profile_file() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let templates = tempfile::tempdir().unwrap();
+    let mut profile = setup.engine.profiles()[0].clone();
+    profile.templates = Some(templates.path().to_path_buf());
+    setup.engine.send(Command::SaveProfile(profile.clone()));
+    wait(&setup.events, |e| matches!(e, Event::ProfileSaved(_)));
+    // While the app runs, the user adds a book, and a key the app does not know, by hand.
+    let file = setup.engine.profile_file(&profile.id);
+    let text = std::fs::read_to_string(&file).unwrap();
+    let text = text.replace("- XPHB", "- XPHB\n  - MM");
+    assert!(text.contains("- MM"), "{text}");
+    std::fs::write(&file, format!("{text}tagPrefix: mine\n")).unwrap();
+    std::fs::write(templates.path().join("spell2md.txt"), "{name}").unwrap();
+
+    let (lines, converted, message) = convert(&setup, &profile.id);
+
+    assert!(converted, "{message}");
+    let spell = templates.path().join("spell2md.txt").display().to_string();
+    let spell = spell.replace('\\', "/");
+    assert!(
+        lines.contains(&format!("Template spell: {spell}")),
+        "{lines:?}"
+    );
+    assert!(setup.vault.join("compendium/MM.md").is_file(), "{lines:?}");
+    let config: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(config["tagPrefix"].as_str(), Some("mine"));
+    assert_eq!(config["sources"]["book"][1].as_str(), Some("MM"));
+    assert_eq!(config["template"]["spell"].as_str(), Some(spell.as_str()));
+}
+
+#[test]
+fn a_compendium_folder_edited_by_hand_while_the_app_runs_is_still_checked() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    let file = setup.engine.profile_file(&id);
+    let saved = std::fs::read_to_string(&file).unwrap();
+    let edited = saved.replace("compendium: compendium/", "compendium: ../Documents/");
+    assert_ne!(edited, saved);
+    std::fs::write(&file, edited).unwrap();
+    let before = files(&setup.vault);
+
+    setup.engine.send(Command::Convert(id));
+
+    let sent: Vec<Event> = setup.events.try_iter().collect();
+    assert!(
+        sent.iter().any(|e| matches!(e, Event::Failed(m)
+            if m == "The compendium folder must be a folder inside the vault.")),
+        "{sent:?}"
+    );
+    assert_eq!(files(&setup.vault), before);
+}
+
+#[test]
+fn removing_the_last_template_leaves_the_profile_file_without_templates() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let templates = tempfile::tempdir().unwrap();
+    std::fs::write(templates.path().join("spell2md.txt"), "{name}").unwrap();
+    let mut profile = setup.engine.profiles()[0].clone();
+    profile.templates = Some(templates.path().to_path_buf());
+    setup.engine.send(Command::SaveProfile(profile.clone()));
+    wait(&setup.events, |e| matches!(e, Event::ProfileSaved(_)));
+    std::fs::remove_file(templates.path().join("spell2md.txt")).unwrap();
+
+    let (lines, converted, message) = convert(&setup, &profile.id);
+
+    assert!(converted, "{message}");
+    assert!(
+        !lines.iter().any(|l| l.starts_with("Template ")),
+        "{lines:?}"
+    );
+    let file = setup.engine.profile_file(&profile.id);
+    let config: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert!(config.get("template").is_none(), "{config:?}");
 }

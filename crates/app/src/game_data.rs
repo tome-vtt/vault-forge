@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
-use vault_forge_engine::{Command, DataState, Engine, Profile, Rules};
+use vault_forge_engine::{Command, DataState, Engine, Profile, Rules, download_address};
 
 use crate::app::rules_name;
 use crate::theme;
@@ -25,6 +25,20 @@ impl GameDataSection {
             address: profile.address.clone(),
             images_address: profile.images_address.clone(),
             focus_address: false,
+        }
+    }
+
+    /// Shows each typed address in the form the profile saved it, such as a GitHub page's zip
+    /// download. A field whose text was not what got saved keeps it.
+    pub fn saved(&mut self, profile: &Profile) {
+        let fields = [
+            (&mut self.address, &profile.address),
+            (&mut self.images_address, &profile.images_address),
+        ];
+        for (typed, saved) in fields {
+            if download_address(typed) == *saved {
+                typed.clone_from(saved);
+            }
         }
     }
 
@@ -221,7 +235,9 @@ impl GameDataSection {
             ..profile.clone()
         };
         let can_press = !self.images_address.trim().is_empty();
+        // A fixed id keeps focus when the line gains or loses its button as the GM types.
         let edit = egui::TextEdit::singleline(&mut self.images_address)
+            .id(ui.scope_id().with("images-address"))
             .hint_text(egui::RichText::new("https://…/images.zip").monospace())
             .font(egui::TextStyle::Monospace);
         let (field, pressed) = match label {

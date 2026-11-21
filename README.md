@@ -45,6 +45,8 @@ on Windows and in development builds, in `Contents/Resources/converter` inside t
 ttrpg-convert-cli release for your platform, checks its sha256 and puts the converter, its licence
 and the release's examples in a `converter` folder in the folder you name. A checksum that differs
 from the pin fails the step. The version and checksums are pinned in `crates/engine/src/lib.rs`.
+CI runs the bundle step for `windows-x86_64`, `osx-aarch_64` and `linux-x86_64` on every pull
+request and every push to `development` and `master`, so a changed download fails the build.
 
 ```sh
 cargo run -p vault-forge-bundle -- target/debug
@@ -55,7 +57,8 @@ cargo run -p vault-forge-bundle -- target/debug
 Push a tag that equals the workspace version in `Cargo.toml`, such as `v0.1.0`. A tag with a
 suffix, such as `v0.2.0-rc.1`, publishes a pre-release, which the app's release check ignores.
 `.github/workflows/release.yml` then builds the app and its bundled converter on GitHub's Windows
-runner and runs the real converter once on the tiny sample in `installer/smoke/`. Then
+runner, checks the converter, its licence and the examples are in its `converter` folder, and runs
+the real converter once on the tiny sample in `installer/smoke/`. Then
 `installer/sign-and-package.ps1` signs the app, builds a per-user installer with Silk Setup
 (`installer/vault-forge.toml`), signs it and verifies both signatures. Only then does the workflow
 publish the installer to a GitHub release.

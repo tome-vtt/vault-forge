@@ -265,10 +265,12 @@ pub fn dialog_width(ctx: &egui::Context) -> f32 {
     (ctx.content_rect().width() - 32.0).min(480.0) - 48.0
 }
 
-/// The dialog's heading: 18px SemiBold with 8px below.
+/// The dialog's heading: 18px SemiBold on a 26px line, with 8px below.
 pub fn dialog_title(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let title = ui.label(
-        egui::RichText::new(text).font(FontId::new(18.0, FontFamily::Name("semibold".into()))),
+        egui::RichText::new(text)
+            .font(FontId::new(18.0, FontFamily::Name("semibold".into())))
+            .line_height(Some(26.0)),
     );
     ui.add_space(8.0 - ui.spacing().item_spacing.y);
     title
@@ -280,15 +282,22 @@ pub fn dialog_actions(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     ui.add_space(20.0 - ui.spacing().item_spacing.y);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        // Pushed right by the buttons' width from the frame before; a modal's first frame is an
-        // unseen sizing pass, so it never shows them unaligned.
+        // Pushed right by the buttons' width from the pass before, or not at all before it is
+        // known. A pass that measures a new width is discarded and redrawn within the same
+        // frame, so the first frame shown has them in place. A modal sizes itself from what it
+        // drew before, so buttons pushed past its edge would move the whole dialog: the caller
+        // gives each kind of dialog its own modal, and so its own stored width.
         let id = ui.scope_id().with("actions_width");
-        let width = ui.data(|d| d.get_temp::<f32>(id)).unwrap_or(0.0);
-        ui.add_space((ui.available_width() - width).max(0.0));
+        let stored = ui.data(|d| d.get_temp::<f32>(id));
+        let push = stored.map_or(0.0, |width| ui.available_width() - width);
+        ui.add_space(push.max(0.0));
         let start = ui.cursor().min.x;
         add(ui);
         let width = ui.cursor().min.x - start - ui.spacing().item_spacing.x;
-        ui.data_mut(|d| d.insert_temp(id, width));
+        if stored != Some(width) {
+            ui.data_mut(|d| d.insert_temp(id, width));
+            ui.ctx().request_discard("dialog buttons measured");
+        }
     });
 }
 
@@ -320,8 +329,12 @@ pub fn primary_button(ui: &mut egui::Ui, enabled: bool, text: &str) -> egui::Res
     .inner
 }
 
-/// The app's mark and name at the head of the sidebar and the menu.
+/// The app's mark and name at the head of the sidebar and the menu, in a row of its own: 36
+/// tall, 8px in, the name 10px after the mark.
 pub fn brand(ui: &mut egui::Ui) {
+    ui.set_min_height(36.0);
+    ui.add_space(8.0);
+    ui.spacing_mut().item_spacing.x = 10.0;
     let (mark, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
     let painter = ui.painter();
     // The demo's mark is the same teal in both palettes.
@@ -384,7 +397,7 @@ pub fn section_with(
         if narrow {
             ui.add_space(12.0 - ui.spacing().item_spacing.y);
         } else {
-            ui.add_space(24.0);
+            ui.add_space(24.0 - ui.spacing().item_spacing.x);
         }
         egui::Frame::new()
             .fill(ui.visuals().faint_bg_color)
@@ -449,20 +462,18 @@ fn field(
 ) -> egui::Response {
     let p = palette(ui);
     ui.scope(|ui| {
-        let v = ui.visuals_mut();
-        // The edge stays as it is while focused; `focus_ring` marks the focus.
-        v.selection.stroke = Stroke::new(1.0, p.border);
-        for state in [
-            &mut v.widgets.inactive,
-            &mut v.widgets.hovered,
-            &mut v.widgets.active,
-        ] {
-            state.bg_stroke = Stroke::new(1.0, p.border);
-            state.corner_radius = corners;
-        }
+        // The edge stays as it is while focused; `focus_ring` marks the focus. It is set on the
+        // frame, not through `selection.stroke`, which also colours the selected letters.
+        let edge = Stroke::new(1.0, p.border);
+        // 12 by (height - 20) / 2 inside the edge, less the edge's own pixel.
+        let frame = egui::Frame::new()
+            .fill(ui.visuals().text_edit_bg_color())
+            .stroke(edge)
+            .corner_radius(corners)
+            .inner_margin(Margin::symmetric(11, ((height - 22.0) / 2.0) as i8));
         let field = ui.add(
-            edit.desired_width(f32::INFINITY)
-                .margin(egui::vec2(12.0, (height - 20.0) / 2.0))
+            edit.frame(frame)
+                .desired_width(f32::INFINITY)
                 .min_size(egui::vec2(0.0, height))
                 .align(egui::Align2::LEFT_CENTER),
         );
@@ -509,30 +520,126 @@ fn ring_corners(response: &egui::Response, corners: CornerRadius) {
         .data_mut(|d| d.insert_temp(response.id, corners));
 }
 
-/// A sidebar row: full width, with an optional tag such as the profile's rules on the right.
-pub fn nav_row(ui: &mut egui::Ui, selected: bool, text: &str, tag: &str) -> egui::Response {
+/// The demo's 16px sidebar icons.
+#[derive(Clone, Copy)]
+pub enum Icon {
+    Folder,
+    Plus,
+    /// A page with a tick, for Obsidian setup.
+    Checklist,
+    /// A circled i, for About.
+    Info,
+}
+
+/// The demo paints its sidebar icons in this grey in both appearances.
+const ICON_GREY: Color32 = hex(0x5d5f60);
+
+impl Icon {
+    /// The icon as a 16px atom, stroked 1.5px as the demo's SVGs are.
+    fn atom(self) -> egui::Atom<'static> {
+        egui::Atom::paint(egui::vec2(16.0, 16.0), move |ui, args| {
+            let stroke = Stroke::new(1.5, ICON_GREY);
+            // Points in the demo's 16px viewBox.
+            let at = |x: f32, y: f32| args.rect.min + egui::vec2(x, y);
+            let painter = ui.painter();
+            match self {
+                Icon::Plus => {
+                    painter.line_segment([at(8.0, 3.0), at(8.0, 13.0)], stroke);
+                    painter.line_segment([at(3.0, 8.0), at(13.0, 8.0)], stroke);
+                }
+                // The 1px corner arcs are cut straight; at 16px they look the same.
+                Icon::Folder => {
+                    let points = [
+                        (2.5, 4.5),
+                        (3.5, 3.5),
+                        (6.5, 3.5),
+                        (8.0, 5.0),
+                        (12.5, 5.0),
+                        (13.5, 6.0),
+                        (13.5, 12.0),
+                        (12.5, 13.0),
+                        (3.5, 13.0),
+                        (2.5, 12.0),
+                    ];
+                    painter.add(egui::Shape::closed_line(
+                        points.map(|(x, y)| at(x, y)).to_vec(),
+                        stroke,
+                    ));
+                }
+                Icon::Checklist => {
+                    let page = [
+                        (3.0, 2.5),
+                        (9.5, 2.5),
+                        (13.0, 6.0),
+                        (13.0, 13.5),
+                        (3.0, 13.5),
+                    ];
+                    painter.add(egui::Shape::closed_line(
+                        page.map(|(x, y)| at(x, y)).to_vec(),
+                        stroke,
+                    ));
+                    let tick = [at(5.5, 9.0), at(7.3, 10.8), at(10.5, 7.5)];
+                    painter.add(egui::Shape::line(tick.to_vec(), stroke));
+                }
+                Icon::Info => {
+                    painter.circle_stroke(at(8.0, 8.0), 5.5, stroke);
+                    painter.line_segment([at(8.0, 7.2), at(8.0, 11.0)], stroke);
+                    // The demo's dot is a round-capped 0.1px line: a 1.5px disc.
+                    painter.circle_filled(at(8.0, 5.0), 0.75, ICON_GREY);
+                }
+            }
+        })
+    }
+}
+
+/// A sidebar row: full width, with an optional icon before the text and an optional tag such as
+/// the profile's rules on the right.
+pub fn nav_row(
+    ui: &mut egui::Ui,
+    selected: bool,
+    icon: Option<Icon>,
+    text: &str,
+    tag: &str,
+) -> egui::Response {
     let p = palette(ui);
     let ink = if selected { p.text } else { p.text2 };
-    row(ui, selected, egui::RichText::new(text).color(ink), tag)
+    let text = egui::RichText::new(text).color(ink);
+    row(ui, selected, icon, text, tag)
 }
 
-/// The sidebar's quieter row that adds something, such as "+ New profile".
+/// The sidebar's quieter row that adds something, such as New profile, after a plus.
 pub fn add_row(ui: &mut egui::Ui, selected: bool, text: &str) -> egui::Response {
     let p = palette(ui);
-    row(ui, selected, egui::RichText::new(text).color(p.muted), "")
+    let text = egui::RichText::new(text).color(p.muted);
+    row(ui, selected, Some(Icon::Plus), text, "")
 }
 
-fn row(ui: &mut egui::Ui, selected: bool, text: egui::RichText, tag: &str) -> egui::Response {
+fn row(
+    ui: &mut egui::Ui,
+    selected: bool,
+    icon: Option<Icon>,
+    text: egui::RichText,
+    tag: &str,
+) -> egui::Response {
     let p = palette(ui);
     ui.scope(|ui| {
         ui.spacing_mut().button_padding.x = 10.0;
-        let hovered = &mut ui.visuals_mut().widgets.hovered;
-        hovered.weak_bg_fill = p.hover;
-        hovered.bg_fill = p.hover;
-        let button = egui::Button::selectable(selected, text)
-            .stroke(Stroke::NONE)
-            .corner_radius(8)
-            .min_size(egui::vec2(ui.available_width(), 32.0));
+        let w = &mut ui.visuals_mut().widgets;
+        // No border in the style itself: egui takes a styled border's width off the padding,
+        // even when the button overrides the border away.
+        for state in [&mut w.inactive, &mut w.hovered, &mut w.active] {
+            state.bg_stroke = Stroke::NONE;
+        }
+        w.hovered.weak_bg_fill = p.hover;
+        w.hovered.bg_fill = p.hover;
+        let button = match icon {
+            Some(icon) => egui::Button::selectable(selected, (icon.atom(), text)),
+            None => egui::Button::selectable(selected, text),
+        }
+        // The demo's 10px gap after the icon.
+        .gap(10.0)
+        .corner_radius(8)
+        .min_size(egui::vec2(ui.available_width(), 32.0));
         // The tag is part of the row's name for screen readers, so an empty one is left out.
         let row = ui.add(match tag {
             "" => button.right_text(egui::Atom::grow()),
@@ -663,14 +770,25 @@ pub fn segmented<T: PartialEq + Copy>(
         });
 }
 
+const REDUCE_MOTION: &str = "reduce motion";
+
+/// Records whether the OS asks for reduced motion, which stills the progress track.
+pub fn set_reduce_motion(ctx: &egui::Context, reduce: bool) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(REDUCE_MOTION), reduce));
+}
+
 /// The demo's progress track: an accent bar sliding along a thin grey track, for work whose
-/// length is not known.
+/// length is not known. With reduced motion it is a still, faint full bar, as the demo's is.
 pub fn track(ui: &mut egui::Ui) {
     let p = palette(ui);
     let size = egui::vec2(ui.available_width(), 6.0);
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 3, p.active);
+    if ui.data(|d| d.get_temp(egui::Id::unique(REDUCE_MOTION))) == Some(true) {
+        painter.rect_filled(rect, 3, p.accent.gamma_multiply(0.35));
+        return;
+    }
     // The demo's slide: 28% wide, from -100% to 360% of its width, ease-in-out over 1.4 s.
     let width = rect.width() * 0.28;
     let t = (ui.input(|i| i.time) / 1.4).fract() as f32;
@@ -709,7 +827,7 @@ pub fn pill(ui: &mut egui::Ui, kind: Pill, text: &str) {
         .corner_radius(10.0)
         .inner_margin(egui::vec2(8.0, 2.0))
         .show(ui, |ui| {
-            ui.label(egui::RichText::new(text).size(12.0).strong().color(hex(fg)));
+            ui.label(medium(text).size(12.0).color(hex(fg)));
         });
 }
 
@@ -774,4 +892,130 @@ pub fn code(ui: &mut egui::Ui, text: &str) {
 pub fn text_button(ui: &mut egui::Ui, text: &str) -> bool {
     let text = medium(text).color(palette(ui).accent);
     ui.add(egui::Button::new(text).frame(false)).clicked()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    /// The colour of every glyph vertex in painted "Hello", searched through nested shapes.
+    fn glyph_colours(shape: &egui::Shape, out: &mut Vec<Color32>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| glyph_colours(s, out)),
+            egui::Shape::Text(text) if text.galley.text() == "Hello" => {
+                for row in &text.galley.rows {
+                    let range = row.visuals.glyph_vertex_range.clone();
+                    out.extend(row.visuals.mesh.vertices[range].iter().map(|v| v.color));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The track's accent bars, as painted with the OS's reduced motion `reduce`d or not.
+    fn track_bars(reduce: bool) -> (egui::Rect, Vec<(egui::Rect, Color32)>) {
+        let mut harness = Harness::builder()
+            .with_theme(Theme::Light)
+            .with_size([400.0, 100.0])
+            .with_context_setup(move |ctx| {
+                install(ctx);
+                set_reduce_motion(ctx, reduce);
+            })
+            .build_ui(track);
+        harness.step();
+        let mut track_rect = egui::Rect::NOTHING;
+        let mut bars = Vec::new();
+        for clipped in &harness.output().shapes {
+            if let egui::Shape::Rect(r) = &clipped.shape {
+                if r.fill == LIGHT.active {
+                    track_rect = r.rect;
+                } else if r.fill == LIGHT.accent || r.fill == LIGHT.accent.gamma_multiply(0.35) {
+                    bars.push((r.rect, r.fill));
+                }
+            }
+        }
+        (track_rect, bars)
+    }
+
+    #[test]
+    fn a_pill_is_20_tall_and_fully_rounded_in_12px_medium_type() {
+        let mut harness = Harness::builder()
+            .with_theme(Theme::Light)
+            .with_size([400.0, 100.0])
+            .with_context_setup(install)
+            .build_ui(|ui| pill(ui, Pill::Ok, "Ready"));
+        harness.step();
+        let mut background = None;
+        let mut font = None;
+        for clipped in &harness.output().shapes {
+            match &clipped.shape {
+                egui::Shape::Rect(r) if r.fill == hex(0xdcfae5) => background = Some(r.clone()),
+                egui::Shape::Text(t) => {
+                    font = Some(t.galley.job.sections[0].format.font_id.clone())
+                }
+                _ => {}
+            }
+        }
+        let background = background.expect("the pill's pale green");
+        assert_eq!(background.rect.height(), 20.0);
+        assert_eq!(background.corner_radius, CornerRadius::same(10));
+        assert_eq!(
+            font,
+            Some(FontId::new(12.0, FontFamily::Name("medium".into())))
+        );
+    }
+
+    #[test]
+    fn with_reduced_motion_the_track_is_a_still_faint_full_bar() {
+        let (track_rect, bars) = track_bars(true);
+        assert_eq!(bars, [(track_rect, LIGHT.accent.gamma_multiply(0.35))]);
+    }
+
+    #[test]
+    fn without_reduced_motion_the_track_slides_a_bar_28_percent_wide() {
+        let (track_rect, bars) = track_bars(false);
+        assert_eq!(bars.len(), 1);
+        assert_eq!(bars[0].1, LIGHT.accent);
+        assert_eq!(bars[0].0.width(), track_rect.width() * 0.28);
+    }
+
+    #[test]
+    fn selected_text_in_every_shared_field_is_drawn_in_ink_in_both_appearances() {
+        type Field = fn(&mut egui::Ui, egui::TextEdit<'_>) -> egui::Response;
+        let fields: [(&str, Field); 3] = [
+            ("input", input),
+            ("small_input", small_input),
+            ("pathline", |ui, edit| pathline(ui, edit, "Browse", true).0),
+        ];
+        for (theme, colours_of) in [(Theme::Dark, &DARK), (Theme::Light, &LIGHT)] {
+            for (name, field) in fields {
+                let mut harness = Harness::builder()
+                    .with_theme(theme)
+                    .with_context_setup(install)
+                    .build_ui_state(
+                        |ui, text: &mut String| {
+                            let label = ui.label("Address");
+                            field(ui, egui::TextEdit::singleline(text)).labelled_by(label.id);
+                        },
+                        "Hello".to_owned(),
+                    );
+                harness.run();
+                harness.get_by_label("Address").focus();
+                harness.run();
+                harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+                harness.run();
+
+                let mut colours = Vec::new();
+                for clipped in &harness.output().shapes {
+                    glyph_colours(&clipped.shape, &mut colours);
+                }
+                assert!(!colours.is_empty(), "{name} in {theme:?} painted no text");
+                for colour in colours {
+                    assert_eq!(colour, colours_of.text, "{name} in {theme:?}");
+                }
+            }
+        }
+    }
 }

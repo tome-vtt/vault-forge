@@ -332,3 +332,44 @@ fn a_profile_saved_before_these_options_existed_still_loads() {
     assert!(!old.config.yaml_statblocks);
     assert_eq!(old.templates, None);
 }
+
+#[test]
+fn a_missing_template_folder_still_lets_the_profile_save_and_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let templates = tempfile::tempdir().unwrap();
+    std::fs::write(templates.path().join("spell2md.txt"), "{name}").unwrap();
+    let (engine, events) = start(dir.path());
+    let mut profile = create(&engine, &events, Rules::Dnd5e);
+    profile.templates = Some(templates.path().to_path_buf());
+    save(&engine, &events, profile.clone());
+    let folder = templates.path().to_path_buf();
+    templates.close().unwrap();
+
+    engine.send(Command::RenameProfile {
+        id: profile.id.clone(),
+        name: "Friday".into(),
+    });
+    profile.name = "Friday".into();
+    profile.config.yaml_statblocks = true;
+    engine.send(Command::SaveProfile(profile.clone()));
+
+    let sent: Vec<Event> = events.try_iter().collect();
+    let saved = sent.iter().filter(|e| matches!(e, Event::ProfileSaved(_)));
+    assert_eq!(saved.count(), 2, "{sent:?}");
+    let named = folder.display().to_string();
+    let warned = sent
+        .iter()
+        .filter(|e| matches!(e, Event::Failed(m) if m.contains(&named)));
+    assert_eq!(warned.count(), 2, "{sent:?}");
+    drop(engine);
+    let (engine, _) = start(dir.path());
+    let saved = engine.profiles().remove(0);
+    assert_eq!(saved.name, "Friday");
+    assert!(saved.config.yaml_statblocks);
+    assert_eq!(saved.templates.as_deref(), Some(folder.as_path()));
+    // The folder's templates are left out; the statblock switch still takes effect.
+    let config = config(&engine, &profile.id);
+    let template = config["template"].as_mapping().unwrap();
+    assert_eq!(template.len(), 1, "{template:?}");
+    assert!(template.contains_key("monster"));
+}
