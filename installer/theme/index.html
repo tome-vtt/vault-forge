@@ -310,7 +310,7 @@ summary { cursor: pointer; color: var(--accent); font-weight: 500; width: max-co
   if (info.installed) {
     text("from", info.installed);
     text("to", info.version);
-    text("update-target", info.target);
+    text("update-target", `…\\${info.target.split("\\").slice(-2).join("\\")}`); // the end of the path, as the demo shows
     $("update-target").title = info.target;
     if (info.alreadyCurrent) {
       text("update-title", `${name} ${info.installed} is already installed`);
@@ -374,7 +374,8 @@ summary { cursor: pointer; color: var(--accent); font-weight: 500; width: max-co
     if (quitWhenStopped) return silk.quit();
     const verb = uninstall ? "removed" : "installed";
     text("failed-title", e.cancelled ? "Setup cancelled" : `${name} was not ${verb}`);
-    text("failed-sub", "Nothing was changed on this PC.");
+    // An uninstall has no rollback, so a failed one may have removed some files already.
+    text("failed-sub", uninstall ? `${name} may be partly removed. Try again to finish removing it.` : "Nothing was changed on this PC.");
     text("failed-message", e.message);
     $("failbox").hidden = e.cancelled;
     show("failed");
