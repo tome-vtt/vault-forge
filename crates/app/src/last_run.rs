@@ -24,6 +24,8 @@ const FOLDERS: usize = 6;
 pub struct LastRunView {
     all_folders: bool,
     warnings_only: bool,
+    /// The filter the log last showed; `None` until it first shows, so a fresh view starts at the top.
+    last_filter: Option<bool>,
 }
 
 impl LastRunView {
@@ -78,7 +80,9 @@ impl LastRunView {
                 .iter()
                 .filter(|l| !self.warnings_only || log_level(l) == LogLevel::Warning)
                 .collect();
-            log(ui, &lines);
+            let refiltered = self.last_filter != Some(self.warnings_only);
+            self.last_filter = Some(self.warnings_only);
+            log(ui, &lines, refiltered);
         });
     }
 
@@ -318,7 +322,7 @@ fn failed(ui: &mut egui::Ui, run: &LastRun, action: &mut Option<Action>) {
     card(ui, |ui| {
         head(ui, "Log", &date_time(run.started));
         let lines: Vec<&String> = run.log.iter().collect();
-        log(ui, &lines);
+        log(ui, &lines, false);
     });
 }
 
@@ -393,8 +397,9 @@ fn text_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     ui.add(egui::Button::new(theme::medium(text).color(accent)).frame(false))
 }
 
-/// The log's lines in the demo's raised box, 260 at most before it scrolls.
-fn log(ui: &mut egui::Ui, lines: &[&String]) {
+/// The log's lines in the demo's raised box, 260 at most before it scrolls; `to_top` starts it
+/// at its first line.
+fn log(ui: &mut egui::Ui, lines: &[&String], to_top: bool) {
     let p = theme::palette(ui);
     egui::Frame::new()
         .fill(p.raised)
@@ -402,8 +407,11 @@ fn log(ui: &mut egui::Ui, lines: &[&String]) {
         .inner_margin(egui::Margin::symmetric(16, 12))
         .show(ui, |ui| {
             let height = ui.text_style_height(&egui::TextStyle::Monospace);
-            egui::ScrollArea::vertical()
-                .id_salt("log")
+            let mut area = egui::ScrollArea::vertical();
+            if to_top {
+                area = area.vertical_scroll_offset(0.0);
+            }
+            area.id_salt("log")
                 .max_height(236.0)
                 .auto_shrink([false, true])
                 .show_rows(ui, height, lines.len(), |ui, rows| {
@@ -532,5 +540,81 @@ mod tests {
             );
         harness.run();
         harness.get_by_label("62 m 5 s");
+    }
+
+    #[test]
+    fn switching_the_log_filter_starts_the_log_at_its_top_and_it_still_scrolls() {
+        // Built in memory: a stand-in run writes too few lines to scroll the log.
+        let log = (1..=120)
+            .map(|n| match n % 2 {
+                0 => format!("WARN| warning {}", n / 2),
+                _ => format!("INFO| line {}", n / 2 + 1),
+            })
+            .collect();
+        let run = LastRun {
+            started: SystemTime::now(),
+            seconds: 1,
+            converted: true,
+            exit_code: Some(0),
+            message: String::new(),
+            fix: None,
+            books: 1,
+            homebrew: 0,
+            folders: vec![("compendium/bestiary".into(), 1)],
+            warnings: Vec::new(),
+            log,
+        };
+        type View<'a> = egui_kittest::Harness<'a, LastRunView>;
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1280.0, 1400.0))
+            .with_context_setup(theme::install)
+            .build_ui_state(
+                |ui, view: &mut LastRunView| {
+                    view.show(ui, Some(&run));
+                },
+                LastRunView::default(),
+            );
+        harness.run();
+        let top = harness.get_by_label("INFO| line 1").rect().top();
+        let at_top = |harness: &View<'_>, first: &str| {
+            let line = harness.query_by_label(first);
+            assert!(line.is_some(), "{first} is scrolled out of the log");
+            let now = line.unwrap().rect().top();
+            assert!((now - top).abs() < 0.5, "{first} is at {now}, not {top}");
+        };
+        let down = |harness: &mut View<'_>, first: &str| {
+            let inside = harness.get_by_label(first).rect().center();
+            harness.hover_at(inside);
+            harness.run();
+            harness.event(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -400.0),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.run_steps(8);
+            assert!(
+                harness.query_by_label(first).is_none(),
+                "the log scrolled down"
+            );
+        };
+        // The Warnings card's heading sits above the log's own Warnings choice.
+        let choose = |harness: &mut View<'_>, label: &str| {
+            harness
+                .get_all_by_label(label)
+                .max_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+                .unwrap()
+                .click();
+            harness.run();
+        };
+
+        down(&mut harness, "INFO| line 1");
+        choose(&mut harness, "Warnings");
+        at_top(&harness, "WARN| warning 1");
+        // Scrolling by hand still works after the switch.
+        down(&mut harness, "WARN| warning 1");
+        choose(&mut harness, "All lines");
+        at_top(&harness, "INFO| line 1");
     }
 }
