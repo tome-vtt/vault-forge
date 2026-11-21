@@ -30,20 +30,13 @@ jobs:
         with:
           persist-credentials: false
 
-      # Through env:, never interpolated into the script: a tag name can hold $(...).
-      - name: Check the tag matches the workspace version
+      # Through env:, never interpolated into the script: a tag name can hold $(...). The tag sets
+      # the shipped version; nothing is committed back.
+      - name: Stamp the tag version into the workspace
         shell: pwsh
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          $version = $env:RELEASE_TAG -replace '^v', ''
-          $cargo = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
-          if (($version -replace '-.*$', '') -ne $cargo) {
-            throw "Tag version $version does not match the workspace version $cargo"
-          }
-          # Silk takes dotted numbers only, so a pre-release installs as its base version.
-          "VERSION=$cargo" >> $env:GITHUB_ENV
-          "INSTALLER=$(Join-Path $env:RUNNER_TEMP "Vault-Forge-Setup-$version.exe")" >> $env:GITHUB_ENV
+        run: ./installer/stamp-version.ps1
 
       # No cargo cache, deliberately: a cache is shared with every other run on this repository,
       # so restoring one here would let any of them plant what this job signs.
@@ -84,6 +77,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          $pre = if ($env:RELEASE_TAG -like '*-*') { '--prerelease' } else { $null }
+          $pre = if ($env:PRERELEASE -eq 'true') { '--prerelease' } else { $null }
           gh release create $env:RELEASE_TAG $env:INSTALLER --title "Vault Forge $env:RELEASE_TAG" --generate-notes $pre
           if ($LASTEXITCODE -ne 0) { throw 'Could not publish the release' }
