@@ -237,15 +237,20 @@ fn describe(ui: &mut egui::Ui, profile: &Profile, books: &[Book]) {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
             for code in chosen {
-                let pill = egui::Frame::new()
-                    .fill(p.accent_pale)
-                    .corner_radius(4)
-                    .inner_margin(egui::vec2(8.0, 2.0))
-                    .show(ui, |ui| {
-                        ui.label(theme::mono_medium(code, 12.0).color(p.accent));
-                    });
+                let text = egui::WidgetText::from(theme::mono_medium(code, 12.0).color(p.accent));
+                let galley = text.into_galley(ui, None, f32::INFINITY, egui::TextStyle::Body);
+                let margin = egui::vec2(8.0, 2.0);
+                // A frame alone never wraps in a wrapping row: it is placed before its size is
+                // known. Sizing the space first lets the row move it onto the next line.
+                let pill = ui.allocate_ui(galley.size() + 2.0 * margin, |ui| {
+                    egui::Frame::new()
+                        .fill(p.accent_pale)
+                        .corner_radius(4)
+                        .inner_margin(margin)
+                        .show(ui, |ui| ui.label(galley))
+                });
                 if let Some(book) = books.iter().find(|b| b.code == *code) {
-                    pill.response.on_hover_text(&book.name);
+                    pill.inner.response.on_hover_text(&book.name);
                 }
             }
         });
