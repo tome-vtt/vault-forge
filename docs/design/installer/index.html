@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vault Forge Setup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Installer demo. The window is Silk Setup's 720 x 460, frameless ([window] frame = false):
+   the theme draws its own title bar with the app icon, minimise and close.
+   Tokens are copied from docs/design/main-window so the installer and the app share one look:
+   a frame ground, a rail on it, and a white sheet inset 8px with a 16px radius. */
+:root {
+  --ground: #f6f8f9; --surface: #ffffff; --raised: #f4f6f8; --active: #e6e9eb;
+  --border: #e8eaec; --rule: #f0f1f2; --control: #cdced1;
+  --text: #131416; --text2: #3b3d3f; --muted: #5d5f60;
+  --accent: #1b6c80; --accent-pale: #e3eff2;
+  --positive: #1e7b4f; --negative: #c4242a;
+  --pill-positive-bg: #dcfae5; --pill-positive-ink: #04250e;
+  --pill-neutral-bg: #ebedee; --pill-neutral-ink: #353736;
+  --primary: #1d1f20; --primary-hover: #3a3d3f; --on-primary: #ffffff;
+  --hover: #eceef0; --panel: #fafafa; --field: #ffffff;
+  --negative-edge: #efc4c2; --negative-wash: #fff8f7;
+  --radius-card: 8px; --radius-control: 6px; --radius-sheet: 16px; --sheet-inset: 8px;
+  --fs-title: 22px; --fs-section: 16px; --fs-body: 14px; --fs-small: 12px;
+  --font: "IBM Plex Sans", Inter, system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0f1011; --surface: #17181a; --raised: #202123; --active: #2a2c2e;
+  --border: #2a2c2e; --rule: #222325; --control: #45474a;
+  --text: #f2f3f4; --text2: #d0d2d4; --muted: #b0b3b6;
+  --accent: #5fb8cc; --accent-pale: #163038;
+  --positive: #3fc07a; --negative: #ef6b6b;
+  --pill-positive-bg: #172a1d; --pill-positive-ink: #5fd393;
+  --pill-neutral-bg: #2a2c2e; --pill-neutral-ink: #d0d2d4;
+  --primary: #f2f3f4; --primary-hover: #d0d2d4; --on-primary: #111213;
+  --hover: #1c1d1f; --panel: #1d1e20; --field: #141517;
+  --negative-edge: #5a2a2c; --negative-wash: #211517;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: #2b2d30; color: var(--text); font: 400 var(--fs-body)/20px var(--font); min-height: 100vh; }
+button { font: inherit; color: inherit; }
+.num { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--mono); font-size: 13px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* demo-only state switcher, outside the installer window */
+.demo { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 16px; background: #131416; color: #fff; font-size: var(--fs-small); }
+.demo span { color: #c9cccf; margin: 0 4px 0 8px; }
+.demo span:first-child { margin-left: 0; }
+.demo button { background: #2a2c2e; border: 0; border-radius: 999px; padding: 4px 12px; color: #fff; cursor: pointer; }
+.demo button[aria-pressed="true"] { background: #fff; color: #131416; }
+.stage { display: grid; place-items: center; padding: 40px 16px; }
+.note { max-width: 720px; margin: 16px auto 0; color: #c9cccf; font-size: var(--fs-small); text-align: center; }
+
+/* the installer window: 720 x 460, frameless */
+.win { width: 720px; height: 460px; max-width: 100%; background: var(--ground); border-radius: 8px; overflow: hidden; display: grid; grid-template-rows: 36px 1fr; box-shadow: 0 20px 60px rgba(0,0,0,.45), 0 0 0 1px rgba(0,0,0,.25); }
+
+/* title bar on the frame ground; the whole bar is the drag handle (data-silk-drag) */
+.bar { display: flex; align-items: center; gap: 8px; padding-left: 12px; user-select: none; }
+.bar img { width: 18px; height: 18px; display: block; }
+.bar .name { font-size: var(--fs-small); color: var(--text2); font-weight: 500; }
+.bar .ctl { margin-left: auto; display: flex; height: 100%; }
+.bar .ctl button { width: 46px; height: 100%; border: 0; background: none; color: var(--text2); cursor: pointer; display: grid; place-items: center; }
+.bar .ctl button:hover { background: var(--hover); }
+.bar .ctl button.close:hover { background: #c42b1c; color: #fff; }
+
+.body { display: grid; grid-template-columns: 188px 1fr; min-height: 0; }
+
+/* rail: steps on the frame ground, like the app's sidebar */
+.rail { display: flex; flex-direction: column; padding: 8px 10px 16px; }
+.rail .label { color: var(--muted); font-size: var(--fs-small); padding: 0 10px 8px; }
+.steps { list-style: none; margin: 0; padding: 0; }
+.steps li { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; margin-bottom: 2px; border-radius: 8px; color: var(--muted); }
+.steps li .dot { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--control); display: grid; place-items: center; flex: none; }
+.steps li[aria-current="step"] { background: var(--active); color: var(--text); font-weight: 500; }
+.steps li[aria-current="step"] .dot { border-color: var(--accent); }
+.steps li[aria-current="step"] .dot::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.steps li.done { color: var(--text2); }
+.steps li.done .dot { background: var(--accent); border-color: var(--accent); }
+.steps li.done .dot svg { color: var(--surface); }
+.rail .ver { margin-top: auto; padding: 0 10px; color: var(--muted); font-size: var(--fs-small); }
+
+/* the sheet */
+.sheet { margin: 0 var(--sheet-inset) var(--sheet-inset) 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sheet); display: flex; flex-direction: column; min-height: 0; }
+.view { flex: 1; display: flex; flex-direction: column; padding: 24px; min-height: 0; }
+.view[hidden] { display: none; }
+.hero { display: flex; gap: 16px; align-items: center; }
+.hero img { width: 56px; height: 56px; flex: none; }
+h1 { margin: 0; font-size: var(--fs-title); line-height: 28px; font-weight: 600; letter-spacing: -0.01em; }
+.sub { margin: 4px 0 0; color: var(--muted); }
+.panel { margin-top: 20px; background: var(--panel); border-radius: var(--radius-sheet); padding: 16px; }
+.panel .lbl { font-weight: 500; margin: 0 0 8px; }
+.path { height: 40px; display: flex; align-items: center; padding: 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--field); font-family: var(--mono); font-size: 13px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.hint { margin: 8px 0 0; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pill { flex: none; white-space: nowrap; display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; font-size: var(--fs-small); font-weight: 500; }
+.pill.ok { background: var(--pill-positive-bg); color: var(--pill-positive-ink); }
+.pill.neutral { background: var(--pill-neutral-bg); color: var(--pill-neutral-ink); }
+
+.foot { margin-top: auto; padding-top: 16px; display: flex; gap: 8px; align-items: center; }
+.foot .left { margin-right: auto; color: var(--muted); font-size: var(--fs-small); }
+.btn { height: 32px; padding: 0 14px; border-radius: var(--radius-control); border: 1px solid var(--control); background: var(--surface); cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 8px; }
+.btn:hover { background: var(--raised); }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); font-weight: 500; }
+.btn.primary:hover { background: var(--primary-hover); }
+.btn.danger { color: var(--negative); border-color: var(--negative-edge); }
+.btn.text { border-color: transparent; background: none; padding: 0 6px; color: var(--accent); font-weight: 500; }
+.btn.text:hover { text-decoration: underline; }
+
+/* progress, as on the app's Last run screen */
+.progress { margin-top: 20px; }
+.progress .line { display: flex; gap: 16px; align-items: baseline; }
+.progress .now { font-size: 18px; font-weight: 500; }
+.progress .pct { margin-left: auto; font-size: 18px; font-weight: 500; }
+.track { margin-top: 12px; height: 6px; border-radius: 999px; background: var(--active); overflow: hidden; }
+.track i { display: block; height: 6px; border-radius: 999px; background: var(--accent); transition: width 200ms linear; }
+.progress .meta { margin: 10px 0 0; color: var(--muted); display: flex; gap: 16px; }
+.progress .meta .file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.progress .meta .left { margin-left: auto; flex: none; }
+details { margin-top: 16px; min-height: 0; display: flex; flex-direction: column; }
+summary { cursor: pointer; color: var(--accent); font-weight: 500; width: max-content; }
+.log { margin: 8px 0 0; height: 92px; overflow: auto; background: var(--raised); border-radius: var(--radius-card); padding: 8px 12px; font: 400 12px/18px var(--mono); color: var(--text2); white-space: pre; }
+
+/* done and failed */
+.result { display: flex; gap: 14px; align-items: flex-start; }
+.badge { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; flex: none; }
+.badge.ok { background: var(--pill-positive-bg); color: var(--positive); }
+.badge.bad { background: var(--negative-wash); color: var(--negative); border: 1px solid var(--negative-edge); }
+.list { margin: 20px 0 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: var(--radius-card); }
+.list li { display: flex; gap: 12px; align-items: center; min-height: 40px; padding: 0 16px; border-top: 1px solid var(--rule); }
+.list li:first-child { border-top: 0; }
+.list li svg { color: var(--positive); flex: none; }
+.failbox { margin-top: 20px; border: 1px solid var(--negative-edge); background: var(--negative-wash); border-radius: var(--radius-card); padding: 14px 16px; color: var(--text2); }
+.failbox b { color: var(--text); font-weight: 500; display: block; margin-bottom: 2px; }
+.keep { margin-top: 12px; color: var(--muted); }
+
+@media (max-width: 760px) {
+  .stage { padding: 16px; }
+  .win { height: auto; min-height: 460px; }
+  .body { grid-template-columns: 1fr; }
+  .rail { padding: 0 8px 8px; }
+  .rail .label, .rail .ver { display: none; }
+  .steps { display: flex; gap: 4px; overflow-x: auto; }
+  .steps li { margin: 0; flex: none; }
+  .sheet { margin: 0 var(--sheet-inset) var(--sheet-inset); }
+}
+@media (prefers-reduced-motion: reduce) { .track i { transition: none; } }
+</style>
+</head>
+<body>
+
+<div class="demo" role="toolbar" aria-label="Demo controls (not part of the installer)">
+  <span>Installer</span>
+  <button data-show="welcome" aria-pressed="true">Welcome</button>
+  <button data-show="update" aria-pressed="false">Update</button>
+  <button data-show="installing" aria-pressed="false">Installing</button>
+  <button data-show="done" aria-pressed="false">Done</button>
+  <button data-show="failed" aria-pressed="false">Failed</button>
+  <span>Uninstaller</span>
+  <button data-show="remove" aria-pressed="false">Remove?</button>
+  <button data-show="removing" aria-pressed="false">Removing</button>
+  <button data-show="removed" aria-pressed="false">Removed</button>
+  <span>Look</span>
+  <button data-look="system" aria-pressed="true">System</button>
+  <button data-look="light" aria-pressed="false">Light</button>
+  <button data-look="dark" aria-pressed="false">Dark</button>
+</div>
+
+<div class="stage">
+  <div class="win" role="application" aria-label="Vault Forge Setup">
+    <div class="bar" data-silk-drag>
+      <img src="icon.png" alt="">
+      <span class="name" id="barname">Vault Forge Setup</span>
+      <div class="ctl">
+        <button aria-label="Minimise" title="Minimise"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5.5h10" stroke="currentColor"/></svg></button>
+        <button class="close" aria-label="Close" title="Close"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M.5.5l9 9M9.5.5l-9 9" stroke="currentColor"/></svg></button>
+      </div>
+    </div>
+
+    <div class="body">
+      <nav class="rail" aria-label="Steps">
+        <div class="label" id="steplabel">Setup</div>
+        <ol class="steps" id="steps"></ol>
+        <div class="ver num" id="ver">Version 0.2.0</div>
+      </nav>
+
+      <main class="sheet">
+        <!-- Install: welcome, nothing installed yet -->
+        <section class="view" data-view="welcome">
+          <div class="hero">
+            <img src="icon.png" alt="">
+            <div>
+              <h1>Install Vault Forge</h1>
+              <p class="sub">Turn your own 5eTools or Pf2eTools data into Obsidian notes.</p>
+            </div>
+          </div>
+          <div class="panel">
+            <p class="lbl">Install folder</p>
+            <div class="path" title="C:\Users\Ann\AppData\Local\Programs\Vault Forge">C:\Users\Ann\AppData\Local\Programs\Vault Forge</div>
+            <p class="hint"><span class="pill neutral">Just for you</span> No administrator rights needed. Uses <span class="num">84 MB</span>.</p>
+          </div>
+          <div class="foot">
+            <span class="left">Adds Start menu and desktop shortcuts.</span>
+            <button class="btn" data-close>Cancel</button>
+            <button class="btn primary" data-go="installing">Install</button>
+          </div>
+        </section>
+
+        <!-- Install: an older version is already there -->
+        <section class="view" data-view="update" hidden>
+          <div class="hero">
+            <img src="icon.png" alt="">
+            <div>
+              <h1>Update Vault Forge</h1>
+              <p class="sub">Your profiles, game data and vaults stay as they are.</p>
+            </div>
+          </div>
+          <div class="panel">
+            <p class="lbl">Installed version</p>
+            <p class="hint" style="margin:0"><span class="pill neutral num">0.1.4</span> to <span class="pill ok num">0.2.0</span></p>
+            <p class="hint">Vault Forge closes while it updates, if it is open.</p>
+          </div>
+          <div class="foot">
+            <span class="left mono">…\Programs\Vault Forge</span>
+            <button class="btn" data-close>Cancel</button>
+            <button class="btn primary" data-go="installing">Update</button>
+          </div>
+        </section>
+
+        <!-- Install: copying -->
+        <section class="view" data-view="installing" hidden>
+          <h1>Installing</h1>
+          <p class="sub">This takes about a minute.</p>
+          <div class="progress" aria-live="polite">
+            <div class="line"><span class="now" id="phase">Copying files</span><span class="pct num" id="pct">42%</span></div>
+            <div class="track" role="progressbar" aria-label="Install progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="42"><i id="fill" style="width:42%"></i></div>
+            <p class="meta"><span class="file mono" id="file">tools/ttrpg-convert.exe</span><span class="left num" id="eta">About 30 seconds left</span></p>
+          </div>
+          <details>
+            <summary>Details</summary>
+            <pre class="log" id="log">vault-forge.exe
+LICENSE-APACHE
+LICENSE-MIT
+tools/LICENSE-ttrpg-convert-cli
+tools/ttrpg-convert.exe</pre>
+          </details>
+          <div class="foot">
+            <button class="btn" data-go="failed">Cancel</button>
+          </div>
+        </section>
+
+        <!-- Install: done -->
+        <section class="view" data-view="done" hidden>
+          <div class="result">
+            <div class="badge ok"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 10.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+            <div>
+              <h1>Vault Forge is ready</h1>
+              <p class="sub">Version <span class="num">0.2.0</span> is installed.</p>
+            </div>
+          </div>
+          <ul class="list">
+            <li><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Shortcut in the Start menu</li>
+            <li><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Shortcut on the desktop</li>
+            <li><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Listed in Settings &gt; Apps, to remove it later</li>
+          </ul>
+          <div class="foot">
+            <button class="btn" data-close>Close</button>
+            <button class="btn primary" data-close>Open Vault Forge</button>
+          </div>
+        </section>
+
+        <!-- Install: failed or cancelled -->
+        <section class="view" data-view="failed" hidden>
+          <div class="result">
+            <div class="badge bad"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M9 4.5v5.5M9 13v.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+            <div>
+              <h1>Vault Forge was not installed</h1>
+              <p class="sub">Nothing was changed on this PC.</p>
+            </div>
+          </div>
+          <div class="failbox">
+            <b>Not enough free space</b>
+            Vault Forge needs <span class="num">84 MB</span> on drive C:, and <span class="num">12 MB</span> is free. Free some space, then try again.
+          </div>
+          <div class="foot">
+            <button class="btn" data-close>Close</button>
+            <button class="btn primary" data-go="installing">Try again</button>
+          </div>
+        </section>
+
+        <!-- Uninstall: confirm -->
+        <section class="view" data-view="remove" hidden>
+          <div class="hero">
+            <img src="icon.png" alt="">
+            <div>
+              <h1>Remove Vault Forge?</h1>
+              <p class="sub">This removes the app and its shortcuts.</p>
+            </div>
+          </div>
+          <div class="panel">
+            <p class="lbl">What stays</p>
+            <p class="hint" style="margin:0">Your vaults and their notes, your profiles and the game data you downloaded are kept. Install Vault Forge again and they are all still there.</p>
+          </div>
+          <div class="foot">
+            <button class="btn" data-close>Keep it</button>
+            <button class="btn danger" data-go="removing">Remove</button>
+          </div>
+        </section>
+
+        <!-- Uninstall: removing -->
+        <section class="view" data-view="removing" hidden>
+          <h1>Removing</h1>
+          <p class="sub">This cannot be stopped once it starts.</p>
+          <div class="progress">
+            <div class="line"><span class="now">Removing files</span><span class="pct num">67%</span></div>
+            <div class="track" role="progressbar" aria-label="Remove progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="67"><i style="width:67%"></i></div>
+            <p class="meta"><span class="file mono">tools/ttrpg-convert.exe</span></p>
+          </div>
+          <div class="foot"></div>
+        </section>
+
+        <!-- Uninstall: removed -->
+        <section class="view" data-view="removed" hidden>
+          <div class="result">
+            <div class="badge ok"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 10.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+            <div>
+              <h1>Vault Forge is removed</h1>
+              <p class="sub">Your vaults, profiles and game data are kept.</p>
+            </div>
+          </div>
+          <div class="foot">
+            <button class="btn primary" data-close>Close</button>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+</div>
+<p class="note">Demo only: the bar above is not part of the installer. The window follows the Windows light or dark setting, as the app's System appearance does.</p>
+
+<script>
+const STEPS = {
+  install: ['Welcome', 'Install', 'Done'],
+  uninstall: ['Confirm', 'Remove', 'Done'],
+};
+const VIEWS = {
+  welcome: ['install', 0], update: ['install', 0], installing: ['install', 1], done: ['install', 2], failed: ['install', 1],
+  remove: ['uninstall', 0], removing: ['uninstall', 1], removed: ['uninstall', 2],
+};
+const tick = '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5.2l2 2 4-4.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+let timer;
+
+function show(name) {
+  const [mode, at] = VIEWS[name];
+  document.querySelectorAll('[data-view]').forEach(v => v.hidden = v.dataset.view !== name);
+  document.querySelectorAll('[data-show]').forEach(b => b.setAttribute('aria-pressed', b.dataset.show === name));
+  const finished = name === 'done' || name === 'removed';
+  document.getElementById('steps').innerHTML = STEPS[mode].map((s, i) => {
+    const done = i < at || (finished && i === at);
+    const cur = i === at && !finished;
+    return `<li class="${done ? 'done' : ''}"${cur ? ' aria-current="step"' : ''}><span class="dot">${done ? tick : ''}</span>${s}</li>`;
+  }).join('');
+  document.getElementById('steplabel').textContent = mode === 'install' ? 'Setup' : 'Remove';
+  document.getElementById('barname').textContent = mode === 'install' ? 'Vault Forge Setup' : 'Remove Vault Forge';
+  clearInterval(timer);
+  if (name === 'installing') run();
+}
+
+// Fake progress, shaped like Silk's progress events: preparing, copying (one per file), finishing.
+function run() {
+  const files = ['vault-forge.exe', 'LICENSE-APACHE', 'LICENSE-MIT', 'tools/LICENSE-ttrpg-convert-cli', 'tools/ttrpg-convert.exe'];
+  const log = document.getElementById('log');
+  let p = 0;
+  log.textContent = '';
+  timer = setInterval(() => {
+    p = Math.min(100, p + 4);
+    const phase = p < 8 ? 'Getting ready' : p < 92 ? 'Copying files' : 'Adding shortcuts';
+    const file = files[Math.min(files.length - 1, Math.floor(p / 20))];
+    document.getElementById('phase').textContent = phase;
+    document.getElementById('pct').textContent = Math.floor(p) + '%';
+    document.getElementById('fill').style.width = p + '%';
+    document.querySelector('[data-view="installing"] .track').setAttribute('aria-valuenow', Math.floor(p));
+    document.getElementById('file').textContent = p < 92 ? file : '';
+    const secs = Math.round((100 - p) * 0.5);
+    document.getElementById('eta').textContent = secs > 50 ? 'About a minute left' : secs > 5 ? `About ${Math.ceil(secs / 5) * 5} seconds left` : 'Almost done';
+    if (!log.textContent.includes(file) && p < 92) log.textContent += (log.textContent ? '\n' : '') + file;
+    if (p >= 100) { clearInterval(timer); setTimeout(() => show('done'), 400); }
+  }, 250);
+}
+
+document.addEventListener('click', e => {
+  const s = e.target.closest('[data-show]'); if (s) show(s.dataset.show);
+  const g = e.target.closest('[data-go]'); if (g) show(g.dataset.go);
+  const c = e.target.closest('[data-close]'); if (c) show(VIEWS[document.querySelector('.view:not([hidden])').dataset.view][0] === 'install' ? 'welcome' : 'remove');
+  const l = e.target.closest('[data-look]'); if (l) { look = l.dataset.look; applyLook(); }
+});
+
+const dark = matchMedia('(prefers-color-scheme: dark)');
+let look = 'system';
+function applyLook() {
+  const isDark = look === 'dark' || (look === 'system' && dark.matches);
+  document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
+  document.querySelectorAll('[data-look]').forEach(b => b.setAttribute('aria-pressed', b.dataset.look === look));
+}
+dark.addEventListener('change', applyLook);
+applyLook();
+show('welcome');
+</script>
+</body>
+</html>

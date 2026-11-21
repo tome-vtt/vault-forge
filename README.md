@@ -54,8 +54,13 @@ cargo run -p vault-forge-bundle -- target/debug
 
 ## Releasing
 
-Push a tag that equals the workspace version in `Cargo.toml`, such as `v0.1.0`. A tag with a
-suffix, such as `v0.2.0-rc.1`, publishes a pre-release, which the app's release check ignores.
+Tag `development` with the version to ship, such as `v1.2.3`, and push the tag. Nothing else:
+no version-bump commit comes first. The tag sets the shipped version: the version in `Cargo.toml`
+on `development` is not the release version. `installer/stamp-version.ps1` writes the tag's version
+into `Cargo.toml` on the runner before the build, so the app, its About screen and release check,
+and the installer all carry it; nothing is committed back. A tag that is not `vX.Y.Z` or
+`vX.Y.Z-suffix` is refused. A tag with a suffix, such as `v1.2.3-rc.1`, publishes a pre-release,
+which the app's release check ignores; it ships as its dotted base version, `1.2.3`.
 `.github/workflows/release.yml` then builds the app and its bundled converter on GitHub's Windows
 runner, checks the converter, its licence and the examples are in its `converter` folder, and runs
 the real converter once on the tiny sample in `installer/smoke/`. Then

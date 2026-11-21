@@ -13,6 +13,9 @@ pub struct BooksSection {
     pub rules: Rules,
     pub search: String,
     chosen_only: bool,
+    /// The search and Chosen filter the list last showed, to start it at its top when they change;
+    /// none yet, so a fresh section starts at its top too, not where another profile's list was.
+    last_filter: Option<(String, bool)>,
     book_codes: String,
     adventure_codes: String,
 }
@@ -24,6 +27,7 @@ impl BooksSection {
             rules: profile.rules,
             search: String::new(),
             chosen_only: false,
+            last_filter: None,
             book_codes: profile.config.sources.book.join(", "),
             adventure_codes: profile.config.sources.adventure.join(", "),
         }
@@ -100,6 +104,9 @@ impl BooksSection {
                 && (b.name.to_lowercase().contains(&search)
                     || b.code.to_lowercase().contains(&search))
         };
+        let filter = Some((search.clone(), self.chosen_only));
+        let refiltered = filter != self.last_filter;
+        self.last_filter = filter;
         let mut changed = None;
         egui::Frame::new()
             .fill(ui.visuals().extreme_bg_color)
@@ -108,8 +115,14 @@ impl BooksSection {
             .show(ui, |ui| {
                 // The list's own top: inside it, the clip is also cut by the page's scroll.
                 let top = ui.max_rect().top();
-                egui::ScrollArea::vertical()
-                    .max_height(452.0)
+                // Never shorter than six rows, even where the window leaves less room below it.
+                let min_height = 6.0 * row_height(phone);
+                let mut list = egui::ScrollArea::vertical();
+                if refiltered {
+                    list = list.vertical_scroll_offset(0.0);
+                }
+                list.max_height(452.0)
+                    .min_scrolled_height(min_height)
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                         let mut any = false;
@@ -163,6 +176,8 @@ impl BooksSection {
                                 ui.weak(format!("No book matches \"{}\".", self.search.trim()));
                             });
                         }
+                        // After the rows, so each group's own bottom still ends its stuck heading.
+                        ui.expand_to_include_y(ui.min_rect().top() + min_height);
                     });
             });
         if let Some(chosen) = changed {
@@ -222,15 +237,20 @@ fn describe(ui: &mut egui::Ui, profile: &Profile, books: &[Book]) {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
             for code in chosen {
-                let pill = egui::Frame::new()
-                    .fill(p.accent_pale)
-                    .corner_radius(4)
-                    .inner_margin(egui::vec2(8.0, 2.0))
-                    .show(ui, |ui| {
-                        ui.label(theme::mono_medium(code, 12.0).color(p.accent));
-                    });
+                let text = egui::WidgetText::from(theme::mono_medium(code, 12.0).color(p.accent));
+                let galley = text.into_galley(ui, None, f32::INFINITY, egui::TextStyle::Body);
+                let margin = egui::vec2(8.0, 2.0);
+                // A frame alone never wraps in a wrapping row: it is placed before its size is
+                // known. Sizing the space first lets the row move it onto the next line.
+                let pill = ui.allocate_ui(galley.size() + 2.0 * margin, |ui| {
+                    egui::Frame::new()
+                        .fill(p.accent_pale)
+                        .corner_radius(4)
+                        .inner_margin(margin)
+                        .show(ui, |ui| ui.label(galley))
+                });
                 if let Some(book) = books.iter().find(|b| b.code == *code) {
-                    pill.response.on_hover_text(&book.name);
+                    pill.inner.response.on_hover_text(&book.name);
                 }
             }
         });
@@ -297,13 +317,18 @@ fn group_header(
     (heading.response.rect, choice)
 }
 
+/// A book row's height: taller on a phone, for touch.
+fn row_height(phone: bool) -> f32 {
+    if phone { 44.0 } else { 40.0 }
+}
+
 /// One book: its box and name, its code in Plex Mono and its year (not on a phone). The whole
 /// row ticks the box. Returns the profile with the book ticked or unticked when it changes.
 fn row(ui: &mut egui::Ui, profile: &Profile, book: &Book, phone: bool) -> Option<Profile> {
     let p = theme::palette(ui);
     // The row is laid out before its contents, so the box and name stay on top of it.
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), if phone { 44.0 } else { 40.0 }),
+        egui::vec2(ui.available_width(), row_height(phone)),
         egui::Sense::click(),
     );
     if ui.rect_contains_pointer(rect) {
