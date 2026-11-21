@@ -1,6 +1,10 @@
 # The Windows installer, built with Silk Setup v0.2.1 by sign-and-package.ps1.
-# No theme: Silk's default look. Relative paths resolve from this file's folder.
+# Relative paths resolve from this file's folder.
 product = "Vault Forge"
+# The app's own icon on the setup program. Silk does not pass it to the theme, so theme/ has a copy.
+icon = "../crates/app/icons/vault-forge-arcane.ico"
+# Built to match docs/design/installer/; serves the uninstaller too.
+theme = "theme"
 # The release stamps the real version with --version.
 version = "0.0.0"
 publisher = "Tome Gaming"
@@ -18,6 +22,12 @@ webview2_bootstrapper = true
 [shortcuts]
 start_menu = true
 desktop = true
+
+# Frameless: the theme draws its own title bar with the app icon.
+[window]
+width = 720
+height = 460
+frame = false
 
 # Azure Artifact Signing, on the packed uninstaller and then the installer, with the identity
 # TomeVTT's release-desktop.yml uses. The release logs in to Azure, installs the
