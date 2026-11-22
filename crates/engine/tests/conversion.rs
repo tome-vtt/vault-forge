@@ -222,38 +222,6 @@ fn a_finished_conversion_replaces_both_folders_and_nothing_else() {
     );
 }
 
-/// A converter unpacked from a downloaded, unsigned Mac app carries the quarantine flag, which
-/// stops it running.
-#[cfg(target_os = "macos")]
-#[test]
-fn the_converter_loses_the_quarantine_flag_before_it_runs() {
-    let address = serve_game_data();
-    let dir = tempfile::tempdir().unwrap();
-    let converter = dir.path().join("ttrpg-convert");
-    std::fs::copy(env!("CARGO_BIN_EXE_stand-in-converter"), &converter).unwrap();
-    let xattr = |args: &[&str]| {
-        std::process::Command::new("xattr")
-            .args(args)
-            .arg(&converter)
-            .output()
-            .unwrap()
-            .status
-            .success()
-    };
-    assert!(xattr(&[
-        "-w",
-        "com.apple.quarantine",
-        "0081;00000000;Safari;"
-    ]));
-    let setup = setup_with(&address, converter.clone());
-    let id = setup.engine.profiles()[0].id.clone();
-
-    let (_, converted, message) = convert(&setup, &id);
-
-    assert!(converted, "{message}");
-    assert!(!xattr(&["-p", "com.apple.quarantine"]));
-}
-
 #[test]
 fn log_lines_arrive_in_the_order_the_converter_prints_them() {
     let address = serve_game_data();

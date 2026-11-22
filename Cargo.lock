@@ -3708,7 +3708,6 @@ dependencies = [
  "directories",
  "eframe",
  "egui_kittest",
- "objc2-app-kit 0.3.2",
  "rfd",
  "tempfile",
  "vault-forge-engine",

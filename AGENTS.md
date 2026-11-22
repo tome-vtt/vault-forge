@@ -38,12 +38,12 @@ a user's own 5eTools or Pf2eTools data into Obsidian notes. Three crates:
   converter does not read (name, game rules, game data address, vault, book images switch) kept in a
   side file beside it.
 - One pinned native converter build is bundled per platform with its Apache-2.0 licence: Windows
-  x64, macOS arm64 and Linux x64 only. No Java.
+  x64 and Linux x64 only. No Java.
 - Obsidian plugin setup is a checklist screen, never automated.
 - Appearance is System (default, follows the OS), Light or Dark.
 - Updates are a notice and a link, never a silent install.
-- Every test, build and release workflow runs on GitHub-hosted runners (`windows-latest`,
-  `ubuntu-latest`, `macos-latest`), never on self-hosted runners.
+- Every test, build and release workflow runs on GitHub-hosted runners (`windows-latest` and
+  `ubuntu-latest`), never on self-hosted runners.
 
 ## Commands
 

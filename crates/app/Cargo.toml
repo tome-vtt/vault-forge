@@ -28,10 +28,7 @@ zbus = { version = "5.19.0", default-features = false, features = ["async-io", "
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_UI_WindowsAndMessaging"] }
 
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSAccessibility", "NSWorkspace"] }
-
-# The macOS and Linux packages, made by cargo-packager once the release build and the bundle step
+# The Linux packages, made by cargo-packager once the release build and the bundle step
 # have put the app and its converter in target/release. Paths are from this folder.
 [package.metadata.packager]
 product-name = "Vault Forge"
@@ -42,7 +39,3 @@ binaries-dir = "../../target/release"
 resources = [{ src = "../../target/release/converter", target = "converter" }]
 category = "Utility"
 icons = ["icons/vault-forge-arcane.png"]
-
-# Ad-hoc, not a developer signature: Apple Silicon calls a downloaded bundle with none damaged.
-[package.metadata.packager.macos]
-signing-identity = "-"

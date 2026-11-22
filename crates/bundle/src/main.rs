@@ -41,7 +41,6 @@ fn main() -> ExitCode {
 fn host() -> Option<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("windows", "x86_64") => Some("windows-x86_64"),
-        ("macos", "aarch64") => Some("osx-aarch_64"),
         ("linux", "x86_64") => Some("linux-x86_64"),
         _ => None,
     }
@@ -294,10 +293,7 @@ mod tests {
     #[test]
     fn every_platform_the_app_ships_on_is_pinned() {
         let pinned: Vec<&str> = CONVERTER_SHA256.iter().map(|(name, _)| *name).collect();
-        assert_eq!(
-            pinned,
-            ["windows-x86_64", "osx-aarch_64", "linux-x86_64", "examples"]
-        );
+        assert_eq!(pinned, ["windows-x86_64", "linux-x86_64", "examples"]);
         for (name, sum) in CONVERTER_SHA256 {
             let hex = sum
                 .chars()
