@@ -1,9 +1,9 @@
-//! The OS theme where the window layer cannot report it. On Windows and macOS the window reports
+//! The OS theme where the window layer cannot report it. On Windows the window reports
 //! it itself, so this sends nothing. On Linux it reads the desktop portal's colour scheme on a
 //! worker thread and sends each change.
 //!
 //! It also reads whether the OS asks for reduced motion, which no window layer reports: Windows'
-//! Show animations, macOS's Reduce motion, and on Linux the portal's GNOME animations switch.
+//! Show animations and on Linux the portal's GNOME animations switch.
 use std::sync::mpsc::{Receiver, channel};
 
 use eframe::egui::{Context, Theme};
@@ -55,12 +55,6 @@ fn reduce_motion() -> bool {
     let read =
         unsafe { SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, (&raw mut on).cast(), 0) };
     read != 0 && on == 0
-}
-
-/// macOS's System Settings > Accessibility > Display > Reduce motion.
-#[cfg(target_os = "macos")]
-fn reduce_motion() -> bool {
-    objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
 }
 
 #[cfg(target_os = "linux")]
