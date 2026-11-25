@@ -96,8 +96,8 @@ impl ProfileFiles {
     }
 
     /// Sets only the `template` key of the profile's config file as it is on disk, so hand edits
-    /// to the rest are kept, and returns the config it now holds. The file is rewritten only
-    /// when its templates change; a missing one is written from `fallback`.
+    /// to the rest are kept, and adds a missing `tagPrefix`; returns the config it now holds. The
+    /// file is rewritten only when one of those changes; a missing one is written from `fallback`.
     pub(crate) fn save_templates(
         &self,
         id: &str,
@@ -118,12 +118,17 @@ impl ProfileFiles {
         };
         let config: ConverterConfig =
             serde_yaml_ng::from_value(file.clone()).map_err(io::Error::other)?;
-        if !missing && config.template == *templates {
-            return Ok(config);
-        }
         let map = file
             .as_mapping_mut()
             .ok_or_else(|| io::Error::other("the file is not a converter config"))?;
+        // A file saved before the app wrote `tagPrefix` gains it, as its parsed config already has.
+        let no_prefix = !map.contains_key("tagPrefix");
+        if !missing && !no_prefix && config.template == *templates {
+            return Ok(config);
+        }
+        if no_prefix {
+            map.insert("tagPrefix".into(), config.tag_prefix.clone().into());
+        }
         match templates.is_empty() {
             true => map.remove("template"),
             false => map.insert(

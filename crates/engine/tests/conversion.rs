@@ -1008,12 +1008,16 @@ fn a_template_refresh_keeps_hand_edits_to_the_profile_file() {
     profile.templates = Some(templates.path().to_path_buf());
     setup.engine.send(Command::SaveProfile(profile.clone()));
     wait(&setup.events, |e| matches!(e, Event::ProfileSaved(_)));
-    // While the app runs, the user adds a book, and a key the app does not know, by hand.
+    // While the app runs, the user adds a book, and sets their own tag prefix, by hand.
     let file = setup.engine.profile_file(&profile.id);
     let text = std::fs::read_to_string(&file).unwrap();
     let text = text.replace("- XPHB", "- XPHB\n  - MM");
-    assert!(text.contains("- MM"), "{text}");
-    std::fs::write(&file, format!("{text}tagPrefix: mine\n")).unwrap();
+    let text = text.replace("tagPrefix: ttrpg-cli", "tagPrefix: mine");
+    assert!(
+        text.contains("- MM") && text.contains("tagPrefix: mine"),
+        "{text}"
+    );
+    std::fs::write(&file, text).unwrap();
     std::fs::write(templates.path().join("spell2md.txt"), "{name}").unwrap();
 
     let (lines, converted, message) = convert(&setup, &profile.id);
@@ -1079,4 +1083,37 @@ fn removing_the_last_template_leaves_the_profile_file_without_templates() {
     let config: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     assert!(config.get("template").is_none(), "{config:?}");
+}
+
+#[test]
+fn a_conversion_writes_tags_with_the_ttrpg_cli_prefix() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+
+    let (lines, converted, message) = convert(&setup, &id);
+
+    assert!(converted, "{message}");
+    let note = std::fs::read_to_string(setup.vault.join("compendium/XPHB.md")).unwrap();
+    let tag = "tags: [ttrpg-cli/compendium/XPHB]";
+    assert!(note.contains(tag), "{note}\n{lines:?}");
+}
+
+#[test]
+fn a_profile_file_without_a_tag_prefix_gains_it_before_a_conversion() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    let file = setup.engine.profile_file(&id);
+    // A profile saved before the app wrote the key.
+    let mut old: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    old.as_mapping_mut().unwrap().remove("tagPrefix");
+    std::fs::write(&file, serde_yaml_ng::to_string(&old).unwrap()).unwrap();
+
+    let (_, converted, message) = convert(&setup, &id);
+
+    assert!(converted, "{message}");
+    let note = std::fs::read_to_string(setup.vault.join("compendium/XPHB.md")).unwrap();
+    assert!(note.contains("tags: [ttrpg-cli/compendium/XPHB]"), "{note}");
 }
