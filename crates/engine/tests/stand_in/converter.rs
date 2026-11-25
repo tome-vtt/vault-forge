@@ -2,7 +2,8 @@
 //! converter's arguments (`-c <config> -o <output> -g <game> <data>`), prints log lines on
 //! stdout and stderr, and writes a note per chosen book into the config's compendium folder and
 //! one into its rules folder; a book named with a slash (`bestiary/MM`) goes into a folder of the
-//! compendium. It prints `Template <type>: <path>` for each template the config names. A chosen
+//! compendium. Each book note carries a tag behind the config's `tagPrefix` and a slash, when it
+//! has one, as the converter writes them. It prints `Template <type>: <path>` for each template the config names. A chosen
 //! book named EXIT1 or EXIT2 makes it end with that exit code once its notes are written; EARLY2
 //! makes it end with exit code 2 before writing any; HANG makes it wait until it is killed.
 use std::io::Write;
@@ -29,6 +30,9 @@ fn main() {
     let config: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&fs::read_to_string(config).unwrap()).unwrap();
     let text = |key: &str| config["paths"][key].as_str().unwrap().to_owned();
+    let prefix = config["tagPrefix"]
+        .as_str()
+        .map_or(String::new(), |p| format!("{p}/"));
     let books: Vec<String> = config["sources"]["book"]
         .as_sequence()
         .unwrap()
@@ -56,7 +60,8 @@ fn main() {
     for book in &books {
         let note = compendium.join(format!("{book}.md"));
         fs::create_dir_all(note.parent().unwrap()).unwrap();
-        fs::write(note, format!("# {book}\n")).unwrap();
+        let tag = format!("{prefix}compendium/{book}");
+        fs::write(note, format!("---\ntags: [{tag}]\n---\n# {book}\n")).unwrap();
         println!("Writing {}{book}.md", text("compendium"));
     }
     eprintln!("Warning: no image file for img/bestiary/Vrock.webp");

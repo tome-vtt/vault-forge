@@ -66,7 +66,7 @@ pub struct Profile {
 }
 
 /// A profile's converter config, with ttrpg-convert-cli's own key names.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ConverterConfig {
     pub sources: Sources,
@@ -79,6 +79,23 @@ pub struct ConverterConfig {
     /// from `yaml_statblocks` and the profile's template folder; anything set here is replaced.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub template: BTreeMap<String, PathBuf>,
+    /// Starts every tag the converter writes; the Tome connector finds notes by it. Not on any
+    /// screen: a value set by hand is kept.
+    pub tag_prefix: String,
+}
+
+impl Default for ConverterConfig {
+    fn default() -> Self {
+        Self {
+            sources: Sources::default(),
+            paths: Paths::default(),
+            images: Images::default(),
+            use_dice_roller: false,
+            yaml_statblocks: false,
+            template: BTreeMap::new(),
+            tag_prefix: "ttrpg-cli".into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
