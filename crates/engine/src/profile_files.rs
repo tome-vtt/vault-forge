@@ -96,8 +96,8 @@ impl ProfileFiles {
     }
 
     /// Sets only the `template` key of the profile's config file as it is on disk, so hand edits
-    /// to the rest are kept, and adds a missing `tagPrefix`; returns the config it now holds. The file is rewritten only
-    /// when its templates change; a missing one is written from `fallback`.
+    /// to the rest are kept, and adds a missing `tagPrefix`; returns the config it now holds. The
+    /// file is rewritten only when one of those changes; a missing one is written from `fallback`.
     pub(crate) fn save_templates(
         &self,
         id: &str,
