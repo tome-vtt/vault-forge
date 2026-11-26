@@ -394,8 +394,9 @@ pub enum Event {
         converted: bool,
         message: String,
     },
-    /// A command could not be carried out, or a save went ahead with a problem to tell the user
-    /// (its template folder could not be read); the message is for the user.
+    /// A command could not be carried out, a save went ahead with a problem to tell the user
+    /// (its template folder could not be read), or a profile file could not be read at start;
+    /// the message is for the user.
     Failed(String),
 }
 
@@ -481,7 +482,8 @@ impl Engine {
         local_data: PathBuf,
         converter: PathBuf,
     ) -> io::Result<(Engine, Receiver<Event>)> {
-        let profiles = Mutex::new(Profiles::open(&app_data)?);
+        let (profiles, unreadable) = Profiles::open(&app_data)?;
+        let profiles = Mutex::new(profiles);
         let settings = Mutex::new(AppSettings::open(&app_data));
         let (events, receiver) = channel();
         let game_data = GameData::open(&local_data, events.clone())?;
@@ -494,6 +496,7 @@ impl Engine {
             last_runs,
             events,
         };
+        engine.warn(unreadable);
         Ok((engine, receiver))
     }
 
