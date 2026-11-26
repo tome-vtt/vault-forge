@@ -287,7 +287,7 @@ fn replaced([compendium, rules]: [String; 2], case_blind: bool) -> Vec<String> {
 }
 
 /// Whether the disk holding `entries`, existing entries listed by their own names, ignores letter
-/// case in names, as most Windows and macOS disks do and a FAT, exFAT or NTFS disk does under
+/// case in names, as most Windows disks do and a FAT, exFAT or NTFS disk does under
 /// Linux: the first entry whose name has letters is found under its name in other letter case,
 /// which is not listed as an entry of its own. With nothing to try, it goes by the platform.
 fn case_blind(entries: impl IntoIterator<Item = PathBuf>) -> bool {
@@ -309,7 +309,7 @@ fn case_blind(entries: impl IntoIterator<Item = PathBuf>) -> bool {
         Some(!listed && fs::symlink_metadata(parent.join(other)).is_ok())
     };
     let found = entries.into_iter().find_map(probe);
-    found.unwrap_or(cfg!(any(windows, target_os = "macos")))
+    found.unwrap_or(cfg!(windows))
 }
 
 /// The notes in the holding folder's `folders` so far, by vault folder (`compendium/bestiary`);
@@ -405,11 +405,8 @@ mod tests {
         // A vault not made yet: its holding folder is made, then probed.
         let holding = holding_folder::create(&dir.path().join("New vault")).unwrap();
 
-        // The runners' own disks: case-blind on Windows and macOS, case-sensitive on Linux.
-        assert_eq!(
-            case_blind([holding]),
-            cfg!(any(windows, target_os = "macos"))
-        );
+        // The runners' own disks: case-blind on Windows, case-sensitive on Linux.
+        assert_eq!(case_blind([holding]), cfg!(windows));
     }
 
     #[test]

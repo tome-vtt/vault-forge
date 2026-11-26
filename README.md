@@ -18,11 +18,6 @@ Download the package for your computer from the
 converter, so there is nothing else to install.
 
 - **Windows x64:** the installer.
-- **macOS on Apple Silicon:** the `.dmg`. Open it and drag Vault Forge into Applications. The app
-  is not signed yet, so the first time, right-click Vault Forge in Applications, choose **Open**,
-  then **Open** again. On macOS 15 or later, if there is no **Open** button, choose **Done**, go to
-  System Settings, then Privacy & Security, and press **Open Anyway** beside Vault Forge. After
-  that it opens normally.
 - **Linux x64:** pick the `.deb` on Debian, Ubuntu, Mint or Pop!_OS, and install it with
   `sudo apt install ./vault-forge_<version>_amd64.deb`. On any other distribution, pick the
   AppImage: make it executable (`chmod +x vault-forge_<version>_x86_64.AppImage`) and run it.
@@ -40,12 +35,11 @@ cargo test
 ```
 
 Converting needs the converter in a `converter` folder where the app looks for it: beside the app
-on Windows and in development builds, in `Contents/Resources/converter` inside the Mac app, and in
-`usr/lib/vault-forge/converter` in the .deb and the AppImage. The bundle step downloads the pinned
+on Windows and in development builds, and in `usr/lib/vault-forge/converter` in the .deb and the AppImage. The bundle step downloads the pinned
 ttrpg-convert-cli release for your platform, checks its sha256 and puts the converter, its licence
 and the release's examples in a `converter` folder in the folder you name. A checksum that differs
 from the pin fails the step. The version and checksums are pinned in `crates/engine/src/lib.rs`.
-CI runs the bundle step for `windows-x86_64`, `osx-aarch_64` and `linux-x86_64` on every pull
+CI runs the bundle step for `windows-x86_64` and `linux-x86_64` on every pull
 request and every push to `development` and `master`, so a changed download fails the build.
 
 ```sh
@@ -68,12 +62,12 @@ the real converter once on the tiny sample in `installer/smoke/`. Then
 (`installer/vault-forge.toml`), signs it and verifies both signatures. Only then does the workflow
 publish the installer to a GitHub release.
 
-The macOS and Linux packages are built on GitHub's `macos-latest` and `ubuntu-latest` runners: a
+The Linux packages are built on GitHub's `ubuntu-latest` runner: a
 release build, the bundle step into `target/release`, then
 [cargo-packager](https://github.com/crabnebula-dev/cargo-packager), set up in
-`crates/app/Cargo.toml`, makes the .dmg, or the AppImage and the .deb, in `target/packages`.
+`crates/app/Cargo.toml`, makes the AppImage and the .deb in `target/packages`.
 `packaging/smoke-test.sh <package>` unpacks each one, checks it carries the arcane icon, and runs
-the same smoke test on the converter inside it; publish a package only once it passes. `release.yml` has no macOS or Linux jobs yet,
+the same smoke test on the converter inside it; publish a package only once it passes. `release.yml` has no Linux jobs yet,
 so these steps are not automated.
 
 The workflow needs a `release` environment holding the Azure signing variables TomeVTT's desktop

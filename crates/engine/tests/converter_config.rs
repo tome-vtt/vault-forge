@@ -373,3 +373,42 @@ fn a_missing_template_folder_still_lets_the_profile_save_and_says_so() {
     assert_eq!(template.len(), 1, "{template:?}");
     assert!(template.contains_key("monster"));
 }
+
+#[test]
+fn a_new_profile_writes_the_tag_prefix_the_tome_connector_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, Rules::Dnd5e);
+
+    assert_eq!(config(&engine, &profile.id)["tagPrefix"], "ttrpg-cli");
+}
+
+#[test]
+fn a_profile_saved_without_a_tag_prefix_gains_it_and_a_hand_set_one_is_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let profile = create(&engine, &events, Rules::Dnd5e);
+    let file = engine.profile_file(&profile.id);
+    // A profile saved before the app wrote the key.
+    let mut old = config(&engine, &profile.id);
+    old.as_mapping_mut().unwrap().remove("tagPrefix");
+    let old = serde_yaml_ng::to_string(&old).unwrap();
+    std::fs::write(&file, &old).unwrap();
+
+    drop(engine);
+    let (engine, events) = start(dir.path());
+    let loaded = engine.profiles().remove(0);
+    save(&engine, &events, loaded);
+    assert_eq!(config(&engine, &profile.id)["tagPrefix"], "ttrpg-cli");
+
+    // The user sets their own by hand, then changes a setting in the app.
+    std::fs::write(&file, format!("{old}tagPrefix: mine\n")).unwrap();
+    drop(engine);
+    let (engine, events) = start(dir.path());
+    let mut loaded = engine.profiles().remove(0);
+    loaded.config.use_dice_roller = true;
+    save(&engine, &events, loaded);
+    let config = config(&engine, &profile.id);
+    assert_eq!(config["tagPrefix"], "mine");
+    assert_eq!(config["useDiceRoller"], true);
+}

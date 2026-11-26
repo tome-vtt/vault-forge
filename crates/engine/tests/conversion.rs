@@ -222,38 +222,6 @@ fn a_finished_conversion_replaces_both_folders_and_nothing_else() {
     );
 }
 
-/// A converter unpacked from a downloaded, unsigned Mac app carries the quarantine flag, which
-/// stops it running.
-#[cfg(target_os = "macos")]
-#[test]
-fn the_converter_loses_the_quarantine_flag_before_it_runs() {
-    let address = serve_game_data();
-    let dir = tempfile::tempdir().unwrap();
-    let converter = dir.path().join("ttrpg-convert");
-    std::fs::copy(env!("CARGO_BIN_EXE_stand-in-converter"), &converter).unwrap();
-    let xattr = |args: &[&str]| {
-        std::process::Command::new("xattr")
-            .args(args)
-            .arg(&converter)
-            .output()
-            .unwrap()
-            .status
-            .success()
-    };
-    assert!(xattr(&[
-        "-w",
-        "com.apple.quarantine",
-        "0081;00000000;Safari;"
-    ]));
-    let setup = setup_with(&address, converter.clone());
-    let id = setup.engine.profiles()[0].id.clone();
-
-    let (_, converted, message) = convert(&setup, &id);
-
-    assert!(converted, "{message}");
-    assert!(!xattr(&["-p", "com.apple.quarantine"]));
-}
-
 #[test]
 fn log_lines_arrive_in_the_order_the_converter_prints_them() {
     let address = serve_game_data();
@@ -1040,12 +1008,16 @@ fn a_template_refresh_keeps_hand_edits_to_the_profile_file() {
     profile.templates = Some(templates.path().to_path_buf());
     setup.engine.send(Command::SaveProfile(profile.clone()));
     wait(&setup.events, |e| matches!(e, Event::ProfileSaved(_)));
-    // While the app runs, the user adds a book, and a key the app does not know, by hand.
+    // While the app runs, the user adds a book, and sets their own tag prefix, by hand.
     let file = setup.engine.profile_file(&profile.id);
     let text = std::fs::read_to_string(&file).unwrap();
     let text = text.replace("- XPHB", "- XPHB\n  - MM");
-    assert!(text.contains("- MM"), "{text}");
-    std::fs::write(&file, format!("{text}tagPrefix: mine\n")).unwrap();
+    let text = text.replace("tagPrefix: ttrpg-cli", "tagPrefix: mine");
+    assert!(
+        text.contains("- MM") && text.contains("tagPrefix: mine"),
+        "{text}"
+    );
+    std::fs::write(&file, text).unwrap();
     std::fs::write(templates.path().join("spell2md.txt"), "{name}").unwrap();
 
     let (lines, converted, message) = convert(&setup, &profile.id);
@@ -1111,4 +1083,37 @@ fn removing_the_last_template_leaves_the_profile_file_without_templates() {
     let config: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     assert!(config.get("template").is_none(), "{config:?}");
+}
+
+#[test]
+fn a_conversion_writes_tags_with_the_ttrpg_cli_prefix() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+
+    let (lines, converted, message) = convert(&setup, &id);
+
+    assert!(converted, "{message}");
+    let note = std::fs::read_to_string(setup.vault.join("compendium/XPHB.md")).unwrap();
+    let tag = "tags: [ttrpg-cli/compendium/XPHB]";
+    assert!(note.contains(tag), "{note}\n{lines:?}");
+}
+
+#[test]
+fn a_profile_file_without_a_tag_prefix_gains_it_before_a_conversion() {
+    let address = serve_game_data();
+    let setup = setup(&address);
+    let id = setup.engine.profiles()[0].id.clone();
+    let file = setup.engine.profile_file(&id);
+    // A profile saved before the app wrote the key.
+    let mut old: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    old.as_mapping_mut().unwrap().remove("tagPrefix");
+    std::fs::write(&file, serde_yaml_ng::to_string(&old).unwrap()).unwrap();
+
+    let (_, converted, message) = convert(&setup, &id);
+
+    assert!(converted, "{message}");
+    let note = std::fs::read_to_string(setup.vault.join("compendium/XPHB.md")).unwrap();
+    assert!(note.contains("tags: [ttrpg-cli/compendium/XPHB]"), "{note}");
 }

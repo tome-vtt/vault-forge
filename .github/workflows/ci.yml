@@ -4,6 +4,9 @@ on:
   push:
     branches: [master, development]
   pull_request:
+    # A pull request that changes only docs/ skips the check job; pushes always run it.
+    paths-ignore:
+      - 'docs/**'
 
 permissions:
   contents: read
@@ -13,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

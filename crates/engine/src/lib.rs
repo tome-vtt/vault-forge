@@ -66,7 +66,7 @@ pub struct Profile {
 }
 
 /// A profile's converter config, with ttrpg-convert-cli's own key names.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ConverterConfig {
     pub sources: Sources,
@@ -79,6 +79,23 @@ pub struct ConverterConfig {
     /// from `yaml_statblocks` and the profile's template folder; anything set here is replaced.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub template: BTreeMap<String, PathBuf>,
+    /// Starts every tag the converter writes; the Tome connector finds notes by it. Not on any
+    /// screen: a value set by hand is kept.
+    pub tag_prefix: String,
+}
+
+impl Default for ConverterConfig {
+    fn default() -> Self {
+        Self {
+            sources: Sources::default(),
+            paths: Paths::default(),
+            images: Images::default(),
+            use_dice_roller: false,
+            yaml_statblocks: false,
+            template: BTreeMap::new(),
+            tag_prefix: "ttrpg-cli".into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -391,14 +408,10 @@ pub const CONVERTER_VERSION: &str = "3.3.7";
 /// The sha256 of each file the bundle step takes from the pinned converter release: the native
 /// build for each platform the app ships on, and the examples. The platform names are the
 /// release's own.
-pub const CONVERTER_SHA256: [(&str, &str); 4] = [
+pub const CONVERTER_SHA256: [(&str, &str); 3] = [
     (
         "windows-x86_64",
         "14cb4eb0c3a09ffb79137f64e44c3ffd99705d308f1dbb3fd1d3e3626b875ff9",
-    ),
-    (
-        "osx-aarch_64",
-        "057673515ba1c97c776bf5c475131cd452f0dea90bd29593c27568abe130436e",
     ),
     (
         "linux-x86_64",
@@ -442,21 +455,16 @@ pub struct ConvertedNotes {
 const WAIT_FOR_CONVERSION: &str = "Wait for the conversion to finish.";
 
 /// The bundled converter of the app program at `app`: in the `converter` folder beside it, or
-/// where the Mac app (`Contents/Resources`) and the Linux packages (`usr/lib/vault-forge`) keep
-/// it. Beside the app when none is there.
+/// where the Linux packages (`usr/lib/vault-forge`) keep it. Beside the app when none is there.
 fn bundled_converter_for(app: &Path) -> PathBuf {
     let beside = app.parent().unwrap_or(Path::new(""));
     let above = beside.parent().unwrap_or(Path::new(""));
     let exe = format!("ttrpg-convert{}", std::env::consts::EXE_SUFFIX);
-    [
-        beside.to_path_buf(),
-        above.join("Resources"),
-        above.join("lib").join("vault-forge"),
-    ]
-    .iter()
-    .map(|folder| folder.join("converter").join(&exe))
-    .find(|converter| converter.is_file())
-    .unwrap_or_else(|| beside.join("converter").join(&exe))
+    [beside.to_path_buf(), above.join("lib").join("vault-forge")]
+        .iter()
+        .map(|folder| folder.join("converter").join(&exe))
+        .find(|converter| converter.is_file())
+        .unwrap_or_else(|| beside.join("converter").join(&exe))
 }
 
 impl Engine {
@@ -655,10 +663,6 @@ mod tests {
         let exe = format!("ttrpg-convert{}", std::env::consts::EXE_SUFFIX);
         for (app, folder) in [
             ("build/vault-forge", "build/converter"),
-            (
-                "Vault Forge.app/Contents/MacOS/vault-forge",
-                "Vault Forge.app/Contents/Resources/converter",
-            ),
             ("usr/bin/vault-forge", "usr/lib/vault-forge/converter"),
         ] {
             let dir = tempfile::tempdir().unwrap();

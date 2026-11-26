@@ -73,7 +73,7 @@ fn window_icon() -> egui::IconData {
 /// The two folders handed to the Engine: app data (`%APPDATA%\Vault Forge` on Windows, as the
 /// approved demo shows) and local data (`%LOCALAPPDATA%\Vault Forge`, which does not roam, for the
 /// data cache). `ProjectDirs::data_dir()` would add a `data` folder on Windows; elsewhere they
-/// agree, and macOS and Linux use one folder for both.
+/// agree, and Linux uses one folder for both.
 fn app_data_dirs() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
     let project = directories::ProjectDirs::from("", "", "Vault Forge")?;
     let base = directories::BaseDirs::new()?;

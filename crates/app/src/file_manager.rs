@@ -33,8 +33,6 @@ pub(crate) fn shown() -> Vec<std::path::PathBuf> {
 pub(crate) fn open_link(link: &str) -> io::Result<()> {
     let opener = if cfg!(windows) {
         "explorer"
-    } else if cfg!(target_os = "macos") {
-        "open"
     } else {
         "xdg-open"
     };
@@ -73,14 +71,7 @@ fn open(file: &Path) -> Command {
     command
 }
 
-#[cfg(target_os = "macos")]
-fn open(file: &Path) -> Command {
-    let mut command = Command::new("open");
-    command.arg("-R").arg(file);
-    command
-}
-
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(windows))]
 fn open(file: &Path) -> Command {
     let mut command = Command::new("xdg-open");
     command.arg(file.parent().unwrap_or(file));

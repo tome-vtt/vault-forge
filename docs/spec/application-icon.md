@@ -8,7 +8,6 @@ Windows builds embed the approved multi-size ICO in the program file, so Explore
 and shortcuts use that icon. Other target platforms skip program-file resource
 embedding and do not need a Windows resource compiler.
 
-The macOS app bundle and the Linux AppImage and .deb carry the same 256 by 256
-arcane PNG as their package icon. macOS uses the application bundle's icon for
-its Dock button. The package smoke test fails a Linux package whose icon is not
-that PNG, and an app bundle with no icon file.
+The Linux AppImage and .deb carry the same 256 by 256 arcane PNG as their
+package icon. The package smoke test fails a Linux package whose icon is not
+that PNG.
