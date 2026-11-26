@@ -131,9 +131,14 @@ fn a_corrupt_profile_file_does_not_stop_the_others_from_loading() {
     drop(engine);
     std::fs::write(dir.path().join("profiles/bad.forge.yaml"), "{ not: [valid").unwrap();
 
-    let (engine, _events) = start(dir.path());
+    let (engine, events) = start(dir.path());
     let names: Vec<_> = engine.profiles().into_iter().map(|p| p.name).collect();
     assert_eq!(names, ["Good"]);
+    let warnings = failed(&events);
+    assert!(
+        warnings.len() == 1 && warnings[0].contains("bad.forge.yaml"),
+        "{warnings:?}"
+    );
 }
 
 #[test]
@@ -142,7 +147,13 @@ fn a_profile_missing_its_config_file_can_still_be_deleted() {
     let (engine, events) = start(dir.path());
     let profile = create(&engine, &events, "Half");
     std::fs::remove_file(dir.path().join("profiles/half.yaml")).unwrap();
+    drop(engine);
 
+    // A missing converter file reads as the defaults, as a new profile has, with no warning.
+    let (engine, events) = start(dir.path());
+    assert_eq!(failed(&events), Vec::<String>::new());
+    let names: Vec<_> = engine.profiles().into_iter().map(|p| p.name).collect();
+    assert_eq!(names, ["Half"]);
     engine.send(Command::DeleteProfile(profile.id));
 
     assert!(engine.profiles().is_empty());
@@ -631,4 +642,38 @@ fn a_stored_zip_address_loads_as_it_was() {
     let (engine, _events) = start(dir.path());
 
     assert_eq!(engine.profiles()[0].address, zip);
+}
+
+#[test]
+fn a_profile_whose_converter_file_cannot_be_read_is_reported_and_never_saved_over() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, events) = start(dir.path());
+    let mut profile = create(&engine, &events, "Thursday");
+    profile.config.sources.book = vec!["XPHB".into()];
+    engine.send(Command::SaveProfile(profile.clone()));
+    create(&engine, &events, "Other");
+    drop(engine);
+    let path = dir.path().join("profiles/thursday.yaml");
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("tagPrefix: ttrpg-cli"), "{text}");
+    let broken = text.replace("tagPrefix: ttrpg-cli", "tagPrefix: [ttrpg-cli]");
+    std::fs::write(&path, &broken).unwrap();
+
+    let (engine, events) = start(dir.path());
+    let warnings = failed(&events);
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("thursday.yaml"), "{warnings:?}");
+    let names: Vec<_> = engine.profiles().into_iter().map(|p| p.name).collect();
+    assert_eq!(names, ["Other"]);
+
+    engine.send(Command::SaveProfile(profile.clone()));
+    engine.send(Command::RenameProfile {
+        id: profile.id.clone(),
+        name: "Renamed".into(),
+    });
+    engine.send(Command::DownloadGameData(profile.clone()));
+    engine.send(Command::DownloadImages(profile.clone()));
+    engine.send(Command::Convert(profile.id.clone()));
+    engine.send(Command::CreateProfile(draft("Thursday")));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), broken);
 }

@@ -58,10 +58,12 @@ impl ProfileFiles {
         self.config_path(id).exists() || self.beside_path(id).exists()
     }
 
-    /// Every readable profile. A file that cannot be read or parsed is skipped (and left on
-    /// disk) so one bad file does not lock the user out of the rest.
-    pub(crate) fn load_all(&self) -> io::Result<Vec<Profile>> {
+    /// Every readable profile, and the path of each profile file that cannot be read or parsed.
+    /// Such a profile is skipped (and its files left on disk) so one bad file does not lock the
+    /// user out of the rest, and no save writes over the file the user may fix by hand.
+    pub(crate) fn load_all(&self) -> io::Result<(Vec<Profile>, Vec<PathBuf>)> {
         let mut profiles = Vec::new();
+        let mut unreadable = Vec::new();
         for entry in std::fs::read_dir(&self.dir)? {
             let path = entry?.path();
             let name = path.file_name().and_then(|n| n.to_str());
@@ -71,20 +73,29 @@ impl ProfileFiles {
             let parsed = std::fs::read_to_string(&path)
                 .ok()
                 .and_then(|text| serde_yaml_ng::from_str::<Profile>(&text).ok());
-            // A missing or unreadable config reads as the defaults, as a new profile has.
-            let config = std::fs::read_to_string(self.config_path(id))
-                .ok()
-                .and_then(|text| serde_yaml_ng::from_str(&text).ok())
-                .unwrap_or_default();
-            if let Some(profile) = parsed {
-                profiles.push(Profile {
-                    id: id.to_owned(),
-                    config,
-                    ..profile
-                });
-            }
+            let Some(profile) = parsed else {
+                unreadable.push(path);
+                continue;
+            };
+            let config_path = self.config_path(id);
+            // A missing config reads as the defaults, as a new profile has.
+            let config = match std::fs::read_to_string(&config_path) {
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Some(ConverterConfig::default()),
+                text => text
+                    .ok()
+                    .and_then(|text| serde_yaml_ng::from_str(&text).ok()),
+            };
+            let Some(config) = config else {
+                unreadable.push(config_path);
+                continue;
+            };
+            profiles.push(Profile {
+                id: id.to_owned(),
+                config,
+                ..profile
+            });
         }
-        Ok(profiles)
+        Ok((profiles, unreadable))
     }
 
     /// Writes the profile's converter config, and its own fields beside it.

@@ -93,9 +93,10 @@ pub(crate) struct Profiles {
 }
 
 impl Profiles {
-    pub(crate) fn open(app_data: &Path) -> io::Result<Self> {
+    /// Also returns a warning for the user naming each profile file that could not be read.
+    pub(crate) fn open(app_data: &Path) -> io::Result<(Self, Option<String>)> {
         let files = ProfileFiles::open(app_data)?;
-        let list = files.load_all()?;
+        let (list, unreadable) = files.load_all()?;
         // Written on every start, so an app update brings its newer copy.
         let statblock_template =
             files.write_template("monster2md-yamlStatblock-body.txt", STATBLOCK_TEMPLATE)?;
@@ -105,7 +106,14 @@ impl Profiles {
             statblock_template,
         };
         profiles.sort();
-        Ok(profiles)
+        let warning = (!unreadable.is_empty()).then(|| {
+            let names: Vec<_> = unreadable.iter().map(|p| p.display().to_string()).collect();
+            format!(
+                "Vault Forge could not read these profile files, so their profiles are hidden and the files are left as they are: {}. Fix or remove each one, then restart Vault Forge.",
+                names.join(", ")
+            )
+        });
+        Ok((profiles, warning))
     }
 
     pub(crate) fn list(&self) -> &[Profile] {
