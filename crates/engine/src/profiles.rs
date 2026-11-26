@@ -109,7 +109,7 @@ impl Profiles {
         let warning = (!unreadable.is_empty()).then(|| {
             let names: Vec<_> = unreadable.iter().map(|p| p.display().to_string()).collect();
             format!(
-                "Could not read the profile file {}. Its profile is left out and the file is not changed; fix the file and restart Vault Forge.",
+                "Vault Forge could not read these profile files, so their profiles are hidden and the files are left as they are: {}. Fix or remove each one, then restart Vault Forge.",
                 names.join(", ")
             )
         });

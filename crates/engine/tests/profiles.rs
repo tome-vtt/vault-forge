@@ -131,9 +131,14 @@ fn a_corrupt_profile_file_does_not_stop_the_others_from_loading() {
     drop(engine);
     std::fs::write(dir.path().join("profiles/bad.forge.yaml"), "{ not: [valid").unwrap();
 
-    let (engine, _events) = start(dir.path());
+    let (engine, events) = start(dir.path());
     let names: Vec<_> = engine.profiles().into_iter().map(|p| p.name).collect();
     assert_eq!(names, ["Good"]);
+    let warnings = failed(&events);
+    assert!(
+        warnings.len() == 1 && warnings[0].contains("bad.forge.yaml"),
+        "{warnings:?}"
+    );
 }
 
 #[test]
@@ -142,7 +147,13 @@ fn a_profile_missing_its_config_file_can_still_be_deleted() {
     let (engine, events) = start(dir.path());
     let profile = create(&engine, &events, "Half");
     std::fs::remove_file(dir.path().join("profiles/half.yaml")).unwrap();
+    drop(engine);
 
+    // A missing converter file reads as the defaults, as a new profile has, with no warning.
+    let (engine, events) = start(dir.path());
+    assert_eq!(failed(&events), Vec::<String>::new());
+    let names: Vec<_> = engine.profiles().into_iter().map(|p| p.name).collect();
+    assert_eq!(names, ["Half"]);
     engine.send(Command::DeleteProfile(profile.id));
 
     assert!(engine.profiles().is_empty());
